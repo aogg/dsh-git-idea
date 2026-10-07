@@ -76,6 +76,12 @@ onRpc('git/refs', function (input) { return refsSnapshot(input) })
 
 onRpc('git/branches', function (input) { return branchesSnapshot(input) })
 
+/* 多仓库（61-repos.js）：扫描不进读缓存 —— 它自己的去重（客户端每个工作区只问一次）
+   就是缓存，而手动清单那一半每次都该重新核对「还在不在」。 */
+onRpc('git/repos', function (input) { return readWorkspaceRepos(input) })
+
+onRpc('git/repos-save', function (input) { return saveWorkspaceRepo(input) })
+
 onRpc('git/commit-detail', function (input) { return commitDetailSnapshot(input) })
 
 /* The one read the panel asks for by path rather than by repository: the patch

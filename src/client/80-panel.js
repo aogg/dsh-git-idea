@@ -242,6 +242,62 @@
 
       const bump = bumpData
 
+      /* ── 多仓库（24-repos.js）：这个工作区里的仓库清单，和两块侧栏各自的选择 ──
+
+         清单在面板首帧**之后**异步落地：ensureWorkspaceRepos 只发起，落地靠 signal
+         让正在渲染的树重画 —— 首帧一个字节都不为它等。生效仓库（effectiveRepo）永远
+         只跟仓库行的单击走：多选和「全部」是所在那一栏的显示方式，历史、chip、提交、
+         推送继续用 effectiveRepo，这是有意的设计 —— 把几个仓库的提交历史并进同一张
+         图，排序、分页和筛选都得重新发明，而读者要找的那一个提交只会在一个仓库里。 */
+      useRepoList()
+      useRepoViews()
+      /* 多选的变更分组，每组的快照来自全局那份工作区读数（10-state.js）：读数动了
+         的 signal 这里也得听，否则 chip 那边量完，分组里的数字不跟着动。 */
+      useTreeVersion()
+      const repoList = repoListForSession(sessionId)
+      const effectiveRepo = appliedRepo.length > 0 ? appliedRepo : (repoOk ? text(work.repo) : '')
+      const shownRepos = reposShown(repoList, effectiveRepo)
+      const logSel = repoSelection(sessionId, 'log')
+      const changeSel = repoSelection(sessionId, 'changes')
+      const logSelKey = logSel.join('\u0000')
+      const changeSelKey = changeSel.join('\u0000')
+
+      React.useEffect(function () {
+        if (props.ready !== true) return
+        /* 每个工作区只扫一次（24-repos.js 里按会话去重）。工作区本身是不是仓库不
+           用来判断要不要扫 —— 嵌着好几个仓库的普通目录，恰恰是最需要这份清单的地方
+           （设置页下面就挂着同一份列表）。 */
+        ensureWorkspaceRepos(sessionId)
+      }, [sessionId, props.ready])
+
+      /* 仓库行的单击：切生效仓库 + 清掉这一栏的多选（树跟着生效仓库走回单仓库现状）。
+         和设置页「打开这个目录」同一条路径，chip、历史、提交全都跟着换。 */
+      const repoSingle = function (pane, path) {
+        setRepoSelection(sessionId, pane, [])
+        if (path === appliedRepo) return
+        applyRepo(path)
+        loadWork(path)
+      }
+
+      const repoAll = function (pane) {
+        setRepoSelection(sessionId, pane, shownRepos)
+      }
+
+      const repoAdd = function (path) { return saveManualRepo(sessionId, { add: path }) }
+      const repoRemove = function (path) { return saveManualRepo(sessionId, { remove: path }) }
+
+      /* 两块侧栏的属性包：组件本身由 RefTree / ChangesPane 用 h() 挂（RepoSwitcher 有
+         自己的 useState —— 当函数直接调会把它的钩子混进父组件的钩子序列，换页时数量
+         一变就是坏状态）。 */
+      const repoPropsFor = function (pane) {
+        return {
+          sessionId: sessionId, pane: pane, list: repoList, effective: effectiveRepo,
+          onSingle: function (path) { repoSingle(pane, path) },
+          onAll: function () { repoAll(pane) },
+          onAdd: repoAdd, onRemove: repoRemove,
+        }
+      }
+
       /* ── what a hidden panel costs ──
 
          The panel stays mounted when it is closed, so a change in the repository
@@ -380,6 +436,54 @@
         return function () { alive = false }
       }, [appliedRepo, repoOk, freshAt, props.ready])
 
+      /* 多选时左栏按仓库分组，每个选中仓库各要一份自己的 ref 表。Host 那边按仓库缓存
+         这份读（invalidateRepo 同一套失效），所以这里每次 selection/refresh 直接问，
+         便宜的命中不用省。 */
+      const [repoRefs, setRepoRefs] = React.useState({})
+      React.useEffect(function () {
+        if (tab !== 'log' || props.ready !== true || logSelKey.length === 0) return undefined
+        let alive = true
+        const repos = logSelKey.split('\u0000')
+        for (let i = 0; i < repos.length; i += 1) {
+          const repo = repos[i]
+          callHost('git/refs', { sessionId: sessionId, repo: repo }).then(function (data) {
+            if (alive !== true) return
+            setRepoRefs(function (previous) {
+              const next = Object.assign({}, previous)
+              next[repo] = data
+              return next
+            })
+          }).catch(function (failure) {
+            /* 一份 ref 表读不动不该连别的组也不画：记进日志，那一组显示「无法读取
+               分支」。 */
+            console.error('dsh-git-idea: could not read refs of ' + repo, failureText(failure))
+            if (alive !== true) return
+            setRepoRefs(function (previous) {
+              const next = Object.assign({}, previous)
+              next[repo] = { ok: false, local: [], current: [], remote: [] }
+              return next
+            })
+          })
+        }
+        return function () { alive = false }
+      }, [logSelKey, tab, freshAt, props.ready])
+
+      /* 分支树里双击分支。repo 为空 = 今天的单仓库树，行为一字不差；带仓库 = 多选
+         分组里双击「切到那个仓库并只看这个分支」—— 两步并成一步，否则在多选视图里
+         双击一个分支什么都不发生，看起来就像双击坏了。 */
+      const pickBranch = function (repo, name) {
+        if (repo.length === 0) {
+          setAllRefs(false)
+          setActiveRef(name)
+          return
+        }
+        setRepoSelection(sessionId, 'log', [])
+        applyRepo(repo)
+        loadWork(repo)
+        setAllRefs(false)
+        setActiveRef(name)
+      }
+
       /* shortlog walks the entire history, so it is deferred until the history
          tab can actually show the author dropdown. The changes tab never needs
          it, and the Host caches it once fetched. */
@@ -429,6 +533,50 @@
         if (timer === undefined) return undefined
         return timer.interval(function () { reloadChanges() }, fullReadGapMs(treeCost))
       }, [appliedRepo, repoOk, props.active, props.ready, tab, treeCost])
+
+      /* ── 多选的变更分组：每个选中仓库一份工作区快照 ──
+
+         快照全部走全局那份读数（publishTreeRead/treeRecord）：读过的仓库在这里是
+         免费的，chip 和单仓库面板量过的都能直接用；没有快照、或这份快照过期
+         （treeReadDue）的仓库才发一次全树读。一次全树读是这条通道上最贵的东西，
+         多选不改变这一点 —— 所以只补缺的，不在每次重画时全量重读。 */
+      React.useEffect(function () {
+        if (tab !== 'changes' || props.ready !== true || changeSelKey.length === 0) return undefined
+        let alive = true
+        const repos = changeSelKey.split('\u0000')
+        for (let i = 0; i < repos.length; i += 1) {
+          const repo = repos[i]
+          const record = treeRecord(repo)
+          if (record !== null && record.status != null && treeReadDue(repo) !== true) continue
+          const started = Date.now()
+          const finished = treeCountReadStart(repo)
+          callHost('git/panel', { sessionId: sessionId, repo: repo }).then(function (reply) {
+            finished()
+            if (alive !== true || reply == null || reply.ok !== true) return
+            publishTreeRead(repo, reply, true, Date.now() - started)
+          }, function (failure) {
+            finished()
+            /* 快照读不下来那一组显示「无法读取这个仓库的变更」，别的组照画；失败
+               记进日志，不升到面板的错误横幅 —— 横幅说的是生效仓库的事。 */
+            console.error('dsh-git-idea: could not read the working tree of ' + repo, failureText(failure))
+          })
+        }
+        return function () { alive = false }
+      }, [changeSelKey, tab, props.ready, freshAt, sessionId])
+
+      /* 多选时只 watch 选中的那几个仓库（不是清单里的全部 —— watcher 是真的在跑
+         git 的，多一个仓库就多一份轮询）。深度那半和单仓库一样只在变更页正在被看
+         时开，问的路径也是那个仓库自己的脏路径。 */
+      React.useEffect(function () {
+        if (props.ready !== true || props.active !== true || tab !== 'changes' || changeSelKey.length === 0) return undefined
+        const repos = changeSelKey.split('\u0000')
+        const stops = []
+        for (let i = 0; i < repos.length; i += 1) {
+          stops.push(watchRepo(repos[i], sessionId, bump, true, true))
+          setWatchPaths(repos[i], sessionId, treeReadPaths(repos[i]))
+        }
+        return function () { for (let i = 0; i < stops.length; i += 1) stops[i]() }
+      }, [changeSelKey, tab, props.active, props.ready, sessionId])
 
       React.useEffect(function () {
         if (!repoOk || props.ready !== true || tab !== 'log') return undefined
@@ -539,36 +687,40 @@
       /* Opening a collapsed untracked directory: the list of files inside is one
          read, asked for at that moment and not before. The entry for this path is
          dropped first so the rows say "正在读取…" instead of showing the previous
-         listing — after a stage or a commit that listing is what changed. */
-      const toggleUntracked = function (dir) {
-        if (untrackedOpen[dir] === true) {
+         listing — after a stage or a commit that listing is what changed.
+         `at` 多选分组里带过来：读哪个仓库的目录、展开状态按哪个仓库记 —— 两个仓库
+         里同名目录各开各的，互不顶掉。 */
+      const toggleUntracked = function (dir, at) {
+        const repo = at != null && at.length > 0 ? at : ''
+        const key = repo.length > 0 ? repo + '\u001f' + dir : dir
+        if (untrackedOpen[key] === true) {
           const closed = Object.assign({}, untrackedOpen)
-          delete closed[dir]
+          delete closed[key]
           setUntrackedOpen(closed)
           return
         }
         const opened = Object.assign({}, untrackedOpen)
-        opened[dir] = true
+        opened[key] = true
         setUntrackedOpen(opened)
         setUntrackedFiles(function (previous) {
           const next = Object.assign({}, previous)
-          delete next[dir]
+          delete next[key]
           return next
         })
-        const request = base(appliedRepo)
+        const request = base(repo.length > 0 ? repo : appliedRepo)
         request.dir = dir
         callHost('git/untracked', request).then(function (data) {
           const files = data != null && data.ok === true && Array.isArray(data.files) ? data.files : []
           setUntrackedFiles(function (previous) {
             const next = Object.assign({}, previous)
-            next[dir] = files
+            next[key] = files
             return next
           })
         }).catch(function (failure) {
           setError(failureText(failure))
           setUntrackedFiles(function (previous) {
             const next = Object.assign({}, previous)
-            next[dir] = []
+            next[key] = []
             return next
           })
         })
@@ -578,16 +730,27 @@
          fraction of a whole-tree read, so the tick the reader just made is
          confirmed while they are still looking at it — and if another click has
          happened since, this reply is not about the state on screen any more and
-         is dropped. */
-      const confirmStaged = function (paths) {
-        const request = base(appliedRepo)
+         is dropped. `at` names the repository the paths belong to; empty means
+         the applied one, which is the only case this ever was. */
+      const confirmStaged = function (paths, at) {
+        const repo = at != null && at.length > 0 ? at : appliedRepo
+        const request = base(repo)
         request.paths = paths
-        const epoch = repoEpoch(appliedRepo, sessionId)
-        const finished = treeCountReadStart(appliedRepo)
+        const epoch = repoEpoch(repo, sessionId)
+        const finished = treeCountReadStart(repo)
         callHost('git/panel', request).then(function (reply) {
           finished()
-          if (epoch !== repoEpoch(appliedRepo, sessionId)) return
+          if (epoch !== repoEpoch(repo, sessionId)) return
           if (reply == null || reply.ok !== true) return
+          /* 只有生效仓库的快照在这块屏上（setStatus）；别的仓库的确认读并进全局那份
+             读数 —— 多选的变更分组和 chip 都从那里画。 */
+          if (repo !== appliedRepo) {
+            const record = treeRecord(repo)
+            if (record != null && record.status != null) {
+              publishTreeRead(repo, mergePanelStatus(record.status, reply), false, null)
+            }
+            return
+          }
           setStatus(function (previous) { return mergePanelStatus(previous, reply) })
         }, function () { finished() })
       }
@@ -614,8 +777,9 @@
         return next
       }
 
-      const setStaged = function (files, staged) {
+      const setStaged = function (files, staged, at) {
         if (files.length === 0) return
+        const repo = at != null && at.length > 0 ? at : appliedRepo
         const paths = []
         for (let i = 0; i < files.length; i += 1) {
           const path = text(files[i].path)
@@ -624,15 +788,17 @@
         if (paths.length === 0) return
         /* Everything already in flight describes the index before this call; one
            of those replies landing after it would paint the tick back to empty. */
-        bumpRepoEpoch(appliedRepo, sessionId)
-        const epoch = repoEpoch(appliedRepo, sessionId)
+        bumpRepoEpoch(repo, sessionId)
+        const epoch = repoEpoch(repo, sessionId)
         const before = panelBox.status
-        const patched = stageLocally(before, files, staged)
+        /* 乐观补丁只打在生效仓库那份屏上快照（panelBox.status 是它的）；多选分组里
+           别的仓库没有本地快照可打，那一格等确认读回来再亮。 */
+        const patched = repo === appliedRepo ? stageLocally(before, files, staged) : null
         if (patched !== null) {
           panelBox.status = patched
           setStatus(patched)
         }
-        const request = base(appliedRepo)
+        const request = base(repo)
         request.paths = paths
         queueMutation(function () {
           return rpc(staged ? 'git/stage' : 'git/unstage', request).then(function () {
@@ -640,13 +806,13 @@
             /* Only the newest click may paint from a read. A reply about a state
                the reader has already moved past — the tick this one replaced —
                would put that box back where it was for a frame. */
-            if (epoch === repoEpoch(appliedRepo, sessionId)) confirmStaged(paths)
+            if (epoch === repoEpoch(repo, sessionId)) confirmStaged(paths, repo)
           }, function (failure) {
             setError(failureText(failure))
             /* git did not do it, so those paths go back to what git last said —
                read, not from a snapshot that a later click has already moved on
                from. The newest click's own read is the one that answers. */
-            if (epoch === repoEpoch(appliedRepo, sessionId)) confirmStaged(paths)
+            if (epoch === repoEpoch(repo, sessionId)) confirmStaged(paths, repo)
           })
         })
       }
@@ -654,6 +820,19 @@
       const changes = status != null && status.ok === true ? mergeChanges(status) : []
       let stagedCount = 0
       for (let i = 0; i < changes.length; i += 1) if (changes[i].staged === true) stagedCount += 1
+
+      /* 多选时页签上的数字是**所有选中仓库**的合计（合计的每份都来自全局读数，
+         treeCount）；没有多选时就是生效仓库那一个 —— 和今天一样。 */
+      let changesBadge = changes.length
+      if (changeSel.length > 0) {
+        changesBadge = 0
+        for (let i = 0; i < changeSel.length; i += 1) changesBadge += treeCount(changeSel[i])
+      }
+      /* 变更分组的每一组：{repo, status}，status 为 null 表示那次全树读还在飞。 */
+      const changeGroups = changeSel.length > 0 ? changeSel.map(function (repo) {
+        const record = treeRecord(repo)
+        return { repo: repo, status: record === null ? null : record.status }
+      }) : null
 
       const setStagedAll = function () {
         setStaged(changes, stagedCount === 0)
@@ -1068,12 +1247,14 @@
                  all: the panel opens on the history, and a tab that only says
                  "变更" gives no sign that anything is waiting behind it. */
               h('button', { type: 'button', className: 'dsh-git-tab' + (tab === 'changes' ? ' dsh-git-tab-on' : ''),
-                title: changes.length > 0
-                  ? String(changes.length) + ' 个文件有未提交的改动，点开可以逐个看差异'
-                  : '未提交的改动',
+                title: changeSel.length > 0
+                  ? String(changesBadge) + ' 个未提交改动（' + String(changeSel.length) + ' 个仓库的合计，点开逐仓库看）'
+                  : (changesBadge > 0
+                    ? String(changesBadge) + ' 个文件有未提交的改动，点开可以逐个看差异'
+                    : '未提交的改动'),
                 onClick: function () { setTab('changes'); setDiffTarget(null) } },
                 '变更',
-                changes.length > 0 ? h('span', { key: 'n', className: 'dsh-git-tool-badge' }, String(changes.length)) : null),
+                changesBadge > 0 ? h('span', { key: 'n', className: 'dsh-git-tool-badge' }, String(changesBadge)) : null),
               h('button', { type: 'button', className: 'dsh-git-tab' + (tab === 'log' ? ' dsh-git-tab-on' : ''),
                 title: '提交历史', onClick: function () { setTab('log'); setDiffTarget(null) } }, '历史')),
         needsSetup ? null : syncGroup,
@@ -1097,11 +1278,17 @@
       }
 
       let body
+      /* 多选分组里点开的差异属于**那个**仓库的文件：diff 请求和它的暂存都带着仓库
+         走；单仓库的 target 没有这一格，照旧落在生效仓库上。 */
+      const diffRepo = diffTarget !== null && text(diffTarget.repo).length > 0 ? text(diffTarget.repo) : appliedRepo
       if (work == null) {
         body = h('div', { className: 'dsh-git-pane dsh-git-dim' }, '正在读取仓库…')
       } else if (needsSetup) {
-        body = h(RepoSetup, {
-          key: 'setup:' + appliedRepo + '|' + text(work.repo),
+        /* 设置页下面挂同一份仓库清单：工作区本身不是仓库时，这份清单恰恰是出路 ——
+           里面嵌着的仓库点一下就打开（单击 = 切生效仓库，与左栏那条同一手势）。 */
+        body = h('div', { key: 'setupwrap', className: 'dsh-git-setupwrap' },
+          h(RepoSetup, {
+            key: 'setup:' + appliedRepo + '|' + text(work.repo),
           sessionId: sessionId,
           initial: text(work.repo),
           reason: text(work.reason),
@@ -1113,7 +1300,8 @@
             applyRepo(next)
             loadWork(next)
           },
-        })
+        }),
+        h('div', { key: 'setup-repos', className: 'dsh-git-setup-repos' }, h(RepoSwitcher, repoPropsFor('log'))))
       } else if (diffTarget !== null) {
         /* The diff takes the body, whichever list opened it, and the way back is
            the arrow in its own header — a drill-down rather than a third pane,
@@ -1122,14 +1310,14 @@
         body = h(DiffView, {
           key: 'diff',
           target: diffTarget,
-          repo: appliedRepo,
+          repo: diffRepo,
           sessionId: sessionId,
           sig: diffSig,
           busy: busy,
           onBack: function () { setDiffTarget(null) },
           onRefresh: function () { setDiffAt(diffAt + 1) },
           onStage: diffTarget.kind === 'file'
-            ? function (staged) { setStaged([{ path: diffTarget.path }], staged) }
+            ? function (staged) { setStaged([{ path: diffTarget.path }], staged, diffRepo) }
             : undefined,
         })
       } else if (tab === 'changes') {
@@ -1145,6 +1333,14 @@
           onSetStagedAll: setStagedAll,
           onMessage: setMessage,
           onCommit: commit,
+          /* 多仓库：侧栏、分组、按仓库落下去的四个回调。分组为 null 时（单选/没多选）
+             变更树与今天完全一样 —— 分组、键名、勾选手势一字不差。 */
+          repoProps: repoPropsFor('changes'),
+          groups: changeGroups,
+          onRepoSingle: function (path) { repoSingle('changes', path) },
+          onSetStagedAt: function (repo, files, staged) { setStaged(files, staged, repo) },
+          onToggleUntrackedAt: function (repo, dir) { toggleUntracked(dir, repo) },
+          onOpenDiffAt: function (repo, file) { setDiffTarget(changeDiffTarget(file, repo)) },
           /* One click on a file row, in either list, is what opens the patch —
              selecting a row in IDEA's commit window and getting its diff on the
              right is the same gesture, and a row that only highlights leaves the
@@ -1167,7 +1363,15 @@
                 ? status.staged.length + status.unstaged.length + status.untracked.length + status.unmerged.length
                 : 0,
               onToggle: toggle, onSelect: function (key) { setSelectedKey(key) },
-              onPick: function (name) { setAllRefs(false); setActiveRef(name) }, activeRef: shownRef,
+              activeRef: shownRef,
+              /* 多仓库：仓库列表区（HEAD 分组上方）与多选时的按仓库分组。groups 为
+                 null 时这棵树和今天是同一棵 —— 同一函数、空前缀。 */
+              repoProps: repoPropsFor('log'),
+              groups: logSel.length > 0 ? logSel.map(function (repo) {
+                return { repo: repo, refs: repoRefs[repo] === undefined ? null : repoRefs[repo] }
+              }) : null,
+              onRepoSingle: function (path) { repoSingle('log', path) },
+              onPickBranch: pickBranch,
             })),
           h('div', { className: 'dsh-git-main' },
             toolbar,

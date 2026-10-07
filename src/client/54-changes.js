@@ -63,32 +63,14 @@
         return h('div', { className: 'dsh-git-pane dsh-git-error' }, reason)
       }
 
-      const changes = mergeChanges(work)
-      const tracked = []
-      const fresh = []
-      for (let i = 0; i < changes.length; i += 1) {
-        const entry = changes[i]
-        if (entry.path.length === 0) continue
-        if (isNewFile(entry)) fresh.push(entry)
-        else tracked.push(entry)
-      }
+      /* ── 多仓库：按仓库分组 ──
+         变更页侧栏多选了仓库时（24-repos.js），每个选中仓库一份自己的两组结构，顶上
+         加一个仓库组头；单选/没多选时 groups 为空，走**同一个**渲染函数、scope 前缀为
+         空 —— 键名、折叠、手势与今天一字不差，因为折叠表和选中键是整棵树共享的，
+         「多仓库只是多套前缀」才不至于把单仓库的行挪了位置。 */
+      const groups = Array.isArray(props.groups) && props.groups.length > 0 ? props.groups : null
 
-      /* ── the order is a property of the paths, not of the index ──
-
-         `mergeChanges` orders entries by the list git answered in — the index
-         entries first, then the worktree, then the untracked ones — so an entry's
-         place in the list said which list it came from, and ticking its box moved
-         it to the front of its own group: measured on a probe of the running
-         panel, ticking the second of three new files repainted the group as
-         `[zztail.bin, tmp.bin, newdir/]` where it had been
-         `[tmp.bin, zztail.bin, newdir/]`, and every untick moved it again. A tick
-         must move the box and nothing else, so both groups are sorted by path
-         first: two readers looking at the same paths see the same rows in the
-         same places, whatever the index happens to say about them. */
-      const byPath = function (a, b) { return a.path < b.path ? -1 : (a.path > b.path ? 1 : 0) }
-      tracked.sort(byPath)
-      fresh.sort(byPath)
-
+      const INDENT_W = 12
       /* ── the indent is not the row's padding ──
          A row's own padding-left moved the checkbox along with the tree, so the
          boxes marched to the right one step per level and never lined up in a
@@ -97,7 +79,6 @@
          commit window keeps the boxes in a fixed left gutter and indents what is
          left of the row, so that is what this is: the checkbox first, then a
          spacer as wide as the depth, then the twisty/status and the name. */
-      const INDENT_W = 12
       const indentPad = function (depth) {
         return h('span', { key: 'pad', className: 'dsh-git-tind', style: { width: (depth * INDENT_W) + 'px' } })
       }
@@ -166,27 +147,72 @@
         return String(kind.files) + ' 个文件 + ' + String(kind.dirs) + ' 个目录'
       }
 
-      const rowClass = function (key, extra) {
+      /* One repository's corner of the tree: its own work snapshot, its own
+         prefixed keys, and its own idea of which repository a tick or a diff
+         belongs to. `scope.repo` empty is today's single-repository pane — every
+         adapter below then forwards untouched, so the rows, their keys and their
+         gestures are exactly what they were. */
+      const makeScope = function (repo, one) {
+        if (repo == null || repo.length === 0) {
+          return {
+            repo: '', prefix: '', work: one,
+            selectedKey: props.selectedKey, collapsed: props.collapsed,
+            onSelect: props.onSelect, onToggle: props.onToggle,
+            onSetStaged: props.onSetStaged, onOpenDiff: props.onOpenDiff,
+            untrackedOpen: props.untrackedOpen, untrackedFiles: props.untrackedFiles,
+            onToggleUntracked: props.onToggleUntracked,
+          }
+        }
+        const prefix = repo + '\u001f'
+        /* 折叠表和未跟踪目录的展开表都按「仓库内的相对键」记：多仓库时剥出本仓库的
+           那一片做成一份只读视图，写回去的回调再补上前缀 —— 单仓库的键不受影响，
+           两个仓库里同名目录也各折各的。 */
+        const localView = function (source) {
+          const out = {}
+          for (const key in source) {
+            if (Object.prototype.hasOwnProperty.call(source, key) && key.indexOf(prefix) === 0) {
+              out[key.slice(prefix.length)] = source[key]
+            }
+          }
+          return out
+        }
+        return {
+          repo: repo, prefix: prefix, work: one,
+          selectedKey: localViewOne(props.selectedKey, prefix),
+          collapsed: localView(props.collapsed),
+          onSelect: function (key) { props.onSelect(prefix + key) },
+          onToggle: function (path) { props.onToggle(prefix + path) },
+          /* 勾选与差异都落回**文件自己的**仓库：多选视图里勾 repo-b 的文件得真的
+             add 到 repo-b，而不是悄悄进了生效仓库的索引。 */
+          onSetStaged: function (entries, staged) { props.onSetStagedAt(repo, entries, staged) },
+          onOpenDiff: function (entry) { props.onOpenDiffAt(repo, entry) },
+          untrackedOpen: localView(props.untrackedOpen),
+          untrackedFiles: localView(props.untrackedFiles),
+          onToggleUntracked: function (dir) { props.onToggleUntrackedAt(repo, dir) },
+        }
+      }
+
+      const rowClass = function (scope, key, extra) {
         return 'dsh-git-trow' + (extra === undefined ? '' : ' ' + extra)
-          + (props.selectedKey === key ? ' dsh-git-trow-sel' : '')
+          + (scope.selectedKey === key ? ' dsh-git-trow-sel' : '')
       }
 
       /* One tracked change: box, status letter, name. In either view the click
          opens the patch (IDEA's commit window previews the selection too); the
          tree adds the indent the flat list does not have. */
-      const fileRow = function (entry, key, depth, flat, label) {
+      const fileRow = function (scope, entry, key, depth, flat, label) {
         return h('div', {
-          className: rowClass(key),
+          className: rowClass(scope, key),
           key: key,
           title: text(entry.path) + '（点开看差异）',
           onClick: function () {
-            props.onSelect(key)
-            if (typeof props.onOpenDiff === 'function') props.onOpenDiff(entry)
+            scope.onSelect(key)
+            if (typeof scope.onOpenDiff === 'function') scope.onOpenDiff(entry)
           },
         },
           stageBox('box', entry.staged === true ? 'all' : 'none',
             entry.staged === true ? '取消暂存' : '暂存',
-            function () { props.onSetStaged([entry], entry.staged !== true) }),
+            function () { scope.onSetStaged([entry], entry.staged !== true) }),
           indentPad(depth),
           h('span', { className: 'dsh-git-tw' }),
           h('span', { className: 'dsh-git-st' + statusClass(entry.displayCode) }, statusLabel(entry.displayCode)),
@@ -198,25 +224,25 @@
          one read that lists the files, and it happens on the click. The listing
          is a state of its own: undefined while the read is in flight — which is
          not a case the loop below may fall through to. */
-      const untrackedDirRows = function (entry, key, depth, flat, label) {
+      const untrackedDirRows = function (scope, entry, key, depth, flat, label) {
         const path = text(entry.path)
-        const open = props.untrackedOpen[path] === true
+        const open = scope.untrackedOpen[path] === true
         const rows = [h('div', {
-          className: rowClass(key),
+          className: rowClass(scope, key),
           key: key,
           title: path + '（未跟踪的目录，双击展开）',
-          onClick: function () { props.onSelect(key) },
-          onDoubleClick: function () { props.onToggleUntracked(path) },
+          onClick: function () { scope.onSelect(key) },
+          onDoubleClick: function () { scope.onToggleUntracked(path) },
         },
           stageBox('box', entry.staged === true ? 'all' : 'none',
             entry.staged === true ? '取消暂存' : '暂存整个目录',
-            function () { props.onSetStaged([entry], entry.staged !== true) }),
+            function () { scope.onSetStaged([entry], entry.staged !== true) }),
           indentPad(depth),
-          twisty({ collapsed: !open, onToggle: function () { props.onToggleUntracked(path) } }),
+          twisty({ collapsed: !open, onToggle: function () { scope.onToggleUntracked(path) } }),
           h('span', { key: 'ico', className: 'dsh-git-tdir' }, h(Icon, { name: 'folder', size: 12 })),
           nameCell(label, flat))]
         if (open) {
-          const list = props.untrackedFiles[path]
+          const list = scope.untrackedFiles[path]
           if (list === undefined) {
             rows.push(h('div', { key: key + ':wait', className: 'dsh-git-trow dsh-git-dim' },
               indentPad(depth + 1), h('span', { className: 'dsh-git-tname' }, '正在读取…')))
@@ -230,15 +256,15 @@
               const relative = inside.indexOf(prefix) === 0 ? inside.slice(prefix.length) : inside
               const childKey = key + ':f:' + inside
               rows.push(h('div', {
-                className: rowClass(childKey),
+                className: rowClass(scope, childKey),
                 key: childKey,
                 title: inside + '（点开看差异）',
                 onClick: function () {
-                  props.onSelect(childKey)
-                  props.onOpenDiff({ path: inside, workCode: '??', untracked: true, staged: false, displayCode: '?' })
+                  scope.onSelect(childKey)
+                  scope.onOpenDiff({ path: inside, workCode: '??', untracked: true, staged: false, displayCode: '?' })
                 },
               },
-                stageBox('box', 'none', '暂存', function () { props.onSetStaged([{ path: inside, untracked: true }], true) }),
+                stageBox('box', 'none', '暂存', function () { scope.onSetStaged([{ path: inside, untracked: true }], true) }),
                 indentPad(depth + 1),
                 h('span', { className: 'dsh-git-tw' }),
                 h('span', { className: 'dsh-git-st dsh-git-st-U' }, '?'),
@@ -252,12 +278,12 @@
         return rows
       }
 
-      const treeRows = function (entries, groupKey) {
+      const treeRows = function (scope, entries, groupKey) {
         const treeEntries = []
         for (let i = 0; i < entries.length; i += 1) treeEntries.push({ segments: entries[i].path.split('/'), data: entries[i] })
         const tree = buildTree(treeEntries)
         annotateStaged(tree)
-        const flat = flattenTree(tree, 0, groupKey, props.collapsed, [], groupKey)
+        const flat = flattenTree(tree, 0, groupKey, scope.collapsed, [], groupKey)
         const rows = []
         for (let i = 0; i < flat.length; i += 1) {
           const node = flat[i]
@@ -268,29 +294,29 @@
             const allStaged = total > 0 && stagedCount === total
             const someStaged = stagedCount > 0 && stagedCount < total
             rows.push(h('div', {
-              className: rowClass(node.id),
+              className: rowClass(scope, node.id),
               key: node.id,
               title: node.name + '（双击展开/折叠）',
-              onClick: function () { props.onSelect(node.id) },
-              onDoubleClick: function () { props.onToggle(node.path) },
+              onClick: function () { scope.onSelect(node.id) },
+              onDoubleClick: function () { scope.onToggle(node.path) },
             },
               stageBox('box', allStaged ? 'all' : (someStaged ? 'some' : 'none'),
                 allStaged ? '取消暂存该目录' : '暂存该目录',
-                function () { props.onSetStaged(collectLeaves(child, []), !allStaged) }),
+                function () { scope.onSetStaged(collectLeaves(child, []), !allStaged) }),
               indentPad(node.depth),
-              twisty({ collapsed: node.collapsed, onToggle: function () { props.onToggle(node.path) } }),
+              twisty({ collapsed: node.collapsed, onToggle: function () { scope.onToggle(node.path) } }),
               h('span', { className: 'dsh-git-tname' }, node.name),
               h('span', { className: 'dsh-git-tdim' }, String(total) + ' 个文件')))
           } else if (node.dir === true) {
-            rows.push.apply(rows, untrackedDirRows(node.data || {}, node.id, node.depth, false, node.name))
+            rows.push.apply(rows, untrackedDirRows(scope, node.data || {}, node.id, node.depth, false, node.name))
           } else {
-            rows.push(fileRow(node.data || {}, node.id, node.depth, false, node.name))
+            rows.push(fileRow(scope, node.data || {}, node.id, node.depth, false, node.name))
           }
         }
         return rows
       }
 
-      const flatRows = function (entries, groupKey) {
+      const flatRows = function (scope, entries, groupKey) {
         const sorted = entries.slice()
         sorted.sort(function (a, b) { return a.path < b.path ? -1 : (a.path > b.path ? 1 : 0) })
         const rows = []
@@ -299,8 +325,8 @@
           const key = groupKey + ':f:' + entry.path
           /* git only ever collapses a *directory* into a trailing slash, so that
              one character is the whole test for "this row can be opened". */
-          if (entry.path.slice(-1) === '/') rows.push.apply(rows, untrackedDirRows(entry, key, 0, true, entry.path))
-          else rows.push(fileRow(entry, key, 0, true, entry.path))
+          if (entry.path.slice(-1) === '/') rows.push.apply(rows, untrackedDirRows(scope, entry, key, 0, true, entry.path))
+          else rows.push(fileRow(scope, entry, key, 0, true, entry.path))
         }
         return rows
       }
@@ -312,39 +338,107 @@
          level up: tick it and the whole changelist goes into the index, untick it
          and it comes back out. The untracked group's entries are by definition
          never staged, so its box only ever reads empty. */
-      const groupTitle = function (label, key, hint, entries) {
+      const groupTitle = function (scope, label, key, hint, entries) {
         let staged = 0
         for (let i = 0; i < entries.length; i += 1) if (entries[i].staged === true) staged += 1
         const allStaged = entries.length > 0 && staged === entries.length
         const someStaged = staged > 0 && staged < entries.length
         return h('div', {
-          className: rowClass(key + ':title', 'dsh-git-cgroup'),
+          className: rowClass(scope, key + ':title', 'dsh-git-cgroup'),
           key: key + ':title',
           title: label + '（' + hint + '；双击展开/折叠）',
-          onClick: function () { props.onSelect(key + ':title') },
-          onDoubleClick: function () { props.onToggle(key) },
+          onClick: function () { scope.onSelect(key + ':title') },
+          onDoubleClick: function () { scope.onToggle(key) },
         },
           stageBox('box', allStaged ? 'all' : (someStaged ? 'some' : 'none'),
             allStaged ? '把这一组全部撤出索引' : '把这一组全部暂存',
-            function () { props.onSetStaged(entries, !allStaged) }),
-          twisty({ collapsed: props.collapsed[key] === true, onToggle: function () { props.onToggle(key) } }),
+            function () { scope.onSetStaged(entries, !allStaged) }),
+          twisty({ collapsed: scope.collapsed[key] === true, onToggle: function () { scope.onToggle(key) } }),
           h('span', { className: 'dsh-git-tname' }, label),
           h('span', { className: 'dsh-git-tdim' }, countText(kindOf(entries))))
       }
 
-      const rows = []
-      const groups = [
-        { key: '@tracked', label: '默认变更列表', hint: 'git 管着的改动，框勾上就是进了索引', entries: tracked },
-        { key: '@new', label: '新增的文件', hint: 'git 还没提交过的文件：勾上就是加入索引，但留在这一组里，直到提交', entries: fresh },
-      ]
-      for (let g = 0; g < groups.length; g += 1) {
-        const group = groups[g]
-        if (group.entries.length === 0) continue
-        rows.push(groupTitle(group.label, group.key, group.hint, group.entries))
-        if (props.collapsed[group.key] === true) continue
-        rows.push.apply(rows, view === 'flat' ? flatRows(group.entries, group.key) : treeRows(group.entries, group.key))
+      /* ── one repository's rows ──
+
+         The order is a property of the paths, not of the index: `mergeChanges`
+         orders entries by the list git answered in — the index entries first,
+         then the worktree, then the untracked ones — so an entry's place in the
+         list said which list it came from, and ticking its box moved it to the
+         front of its own group. A tick must move the box and nothing else, so
+         both groups are sorted by path first: two readers looking at the same
+         paths see the same rows in the same places, whatever the index happens
+         to say about them. */
+      const scopeRows = function (repo, one) {
+        const scope = makeScope(repo, one)
+        if (one == null) {
+          return [h('div', {
+            key: 'wait:' + repo, className: 'dsh-git-trow dsh-git-dim', style: { paddingLeft: '18px' },
+          }, '正在读取工作区…')]
+        }
+        if (one.ok !== true) {
+          return [h('div', {
+            key: 'bad:' + repo, className: 'dsh-git-trow dsh-git-dim', style: { paddingLeft: '18px' },
+            title: text(one.repo),
+          }, '无法读取这个仓库的变更')]
+        }
+        const changes = mergeChanges(one)
+        const tracked = []
+        const fresh = []
+        for (let i = 0; i < changes.length; i += 1) {
+          const entry = changes[i]
+          if (entry.path.length === 0) continue
+          if (isNewFile(entry)) fresh.push(entry)
+          else tracked.push(entry)
+        }
+        const byPath = function (a, b) { return a.path < b.path ? -1 : (a.path > b.path ? 1 : 0) }
+        tracked.sort(byPath)
+        fresh.sort(byPath)
+
+        const rows = []
+        const scopedGroups = [
+          { key: '@tracked', label: '默认变更列表', hint: 'git 管着的改动，框勾上就是进了索引', entries: tracked },
+          { key: '@new', label: '新增的文件', hint: 'git 还没提交过的文件：勾上就是加入索引，但留在这一组里，直到提交', entries: fresh },
+        ]
+        let shown = 0
+        for (let g = 0; g < scopedGroups.length; g += 1) {
+          const group = scopedGroups[g]
+          if (group.entries.length === 0) continue
+          shown += 1
+          rows.push(groupTitle(scope, group.label, group.key, group.hint, group.entries))
+          if (scope.collapsed[group.key] === true) continue
+          rows.push.apply(rows, view === 'flat' ? flatRows(scope, group.entries, group.key) : treeRows(scope, group.entries, group.key))
+        }
+        /* 多仓库视图里「干净」是某个仓库自己的事：组头底下给一行，而不是整页那句
+           「工作区干净」（那句话只属于单仓库的现状）。 */
+        if (shown === 0 && groups != null) {
+          rows.push(h('div', {
+            key: 'clean:' + repo, className: 'dsh-git-trow dsh-git-dim', style: { paddingLeft: '18px' },
+          }, '工作区干净'))
+        }
+        return rows
       }
 
+      const rows = []
+      if (groups != null) {
+        for (let g = 0; g < groups.length; g += 1) {
+          const group = groups[g]
+          const count = group.status != null && group.status.ok === true ? mergeChanges(group.status).length : 0
+          rows.push(h('div', {
+            key: 'rg:' + group.repo,
+            className: 'dsh-git-rgroup',
+            title: group.repo + '（单击 = 只看这个仓库）',
+            onClick: function () { props.onRepoSingle(group.repo) },
+          },
+            h('span', { key: 'm', className: 'dsh-git-repo-mark' }, '▣'),
+            h('span', { key: 'n', className: 'dsh-git-repo-name' }, repoBaseName(group.repo)),
+            h('span', { key: 'c', className: 'dsh-git-repo-dim' }, count > 0 ? String(count) + ' 项' : '干净')))
+          rows.push.apply(rows, scopeRows(group.repo, group.status))
+        }
+      } else {
+        rows.push.apply(rows, scopeRows('', work))
+      }
+
+      const changes = mergeChanges(work)
       const stagedEntries = []
       for (let i = 0; i < changes.length; i += 1) if (changes[i].staged === true) stagedEntries.push(changes[i])
       const stagedCount = stagedEntries.length
@@ -360,6 +454,9 @@
         ? ('提交 ' + countText(kindOf(stagedEntries)))
         : ('全部暂存并提交（' + String(totalChanges) + ' 项）')
 
+      /* 提交这一格永远只属于**生效仓库**（右侧历史、chip、推送用的那一个），多选只是
+         变更树的显示方式 —— 把几个仓库的索引搅进同一次提交，等于把读者没看到的改动
+         一起提交了。勾选框则各落各的仓库（见 makeScope 的 onSetStaged）。 */
       const side = h('div', { className: 'dsh-git-commitpane' },
         h('div', { className: 'dsh-git-group-title' }, '提交信息'),
         /* 先说出来，而不是等读者写完提交信息再被 git 拒一次。两条路都留着：设置页里
@@ -390,11 +487,18 @@
           onClick: props.onSetStagedAll,
         }, stagedCount > 0 ? '取消全部暂存' : '全部暂存') : null)
 
-      /* No toolbar of this pane's own any more: the view switch is in the panel
-         header, and "已暂存 N / M" is on the commit pane beside it, so the list
-         starts at the top of the pane and the rows get the whole height. */
+      /* 左侧那列仓库侧栏与分支树那份是同一个控件（RepoSwitcher），选择态各自独立 ——
+         理由见 24-repos.js。 */
       return h('div', { className: 'dsh-git-changes' },
+        props.repoProps == null ? null : h('div', { key: 'repos', className: 'dsh-git-reposide' },
+          h(RepoSwitcher, props.repoProps)),
         h('div', { className: 'dsh-git-changes-tree' },
           h('div', { key: 'list', className: 'dsh-git-clist' }, rows.length > 0 ? rows : h('div', { className: 'dsh-git-pane dsh-git-ok' }, '工作区干净'))),
         side)
+    }
+
+    /* 多仓库 scope 的选中键也带前缀：剥出前缀之后的那个键，行里的比较才对得上。 */
+    function localViewOne(key, prefix) {
+      const raw = text(key)
+      return raw.indexOf(prefix) === 0 ? raw.slice(prefix.length) : '\u0000'
     }

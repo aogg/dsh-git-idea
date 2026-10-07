@@ -29,6 +29,11 @@ function normalizeConfig(raw) {
        upstream asks first. git's own `push.default` / `pull.rebase` still apply
        underneath and are not overridden. */
     fetchPrune: true, pullRebase: false, pushSetUpstream: false,
+    /* 手动登记的仓库，按工作区分组（61-repos.js）。放在这份配置而不是浏览器
+       localStorage：它描述的是「这个项目有哪些仓库」，跟着项目走 —— 换浏览器、
+       换机器打开同一个工作区，清单应该还是同一份；localStorage 那层（20-prefs.js）
+       留给「这台浏览器怎么看」。 */
+    repos: {},
   }
   if (raw == null || typeof raw !== 'object') return out
   if (isStr(raw.initBranch)) out.initBranch = raw.initBranch.trim().slice(0, 120)
@@ -37,6 +42,34 @@ function normalizeConfig(raw) {
   out.fetchPrune = raw.fetchPrune !== false
   out.pullRebase = raw.pullRebase === true
   out.pushSetUpstream = raw.pushSetUpstream === true
+  out.repos = normalizeRepoMap(raw.repos)
+  return out
+}
+
+/* 工作区 → 手动仓库清单。键和值都是磁盘上的路径，唯一的清洗是「绝对路径、去重、
+   封顶」：一个也读不出来的键比一个被悄悄改写过的键诚实 —— 目录被删掉这件事由
+   `git/repos` 每次读的时候报出来（missing），配置里先留着原文。 */
+const REPO_MAP_WORKSPACES = 128
+const REPO_MAP_PER_WORKSPACE = 64
+function normalizeRepoMap(raw) {
+  const out = {}
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return out
+  let kept = 0
+  for (const key in raw) {
+    if (!Object.prototype.hasOwnProperty.call(raw, key)) continue
+    if (kept >= REPO_MAP_WORKSPACES) break
+    const list = raw[key]
+    if (!Array.isArray(list)) continue
+    const clean = []
+    for (let i = 0; i < list.length && clean.length < REPO_MAP_PER_WORKSPACE; i += 1) {
+      const path = list[i]
+      if (!isStr(path)) continue
+      const trimmed = path.trim()
+      if (trimmed.charAt(0) !== '/' || trimmed.length > 4096) continue
+      if (clean.indexOf(trimmed) < 0) clean.push(trimmed)
+    }
+    if (clean.length > 0) { out[key] = clean; kept += 1 }
+  }
   return out
 }
 

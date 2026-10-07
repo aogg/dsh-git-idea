@@ -315,6 +315,50 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-dl-hunk{color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-layer-2)}
 .dsh-git-dl-meta{color:var(--dsw-alias-label-secondary)}
 .dsh-git-dl-note{color:var(--dsw-alias-label-secondary)}
+
+/* ── 仓库切换列表 ──
+    一个工作区里嵌着多个仓库时，左栏分支树和变更页各有一列这样的行。它刻意不用
+    dsh-git-trow 那套类名：树行带着折叠、树选中和一串跟着类名走的断言，仓库行是
+    另一类控件 —— 不折叠、不属于哪棵树，被当成树行数进去只会搅浑两边。 */
+.dsh-git-repo-head{display:flex;align-items:center;gap:6px;padding:6px 6px 2px;color:var(--dsw-alias-label-secondary);font-size:10px;text-transform:uppercase;letter-spacing:.04em}
+.dsh-git-repo-head-name{flex:none}
+.dsh-git-repo-note{margin-left:auto;flex:none;font-size:10px}
+.dsh-git-repo-row{display:flex;align-items:center;gap:5px;padding:2px 6px;border-radius:4px;cursor:pointer;white-space:nowrap;-webkit-user-select:none;user-select:none}
+.dsh-git-repo-row:hover{background:var(--dsw-alias-bg-layer-2)}
+.dsh-git-repo-mark{flex:none;width:10px;font-size:9px;text-align:center;color:var(--dsw-alias-brand-primary)}
+.dsh-git-repo-name{overflow:hidden;text-overflow:ellipsis;min-width:0}
+.dsh-git-repo-dim{flex:none;margin-left:auto;padding-right:4px;color:var(--dsw-alias-label-secondary);font-size:10px}
+/* 生效仓库：名字加粗，左缘一道品牌色竖线 —— 和分支树里「筛选范围」那一格同一个
+   读法（dsh-git-trow-scope），见过一次就不用再学。 */
+.dsh-git-repo-cur{box-shadow:inset 2px 0 0 var(--dsw-alias-brand-primary)}
+.dsh-git-repo-cur .dsh-git-repo-name{font-weight:600;color:var(--dsw-alias-brand-primary)}
+/* Ctrl+单击挑中的仓库 */
+.dsh-git-repo-sel{background:var(--dsw-alias-interactive-bg-hover)}
+.dsh-git-repo-sel:hover{background:var(--dsw-alias-interactive-bg-hover)}
+/* 手动登记过、目录已经不在的那行：留得住也删得掉，但看得出它失效了 */
+.dsh-git-repo-gone{opacity:.55}
+.dsh-git-repo-x{flex:none;border:0;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:1;padding:0 2px;border-radius:3px;cursor:pointer}
+.dsh-git-repo-x:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.dsh-git-repo-add{display:flex;align-items:center;gap:5px;margin-top:2px;padding:2px 6px;border-radius:4px;cursor:pointer;white-space:nowrap}
+.dsh-git-repo-add:hover{background:var(--dsw-alias-bg-layer-2)}
+.dsh-git-repo-addrow{display:flex;gap:4px;padding:2px 6px}
+.dsh-git-repo-input{flex:1;min-width:0;border:1px solid var(--dsw-alias-border-l1);border-radius:4px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-size:11px;padding:2px 4px;outline:none}
+.dsh-git-repo-input:focus{border-color:var(--dsw-alias-brand-primary)}
+.dsh-git-repo-ok{flex:none}
+.dsh-git-repo-problem{padding:2px 8px 4px;font-size:10px;line-height:14px;color:var(--dsw-alias-state-error-primary)}
+/* 设置页（这里还不是仓库）下面挂的那份仓库清单：RepoSetup 自己是可滚动的整页，
+   清单跟在它下面同页滚动，一条细线隔开。 */
+.dsh-git-setupwrap{flex:1;display:flex;flex-direction:column;min-height:0;overflow:auto}
+.dsh-git-setupwrap .dsh-git-setup{flex:none;overflow:visible}
+.dsh-git-setup-repos{padding:0 20px 16px;border-top:1px solid var(--dsw-alias-border-l1)}
+/* 变更页左侧那列仓库侧栏：宽度对着分支树那栏（208px）收窄一点 —— 变更树本身还有
+   一列目录缩进要放。 */
+.dsh-git-reposide{width:168px;flex:none;overflow:auto;padding:2px 0 6px;border-right:1px solid var(--dsw-alias-border-l1)}
+/* 按仓库分组的组头：左栏分支树（多选时）和变更树（多选时）共用。点它就是「只看
+   这个仓库」，所以它是可点的，但样式是标题 —— 组里那些行才是内容。 */
+.dsh-git-rgroup{display:flex;align-items:center;gap:5px;margin-top:4px;padding:3px 6px;border-radius:4px;font-weight:600;cursor:pointer;white-space:nowrap}
+.dsh-git-rgroup:hover{background:var(--dsw-alias-bg-layer-2)}
+.dsh-git-rgroup .dsh-git-repo-dim{margin-left:0;padding-left:4px}
 `)
     }, 'dsh-git-idea panel styles')
 

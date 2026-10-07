@@ -17,7 +17,7 @@
        reads this row implies, and which of them has anything to say. One of the
        two sections is skipped outright when the row already knows it is empty,
        which is the difference between one child process and two. */
-    function changeDiffTarget(file) {
+    function changeDiffTarget(file, repo) {
       return {
         kind: 'file',
         path: text(file.path),
@@ -26,6 +26,9 @@
         workCode: text(file.workCode),
         untracked: file.untracked === true,
         status: text(file.displayCode),
+        /* 多仓库的变更分组里，这个文件属于它自己那个仓库；单仓库的调用方不传，
+           空 = 生效仓库。 */
+        repo: text(repo),
       }
     }
 

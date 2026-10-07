@@ -80,6 +80,11 @@
       gitPath: '',
       /* 这三条是插件自己给 git 的实参，不是 git 设置的副本。 */
       fetchPrune: true, pullRebase: false, pushSetUpstream: false,
+      /* 手动登记的仓库清单（按工作区分组，24-repos.js / 61-repos.js）。这里必须跟着
+         带上：设置页保存的是**整份**配置，客户端的归一化把它丢了的话，读者在设置页
+         改一次 git 路径，手动仓库清单就没了。原样搬运、不做清洗 —— 那是 Host 那边
+         normalizeConfig 的职责，两边各写一份迟早漂移。 */
+      repos: {},
     }
     let pluginConfig = Object.assign({}, PLUGIN_CONFIG_DEFAULTS)
     let pluginConfigPath = ''
@@ -105,6 +110,8 @@
       out.fetchPrune = raw.fetchPrune !== false
       out.pullRebase = raw.pullRebase === true
       out.pushSetUpstream = raw.pushSetUpstream === true
+      /* repos 见上面 PLUGIN_CONFIG_DEFAULTS 里的说明：原样搬运，Host 那边负责清洗。 */
+      out.repos = raw.repos != null && typeof raw.repos === 'object' && !Array.isArray(raw.repos) ? raw.repos : {}
       return out
     }
 
