@@ -85,6 +85,10 @@
          改一次 git 路径，手动仓库清单就没了。原样搬运、不做清洗 —— 那是 Host 那边
          normalizeConfig 的职责，两边各写一份迟早漂移。 */
       repos: {},
+      /* 快捷命令（面板 ⚡ 按钮，客户端 78-actions.js / host 78-actions.js）。和 repos
+         不同，这一项两边都做归一化：它是读者直接编辑的清单，编辑器保存前要拿「合法
+         条目 + 条数」做校验，Host 那份 normalizeConfig 是落盘前的最后一道关卡。 */
+      quickCommands: [],
     }
     let pluginConfig = Object.assign({}, PLUGIN_CONFIG_DEFAULTS)
     let pluginConfigPath = ''
@@ -112,6 +116,29 @@
       out.pushSetUpstream = raw.pushSetUpstream === true
       /* repos 见上面 PLUGIN_CONFIG_DEFAULTS 里的说明：原样搬运，Host 那边负责清洗。 */
       out.repos = raw.repos != null && typeof raw.repos === 'object' && !Array.isArray(raw.repos) ? raw.repos : {}
+      out.quickCommands = normalizeQuickCommands(raw.quickCommands)
+      return out
+    }
+
+    /* 快捷命令清单的形状：[{id,name,command}]。与 host 70-config.js 的 normalizeConfig
+       是同一条规矩的两半 —— 客户端这份管「屏幕上见到的」，编辑器靠它数清条数（上限
+       50，超出的那次保存由编辑器自己拦下并说明，这里静默截断只作兜底）。 */
+    const QUICK_COMMANDS_MAX = 50
+    const QUICK_NAME_MAX = 120
+    const QUICK_TEMPLATE_MAX = 2000
+    function normalizeQuickCommands(raw) {
+      if (!Array.isArray(raw)) return []
+      const out = []
+      for (let i = 0; i < raw.length && out.length < QUICK_COMMANDS_MAX; i += 1) {
+        const one = raw[i]
+        if (one == null || typeof one !== 'object') continue
+        const name = typeof one.name === 'string' ? one.name.trim().slice(0, QUICK_NAME_MAX) : ''
+        const command = typeof one.command === 'string' ? one.command.slice(0, QUICK_TEMPLATE_MAX) : ''
+        if (name.length === 0 || command.trim().length === 0) continue
+        const id = typeof one.id === 'string' && one.id.trim().length > 0 ? one.id.trim().slice(0, 200)
+          : (name + '-' + String(Date.now()))
+        out.push({ id: id, name: name, command: command })
+      }
       return out
     }
 

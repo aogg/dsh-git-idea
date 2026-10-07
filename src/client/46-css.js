@@ -420,6 +420,74 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-cmdpre{flex:1;min-width:0;margin:0;white-space:pre-wrap;word-break:break-all;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:16px}
 .dsh-git-cmdnote{flex:none;padding-top:5px;font-size:10px;color:var(--dsw-alias-label-secondary)}
 .dsh-git-cmdtrunc{flex:none;font-size:10px;color:var(--dsw-alias-state-warn-primary)}
+
+/* ── ⋯ / ⚡：branch 右边那两个下拉按钮与它们的浮层（78-actions.js）──
+    按钮的样子照 .dsh-git-tool / .dsh-git-tool-ico 画（同尺寸、同圆角、同悬停），类名
+    刻意分开：那两个类说的是「作用于选中提交的四个工具」，这两个是「打开一个菜单」。 */
+.dsh-git-acts{position:relative;display:inline-flex;gap:3px;flex:none}
+.dsh-git-acts-btn{display:inline-flex;align-items:center;justify-content:center;gap:3px;width:26px;height:26px;padding:0;border:1px solid transparent;border-radius:5px;background:0 0;color:var(--dsw-alias-label-primary);font-family:inherit;font-size:12px;line-height:16px;cursor:pointer;flex:none}
+.dsh-git-acts-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
+.dsh-git-acts-btn:disabled{opacity:.4;cursor:default}
+.dsh-git-acts-btn-on{background:var(--dsw-alias-interactive-bg-hover);border-color:var(--dsw-alias-border-l1)}
+/* 浮层挂在 .dsh-git-acts 那一格（position:relative），右对齐按钮、向下展开 —— 工具条
+    在面板顶部，向下展开落在提交列表上面，z 高于列表。 */
+.dsh-git-menu{position:absolute;top:calc(100% + 4px);right:0;z-index:45;min-width:230px;max-width:320px;padding:4px;display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1);box-shadow:var(--dsw-elevation-soft);color:var(--dsw-alias-label-primary);font-size:12px}
+.dsh-git-menu-item{display:flex;align-items:center;gap:6px;width:100%;box-sizing:border-box;padding:5px 8px;border:0;border-radius:5px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:16px;text-align:left;cursor:pointer}
+.dsh-git-menu-item:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
+.dsh-git-menu-item:disabled{opacity:.45;cursor:default}
+.dsh-git-menu-danger{color:var(--dsw-alias-state-error-primary)}
+.dsh-git-menu-sep{flex:none;height:1px;margin:3px 6px;background:var(--dsw-alias-border-l1)}
+.dsh-git-menu-dim{color:var(--dsw-alias-label-secondary);font-size:11px}
+.dsh-git-menu-pad{padding:6px 8px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary)}
+.dsh-git-menu-name{flex:none;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+/* 快捷命令那行：名字 + 代值预览各占一行 —— 一行塞下两条信息时预览先被挤没。 */
+.dsh-git-menu-cmd{flex-direction:column;align-items:flex-start;gap:1px}
+.dsh-git-menu-cmd .dsh-git-menu-dim{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 删除分支的二级列表：缩进 + 细线，长列表自己滚。 */
+.dsh-git-menu-sub{display:flex;flex-direction:column;max-height:220px;overflow:auto;margin:1px 0 1px 6px;padding-left:8px;border-left:1px solid var(--dsw-alias-border-l1)}
+.dsh-git-menu-branch .dsh-git-menu-dim{margin-left:auto;flex:none}
+
+/* Ctrl+点击挑进多选的提交行：左缘一道强调条 —— 选中行是整行底色，多选得在选中之外
+    另有可区分的记号（两者可同时在一行上）。 */
+.dsh-git-crow-multi{box-shadow:inset 2px 0 0 var(--dsw-alias-state-warn-primary)}
+
+/* 压缩的内联表单：区间摘要独占一行，信息框（多行）在下面占满余宽。 */
+.dsh-git-prompt-squash{flex-wrap:wrap;align-items:flex-start;row-gap:4px}
+.dsh-git-prompt-squash .dsh-git-hint{flex:1 1 100%}
+.dsh-git-prompt-squash .dsh-git-clearable{flex:1 1 260px}
+.dsh-git-prompt-squash textarea.dsh-git-input{min-height:72px}
+
+/* 成功条：与 .dsh-git-error 同一个提示位、同一个密度，绿色系、等宽（多半是命令输出）。 */
+.dsh-git-oknote{flex:none;box-sizing:border-box;max-height:120px;overflow:auto;color:var(--dsw-alias-state-success-primary);background:var(--dsw-alias-bg-layer-2);border-bottom:1px solid var(--dsw-alias-border-l1);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
+
+/* ── 快捷命令的确认框与编辑器 ──
+    面板里是覆盖层（盖住正文、居中一张卡片）；设置页里同一张卡片直接排在管理组下面。 */
+.dsh-git-qc-overlay{position:absolute;inset:0;z-index:50;display:flex;padding:14px;background:var(--dsw-alias-bg-layer-1);overflow:auto}
+.dsh-git-qc-box{margin:auto;width:min(620px,100%);max-height:100%;box-sizing:border-box;display:flex;flex-direction:column;gap:8px;padding:12px 14px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1);box-shadow:var(--dsw-elevation-soft)}
+.dsh-git-qc-head{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600}
+.dsh-git-qc-x{display:inline-flex;align-items:center;justify-content:center;flex:none;margin-left:auto;width:18px;height:18px;padding:0;border:0;border-radius:4px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:13px;line-height:1;cursor:pointer}
+.dsh-git-qc-x:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.dsh-git-qc-field{display:flex;flex-direction:column;gap:3px;font-size:11px}
+.dsh-git-qc-k{color:var(--dsw-alias-label-secondary)}
+.dsh-git-qc-hint{font-size:11px;color:var(--dsw-alias-label-secondary)}
+/* 变量 chip：虚线药丸 + 等宽 —— 插进模板里的就是它身上写的这串字。 */
+.dsh-git-qc-chips{display:flex;flex-wrap:wrap;gap:4px}
+.dsh-git-qc-chip{border:1px dashed var(--dsw-alias-border-l1);border-radius:999px;padding:1px 7px;background:transparent;color:var(--dsw-alias-label-primary);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:16px;cursor:pointer}
+.dsh-git-qc-chip:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dsh-git-qc-vars{display:flex;flex-direction:column;gap:2px;padding:6px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;background:var(--dsw-alias-bg-base)}
+.dsh-git-qc-varrow{display:flex;gap:8px;font-size:11px;line-height:16px}
+.dsh-git-qc-varname{flex:none;width:180px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.dsh-git-qc-row{display:flex;align-items:center;gap:8px;padding:3px 0}
+.dsh-git-qc-name{flex:none;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.dsh-git-qc-cmd{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:var(--dsw-alias-label-secondary)}
+.dsh-git-qc-row .dsh-git-btn{flex:none}
+.dsh-git-qc-empty{padding:6px 2px;font-size:11px;line-height:18px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dsw-alias-label-secondary)}
+.dsh-git-qc-inrow{display:flex;align-items:center;gap:8px}
+.dsh-git-qc-inhint{flex:none;width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--dsw-alias-label-secondary)}
+.dsh-git-qc-inrow .dsh-git-input{flex:1 1 auto;width:auto}
+/* 解析预览：等宽、pre-wrap、不截断 —— 读者确认的就是这一整条命令。 */
+.dsh-git-qc-pre{max-height:180px;overflow:auto;padding:6px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;background:var(--dsw-alias-bg-base);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:16px;white-space:pre-wrap;word-break:break-all}
+.dsh-git-qc-actions{display:flex;align-items:center;gap:8px}
 `)
     }, 'dsh-git-idea panel styles')
 

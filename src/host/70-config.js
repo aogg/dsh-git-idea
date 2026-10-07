@@ -34,6 +34,9 @@ function normalizeConfig(raw) {
        换机器打开同一个工作区，清单应该还是同一份；localStorage 那层（20-prefs.js）
        留给「这台浏览器怎么看」。 */
     repos: {},
+    /* 快捷命令（面板的 ⚡ 按钮，78-actions.js 两侧）。跟 repos 同一个理由：它描述的
+       是「这个项目要一键跑什么」，跟着插件走而不是跟着某台浏览器。 */
+    quickCommands: [],
   }
   if (raw == null || typeof raw !== 'object') return out
   if (isStr(raw.initBranch)) out.initBranch = raw.initBranch.trim().slice(0, 120)
@@ -43,6 +46,29 @@ function normalizeConfig(raw) {
   out.pullRebase = raw.pullRebase === true
   out.pushSetUpstream = raw.pushSetUpstream === true
   out.repos = normalizeRepoMap(raw.repos)
+  out.quickCommands = normalizeQuickCommands(raw.quickCommands)
+  return out
+}
+
+/* 快捷命令清单：[{id,name,command}]。id 是客户端起的稳定串（名称+时间戳），这里只负责
+   「形状对、不超限」：名字/模板为空的条目丢掉，超过 50 条的截断 —— Host 是这份文件的
+   最后一道关卡，客户端归一化（20-prefs.js）拦得住的这里也得拦得住。 */
+const QUICK_COMMANDS_MAX = 50
+const QUICK_NAME_MAX = 120
+const QUICK_COMMAND_LEN_MAX = 2000
+function normalizeQuickCommands(raw) {
+  if (!Array.isArray(raw)) return []
+  const out = []
+  for (let i = 0; i < raw.length && out.length < QUICK_COMMANDS_MAX; i += 1) {
+    const one = raw[i]
+    if (one == null || typeof one !== 'object') continue
+    const name = isStr(one.name) ? one.name.trim().slice(0, QUICK_NAME_MAX) : ''
+    const command = isStr(one.command) ? one.command.slice(0, QUICK_COMMAND_LEN_MAX) : ''
+    if (name.length === 0 || command.trim().length === 0) continue
+    const id = isStr(one.id) && one.id.trim().length > 0 ? one.id.trim().slice(0, 200)
+      : (name + '-' + String(Date.now()))
+    out.push({ id: id, name: name, command: command })
+  }
   return out
 }
 

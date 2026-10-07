@@ -289,6 +289,13 @@
             + ' · git pull' + (pdraft.pullRebase === true ? ' --rebase' : '')
             + ' · ' + (pdraft.pushSetUpstream === true ? 'git push -u <remote> <branch>（没有上游时）' : 'git push（没有上游时由面板问一句）'))),
 
+        /* 快捷命令的管理组：和面板 ⚡ 菜单里的编辑器是同一个组件（78-actions.js）——
+           同一份配置、同一套校验，两处改的都是同一样东西。 */
+        h('div', { className: 'dsh-git-set-group' }, '快捷命令'),
+        h('div', { className: 'dsh-git-set-hint' },
+          '自定义命令模板，面板历史的 ⚡ 按钮一键执行；{branch}、{hash} 这类变量按当前分支和选中的提交代值。与面板共用同一份（也保存在上面那个 json 里）。'),
+        h(QuickCommandsEditor, { key: 'qc', initial: 'list' }),
+
         h(GitToolchainGroup),
 
         pluginConfigError.length > 0

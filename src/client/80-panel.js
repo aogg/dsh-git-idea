@@ -96,6 +96,25 @@
       const [nodeBox] = React.useState(function () { return { node: null } })
       const [armed, setArmed] = React.useState('')
       const [prompt, setPrompt] = React.useState(null)
+      /* ── Ctrl+点击的多选提交 ──
+
+         与单选（selected）独立并存：普通点击照旧单选+读详情，Ctrl/Cmd+点击把那一行
+         挑进/移出这份集合；拣选/还原/标签/分支按钮仍作用于单选那条。存的是 hash 数组，
+         顺序跟着图走（图重读后会按眼前的列表修剪一次）。 */
+      const [multiSel, setMultiSel] = React.useState([])
+      /* ⋯（更多操作）/ ⚡（快捷命令）两个下拉的开合：null = 都关着。 */
+      const [menuOpen, setMenuOpen] = React.useState(null)
+      /* 快捷命令的统一执行确认框（拿着哪条定义）与编辑器覆盖层（'new' 直接进编辑态、
+         'list' 进列表态）。 */
+      const [qcConfirm, setQcConfirm] = React.useState(null)
+      const [qcEditor, setQcEditor] = React.useState(null)
+      /* 绿色成功条（快捷命令的输出、删除分支的结果句）：和 error 同一个提示位，下一次
+         操作开始时一起清掉 —— 提示位的规矩是一次只说一件事。 */
+      const [okNote, setOkNote] = React.useState('')
+      /* 两个下拉按钮的节点盒：「点外面关掉」要把触发按钮算在里面（见 78-actions.js
+         的 useOutsideDismiss），否则点按钮会先被关一次、又被 click 开一次。 */
+      const [moreBox] = React.useState(function () { return { node: null } })
+      const [quickBox] = React.useState(function () { return { node: null } })
       const [needsUpstream, setNeedsUpstream] = React.useState(false)
       /* The file whose patch is on screen, and a counter the refresh button
          bumps. Null means the list the reader came from is on screen — the two
@@ -289,6 +308,12 @@
         setSelectedKey(null)
         setDetail(null)
         setDiffTarget(null)
+        /* 多选、下拉、覆盖层都是「对着眼前这份列表」的状态：仓库一换全部作废。 */
+        setMultiSel([])
+        setMenuOpen(null)
+        setQcConfirm(null)
+        setQcEditor(null)
+        setOkNote('')
         setUntrackedOpen({})
         setUntrackedFiles({})
       }
@@ -377,30 +402,38 @@
          it would repaint stale data and look like nothing happened. */
       const refresh = function () {
         setArmed('')
+        /* 刷新 = 整棵树重读：多选对着的是旧列表，一并清掉（见下面那个筛选 effect 的
+           注释）。 */
+        setMultiSel([])
+        setOkNote('')
         reloadChanges()
       }
 
-      /* 哪些操作能把整棵树改掉：切分支、pull、以及 merge/cherry-pick/revert（开始、
-         继续、跳过、中止都算）会重写工作区，它们的答案必须是一次全树读。别的（提交、
-         暂存、取消暂存、fetch、push、tag、建/删分支）只动索引或引用 —— 那里用屏上那些
-         路径确认就够了。真机上量到的是：一次全树读 8–10s，而且这期间整条 RPC 通道都被
-         它占着，为一次「提交」让读者等十秒、十秒内点什么都要排队，是没有道理的。 */
-      const REWRITES_TREE = ['git/checkout', 'git/pull', 'git/sequence', 'git/init']
+      /* 哪些操作能把整棵树改掉：切分支、pull、merge/cherry-pick/revert（开始、继续、
+         跳过、中止都算）和压缩（soft reset 把 HEAD 挪到段首的父提交、索引变成整段的
+         合计）会重写工作区/引用，它们的答案必须是一次全树读。别的（提交、暂存、取消
+         暂存、fetch、push、tag、建/删分支）只动索引或引用 —— 那里用屏上那些路径确认
+         就够了。真机上量到的是：一次全树读 8–10s，而且这期间整条 RPC 通道都被它占着，
+         为一次「提交」让读者等十秒、十秒内点什么都要排队，是没有道理的。 */
+      const REWRITES_TREE = ['git/checkout', 'git/pull', 'git/sequence', 'git/init', 'git/squash']
 
       /* One path for every panel operation. A failed operation still re-reads,
          because the failures that matter — a conflicting cherry-pick, merge or
-         revert — leave the repository in a different state than they found it. */
-      const runOp = function (method, payload) {
+         revert — leave the repository in a different state than they found it.
+         onOk（可选）只在成功后跑一次：压缩用它清空多选 —— 失败时选择要留着好重试。 */
+      const runOp = function (method, payload, onOk) {
         if (busy) return
         setBusy(true)
         setArmed('')
         setError(null)
+        setOkNote('')
         setNeedsUpstream(false)
         panelBox.needFull = REWRITES_TREE.indexOf(method) >= 0
         const request = base(appliedRepo)
         if (payload != null) Object.assign(request, payload)
         rpc(method, request).then(function () {
           setBusy(false)
+          if (typeof onOk === 'function') onOk()
           bump()
         }, function (failure) {
           setBusy(false)
@@ -472,6 +505,15 @@
         const value = prompt.value.trim()
         if (value.length === 0) return
         const kind = prompt.kind
+        /* 压缩走自己的载荷：base 是最旧选中项的父提交，expect 是压缩前的 HEAD（防呆，
+           见 host 78-actions.js 的顺序）。成功后多选清空 —— 这一段已经不存在了。 */
+        if (kind === 'squash') {
+          const squashPayload = { base: text(prompt.base), message: value }
+          if (text(prompt.expect).length > 0) squashPayload.expect = text(prompt.expect)
+          setPrompt(null)
+          runOp('git/squash', squashPayload, function () { setMultiSel([]) })
+          return
+        }
         const at = selected !== null ? selected : ''
         setPrompt(null)
         if (kind === 'tag') runOp('git/tag', { name: value, at: at })
@@ -798,6 +840,92 @@
         })
       }, [appliedRepo, sessionId])
 
+      /* 提交行的点击入口：普通点击照旧走 openCommit；Ctrl/Cmd+点击只动多选（用函数式
+         setState，所以这个回调不依赖 multiSel，行级 memo 仍然成立）。 */
+      const pickCommit = useCallback(function (hash, event) {
+        if (event != null && (event.ctrlKey === true || event.metaKey === true)) {
+          setMultiSel(function (previous) {
+            const at = previous.indexOf(hash)
+            if (at >= 0) {
+              const next = previous.slice()
+              next.splice(at, 1)
+              return next
+            }
+            return previous.concat([hash])
+          })
+          return
+        }
+        openCommit(hash)
+      }, [openCommit])
+
+      /* ── 多选的清空与修剪 ──
+
+         多选是「对着眼前这份列表」选出来的：分支范围、筛选、搜索一变，所选的那段就
+         不再是眼前这段；仓库切换、⟳、切页签、压缩完成各自在自己的路径上清（applyRepo /
+         refresh / 下面这个 tab effect / submitPrompt 的 onOk）。 */
+      React.useEffect(function () { setMultiSel([]) }, [activeRef, allRefs, search, regexSearch, caseSensitive, author, datePreset, pathFilter])
+      React.useEffect(function () { setMultiSel([]) }, [tab])
+      /* 图重读之后把多选里已不在列表上的提交剪掉：角标和「压缩已选 N 个」说的都得是
+         眼前真实存在的行，顺序也顺手换成图上的顺序（{hashes} 变量按它代值）。 */
+      React.useEffect(function () {
+        if (multiSel.length === 0) return
+        if (graph == null || graph.ok !== true || !Array.isArray(graph.commits)) return
+        setMultiSel(function (previous) {
+          const keep = []
+          for (let i = 0; i < graph.commits.length; i += 1) {
+            const hash = text(graph.commits[i].hash)
+            if (previous.indexOf(hash) >= 0) keep.push(hash)
+          }
+          return keep.length === previous.length ? previous : keep
+        })
+      }, [graph])
+
+      /* ── 压缩入口（⋯ 菜单点「压缩提交」后走到这里）──
+
+         区间按**图上的顺序**算（多选记录的是点击顺序，而压缩语义是「最旧到最新这一整
+         段」）：soft reset 的落点是最旧选中项的父提交，防呆的 expect 是压缩前的 HEAD。
+         reset --soft 只会落在当前 HEAD 上，所以段的新端必须是 HEAD —— 两道门：
+         筛过的列表（分支范围、搜索、作者、日期、路径）第一行未必是 HEAD，expect 也
+         无从比对，要求在当前分支的无筛选视图里选；无筛选视图的列表第一行就是 HEAD，
+         所选最新一条必须是它 —— 否则真正被压掉的区间（一直到 HEAD）比提示里说的那段
+         更长，中间隔着的一段是压不掉的。 */
+      const openSquash = function () {
+        const scoped = allRefs || activeRef.length > 0 || search.length > 0 || author.length > 0
+          || datePreset !== 'all' || pathFilter.length > 0
+        if (scoped) {
+          setError('压缩要对着当前分支的完整历史选：先清掉分支范围、筛选与搜索，再从列表第一行（HEAD）开始 Ctrl+点击选起')
+          return
+        }
+        const commits = graph != null && graph.ok === true && Array.isArray(graph.commits) ? graph.commits : []
+        const spots = []
+        for (let i = 0; i < commits.length; i += 1) {
+          if (multiSel.indexOf(text(commits[i].hash)) >= 0) spots.push(i)
+        }
+        if (spots.length < 2) return
+        if (spots[0] !== 0) {
+          setError('压缩区间的最新端必须是 HEAD（列表第一行）：把第一行也 Ctrl+点击 选进来再压 —— 列表中间的一段压不掉')
+          return
+        }
+        const newest = commits[spots[0]]
+        const oldest = commits[spots[spots.length - 1]]
+        const parents = Array.isArray(oldest.parents) ? oldest.parents : []
+        if (parents.length === 0 || text(parents[0]).length === 0) {
+          setError('所选最旧的那个提交（' + text(oldest.short) + '）没有父提交 —— 仓库的第一个提交压不进任何区间')
+          return
+        }
+        const count = spots[spots.length - 1] - spots[0] + 1
+        /* 预填：最新一条的 subject 起头，下面缩进列出段内各条 subject，可编辑。 */
+        const lines = [text(newest.subject)]
+        for (let i = spots[0] + 1; i <= spots[spots.length - 1]; i += 1) {
+          lines.push('* ' + text(commits[i].subject))
+        }
+        setPrompt({
+          kind: 'squash', value: lines.join('\n'), base: text(parents[0]),
+          expect: text(commits[0].hash),
+          hint: '将 ' + text(oldest.short) + '…' + text(newest.short) + ' 共 ' + String(count) + ' 个提交压缩为 1 个',
+        })
+      }
+
       const toggle = function (path) {
         setCollapsed(function (previous) {
           const next = Object.assign({}, previous)
@@ -1035,6 +1163,49 @@
       const behind = work != null && work.ok === true ? work.behind : 0
       const sequencer = work != null && work.ok === true ? text(work.sequencer) : ''
       const conflicts = status != null && status.ok === true ? status.unmerged.length : 0
+
+      /* ── 快捷命令：变量上下文 + 执行 ──
+
+         单选/详情属于「选中的那一条」（detail 就是它），{hashes} 属于多选（无多选退化为
+         选中单条）。执行成功给绿色成功条（stdout 尾部 ~400 字符），失败进 error 区说
+         「命令 + 原话」；两条路都照 runOp 的善后 bump 一次 —— 自定义命令可能动了 refs，
+         Host 那边也把读缓存作废了（78-actions.js 的 quickRun）。放在 currentBranch /
+         selectedCommit / detail 都已就位的地方：上下文是每帧现算的字面量。 */
+      const quickCommands = plugin != null && Array.isArray(plugin.quickCommands) ? plugin.quickCommands : []
+      const quickCtx = {
+        branch: currentBranch,
+        upstream: work != null && work.ok === true ? text(work.upstream) : '',
+        hash: selectedCommit,
+        hashes: multiSel.length > 0 ? multiSel.join(' ') : selectedCommit,
+        subject: detail != null && detail.ok === true ? text(detail.subject) : '',
+        author: detail != null && detail.ok === true ? text(detail.author) : '',
+        email: detail != null && detail.ok === true ? text(detail.email) : '',
+        date: detail != null && detail.ok === true ? text(detail.date) : '',
+        tags: detail != null && detail.ok === true && Array.isArray(detail.tags) ? detail.tags.join(',') : '',
+      }
+      const runQuick = function (command) {
+        if (busy) return
+        setBusy(true)
+        setQcConfirm(null)
+        setQcEditor(null)
+        setMenuOpen(null)
+        setError(null)
+        setOkNote('')
+        const request = base(appliedRepo)
+        request.command = command
+        rpc('git/quick', request, '快捷命令执行失败').then(function (result) {
+          setBusy(false)
+          const raw = text(result.stdout).replace(/\s+$/, '')
+          const shown = raw.length > 400 ? '…' + raw.slice(raw.length - 400) : raw
+          setOkNote('$ ' + command + '\n' + (shown.length > 0 ? shown : '（没有输出）'))
+          bump()
+        }, function (failure) {
+          setBusy(false)
+          const said = commandDetail(failure.reply)
+          setError('$ ' + command + '\n' + (said.length > 0 ? said : failureText(failure)))
+          bump()
+        })
+      }
 
       const tool = function (key, label, title, onClick, options) {
         const opts = options == null ? {} : options
@@ -1274,6 +1445,57 @@
         tool('branch', h(BranchIcon, { size: 15 }), '分支：从这个提交新建分支并切过去',
           function () { setArmed(''); setPrompt({ kind: 'branch', value: '' }) },
           { disabled: !canAct, ico: true }),
+        /* branch 右边那两个图标按钮：⋯（更多操作，带 Ctrl 多选数的角标）与 ⚡（快捷
+           命令）。样式照 dsh-git-tool-ico 画但类名分开 —— 见 78-actions.js 开头的说明；
+           下拉浮层挂在同一格（position:relative），跟着按钮走。 */
+        h('span', { key: 'acts', className: 'dsh-git-acts' },
+          h('button', {
+            key: 'more', type: 'button',
+            className: 'dsh-git-acts-btn' + (menuOpen === 'more' ? ' dsh-git-acts-btn-on' : ''),
+            title: '更多操作：压缩提交（Ctrl+点击多选）、删除分支',
+            disabled: !repoOk,
+            ref: function (node) { moreBox.node = node },
+            onClick: function (event) {
+              stopEvent(event)
+              setMenuOpen(menuOpen === 'more' ? null : 'more')
+            },
+          }, '⋯',
+            multiSel.length > 0 ? h('span', { key: 'b', className: 'dsh-git-tool-badge' }, String(multiSel.length)) : null),
+          h('button', {
+            key: 'quick', type: 'button',
+            className: 'dsh-git-acts-btn' + (menuOpen === 'quick' ? ' dsh-git-acts-btn-on' : ''),
+            title: '快捷命令：一键执行自定义的命令模板（变量按当前分支和选中的提交代值）',
+            disabled: !repoOk,
+            ref: function (node) { quickBox.node = node },
+            onClick: function (event) {
+              stopEvent(event)
+              setMenuOpen(menuOpen === 'quick' ? null : 'quick')
+            },
+          }, '⚡'),
+          menuOpen === 'more'
+            ? h(MoreActionsMenu, {
+                key: 'm', open: true,
+                onClose: function () { setMenuOpen(null) },
+                trigger: moreBox,
+                count: multiSel.length,
+                onSquash: function () { setMenuOpen(null); openSquash() },
+                reqBase: base(appliedRepo),
+                refs: refs, current: currentName, busy: busy,
+                onNote: function (said) { setOkNote(said) },
+                onError: function (said) { setError(said) },
+              })
+            : null,
+          menuOpen === 'quick'
+            ? h(QuickCommandsMenu, {
+                key: 'q', open: true,
+                onClose: function () { setMenuOpen(null) },
+                trigger: quickBox,
+                commands: quickCommands, ctx: quickCtx,
+                onPick: function (one) { setMenuOpen(null); setQcConfirm(one) },
+                onCreate: function () { setMenuOpen(null); setQcEditor('new') },
+                onManage: function () { setMenuOpen(null); setQcEditor('list') },
+              })
+            : null),
         /* Pinned to the right end of the strip, and short: the room it reserves
            is room the filters cannot use, and "200 条" says as much as
            "200 条匹配" once the filters above it are visible. */
@@ -1282,7 +1504,33 @@
           title: String(commitCount) + (hasFilter ? ' 条匹配当前筛选' : ' 条提交'),
         }, String(commitCount)))
 
-      const promptRow = prompt === null ? null : h('div', { className: 'dsh-git-prompt' },
+      /* 压缩的内联表单：提示行说清区间（abc…def 共 N 个 → 1 个），下面是多行的提交信息
+         （预填：最新 subject 起头 + 段内各条缩进列出，可编辑）。Enter 确认、Shift+Enter
+         换行、Esc 取消 —— 信息本来就是多行的，Enter 直接确认与单行 prompt 一个手感。 */
+      const editSquashPrompt = function (value) {
+        setPrompt({ kind: 'squash', value: value, base: prompt.base, expect: prompt.expect, hint: prompt.hint })
+      }
+      const promptRow = prompt === null ? null : prompt.kind === 'squash'
+        ? h('div', { className: 'dsh-git-prompt dsh-git-prompt-squash' },
+            h('span', { key: 'l', className: 'dsh-git-hint' }, text(prompt.hint)),
+            clearable('m', h('textarea', {
+              key: 'm', className: 'dsh-git-input', autoFocus: true, rows: 4, value: prompt.value,
+              placeholder: '压缩后的提交信息（Enter 压缩，Shift+Enter 换行）',
+              onChange: function (event) { editSquashPrompt(event.target.value) },
+              onKeyDown: function (event) {
+                if (event.key === 'Enter' && event.shiftKey !== true) { event.preventDefault(); submitPrompt() }
+                if (event.key === 'Escape') setPrompt(null)
+              },
+            }), prompt.value.length > 0, function () { editSquashPrompt('') }, 'dsh-git-clearable-area'),
+            h('button', {
+              key: 'ok', type: 'button', className: 'dsh-git-btn dsh-git-primary',
+              disabled: prompt.value.trim().length === 0, onClick: submitPrompt,
+            }, '压缩'),
+            h('button', {
+              key: 'no', type: 'button', className: 'dsh-git-btn',
+              onClick: function () { setPrompt(null) },
+            }, '取消'))
+        : h('div', { className: 'dsh-git-prompt' },
         h('span', { key: 'l', className: 'dsh-git-hint' }, prompt.kind === 'tag' ? '标签名' : '新分支名'),
         clearable('i', h('input', {
           key: 'i', className: 'dsh-git-input', autoFocus: true, value: prompt.value,
@@ -1555,7 +1803,8 @@
             h(CommitList, {
               graph: graph,
               selected: selected,
-              onPick: openCommit,
+              multi: multiSel,
+              onPick: pickCommit,
               /* Functional, not `maxCount + PAGE_COMMITS`: two clicks before the
                  next render would otherwise both read the same old value and lose
                  a page. */
@@ -1612,9 +1861,29 @@
         h('div', { key: 'gne', className: 'dsh-git-grip dsh-git-grip-ne', title: '拖动调整宽高', onPointerDown: startDrag('ne') }),
         header,
         banner,
+        /* 成功条与 error 同一个提示位（一次只说一件事，下一次操作开始时一起清）。也
+           pre-wrap：快捷命令的输出本来就是多行的。 */
+        okNote.length > 0 ? h('div', { className: 'dsh-git-oknote', style: { padding: '4px 10px', whiteSpace: 'pre-wrap' } }, okNote) : null,
         /* pre-wrap：这条里出现换行的地方都是「那就是两条命令」，折成一行读起来是
            一句话里塞了两条命令。git 自己的多行原话也顺便能按原样读。 */
         error !== null ? h('div', { className: 'dsh-git-error', style: { padding: '4px 10px', whiteSpace: 'pre-wrap' } }, error) : null,
-        body)
+        body,
+        /* 快捷命令的确认框与编辑器：面板内覆盖层（盖住正文、不盖掉面板本体），关掉即
+           卸载 —— 它们自己的草稿不需要在关掉后还活着。 */
+        qcConfirm !== null
+          ? h('div', { key: 'qcc', className: 'dsh-git-qc-overlay' },
+              h(QuickCommandConfirm, {
+                key: 'c', def: qcConfirm, ctx: quickCtx,
+                onExecute: runQuick,
+                onClose: function () { setQcConfirm(null) },
+              }))
+          : null,
+        qcEditor !== null
+          ? h('div', { key: 'qce', className: 'dsh-git-qc-overlay' },
+              h(QuickCommandsEditor, {
+                key: qcEditor, initial: qcEditor,
+                onClose: function () { setQcEditor(null) },
+              }))
+          : null)
     }
 

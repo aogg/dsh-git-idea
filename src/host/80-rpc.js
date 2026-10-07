@@ -244,5 +244,12 @@ onRpc('git/tag', function (input) {
   return panelMutate(input, ['tag', name])
 })
 
+/* 压缩与快捷命令（78-actions.js）：一个是多步改写（身份预检 → 防呆 → 干净检查 →
+   soft reset → commit，失败兜底回滚），一个是把读者自定义的命令行原样交给会话沙箱
+   里的 shell。 */
+onRpc('git/squash', function (input) { return squashRun(input) })
+
+onRpc('git/quick', function (input) { return quickRun(input) })
+
   },
 }

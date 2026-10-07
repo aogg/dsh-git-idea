@@ -38,6 +38,15 @@ async function readCommitDetail(input) {
     for (let i = 0; i < rows.length; i += 1) if (rows[i].length > 0) branches.push(rows[i])
   }
 
+  /* 指在这个提交上的标签（一行一个）。快捷命令的 {tags} 变量用它；读不动（比如一个
+     还没有引用的空仓库）就是空数组，不说成失败。加字段，别动上面的既有字段。 */
+  const tags = []
+  const tagged = await git(args, ['tag', '--points-at', hash], null, {})
+  if (tagged.exitCode === 0) {
+    const rows = tagged.stdout.split('\n')
+    for (let i = 0; i < rows.length; i += 1) if (rows[i].length > 0) tags.push(rows[i])
+  }
+
   return {
     ok: true,
     hash: fields[0] === undefined ? hash : fields[0],
@@ -49,6 +58,7 @@ async function readCommitDetail(input) {
     body: field(fields, 6).replace(/\s+$/, ''),
     files: files,
     branches: branches,
+    tags: tags,
   }
 }
 

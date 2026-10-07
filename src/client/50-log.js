@@ -70,7 +70,8 @@
     /* One commit, as its own component so that picking a commit repaints the two
        rows whose highlight changed instead of every row on screen. `selected` is
        a boolean rather than the picked hash for exactly that reason: the other
-       rows' props are then untouched by a new selection. */
+       rows' props are then untouched by a new selection. `multi`（Ctrl+点击挑进
+       多选的那批）同理也是布尔。 */
     function CommitRow(props) {
       const commit = props.commit
       const refs = splitRefs(commit.refs)
@@ -79,9 +80,13 @@
         chips.push(h('span', { className: 'dsh-git-ref dsh-git-ref-' + refKind(refs[k]), key: 'r' + k }, refs[k]))
       }
       return h('div', {
-        className: 'dsh-git-crow' + (props.selected === true ? ' dsh-git-crow-sel' : ''),
+        className: 'dsh-git-crow'
+          + (props.selected === true ? ' dsh-git-crow-sel' : '')
+          + (props.multi === true ? ' dsh-git-crow-multi' : ''),
         title: commit.hash + '\n' + commit.subject,
-        onClick: function () { props.onPick(commit.hash) },
+        /* 事件一起回给面板：Ctrl/Cmd+点击是「挑进/移出多选」，普通点击照旧单选 ——
+           区分只在这一层做，行自己不解读修饰键。 */
+        onClick: function (event) { props.onPick(commit.hash, event) },
       },
         h('span', { className: 'dsh-git-subject' }, commit.subject),
         chips.length > 0 ? h('span', { className: 'dsh-git-refs' }, chips) : null,
@@ -116,12 +121,19 @@
 
       const laneNum = Math.max(1, graph.lanes)
       const graphWidth = laneNum * LANE_W + 6
+      /* 多选查表（O(1)/行）：面板给的是数组，行只要布尔 —— memo 的前提就是行的 props
+         不为别的行动。 */
+      const multiSet = {}
+      if (Array.isArray(props.multi)) {
+        for (let m = 0; m < props.multi.length; m += 1) multiSet[props.multi[m]] = true
+      }
       const listRows = []
       for (let i = win.first; i < win.last; i += 1) {
         listRows.push(h(CommitRowMemo, {
           key: commits[i].hash,
           commit: commits[i],
           selected: props.selected === commits[i].hash,
+          multi: multiSet[commits[i].hash] === true,
           onPick: props.onPick,
         }))
       }
