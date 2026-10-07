@@ -420,6 +420,10 @@
 
       const rows = []
       if (groups != null) {
+        /* 同名仓库的短名（24-repos.js）：分组头和切换器行、分支树那边的分组头取
+           同一份 memo —— 面板里一个仓库只有一个短名。 */
+        const repoLabels = props.repoProps == null ? null
+          : repoLabelMap(reposShown(props.repoProps.list, props.repoProps.effective))
         for (let g = 0; g < groups.length; g += 1) {
           const group = groups[g]
           const count = group.status != null && group.status.ok === true ? mergeChanges(group.status).length : 0
@@ -429,8 +433,9 @@
             title: group.repo + '（单击 = 只看这个仓库）',
             onClick: function () { props.onRepoSingle(group.repo) },
           },
-            h('span', { key: 'm', className: 'dsh-git-repo-mark' }, '▣'),
-            h('span', { key: 'n', className: 'dsh-git-repo-name' }, repoBaseName(group.repo)),
+            h('span', { key: 'g', className: 'dsh-git-repo-glyph' }, h(Icon, { name: 'repo', size: 11 })),
+            h('span', { key: 'n', className: 'dsh-git-repo-name' },
+              repoLabels == null ? repoBaseName(group.repo) : repoShortName(repoLabels, group.repo)),
             h('span', { key: 'c', className: 'dsh-git-repo-dim' }, count > 0 ? String(count) + ' 项' : '干净')))
           rows.push.apply(rows, scopeRows(group.repo, group.status))
         }

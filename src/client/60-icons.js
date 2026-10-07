@@ -26,6 +26,11 @@
          "directory" on its own, because there is no listing behind it until it is
          opened. */
       folder: ['M2.2 4.4 H6.4 L7.8 6.2 H13.8 V12.4 H2.2 Z'],
+      /* A small cube for a repository. The repo rows and the branch rows underneath
+         them used to be the same flat row, so the lists read as one; a branch row
+         starts with its twisty and a repo row starts with this box, and the two
+         blocks fall apart without reading a single label. */
+      repo: ['M8 2.6 L13 5 L13 11 L8 13.4 L3 11 L3 5 Z', 'M3 5 L8 7.4 L13 5', 'M8 7.4 V13.4'],
       undo: ['M5.9 3.6 L2.7 6.8 L5.9 10', 'M2.7 6.8 H9.3 A3.5 3.5 0 0 1 9.3 13.8 H7.3'],
     }
     /* One field, one clear button: the × sits inside the box, where the eye

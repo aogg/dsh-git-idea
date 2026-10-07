@@ -340,10 +340,14 @@
       }
 
       if (groups != null) {
+        /* 同名仓库的短名（24-repos.js）：分组头和切换器行取同一份 memo —— 标题行
+           叫 c/d，切换器那一行也得叫 c/d，读者才认得出是同一个仓库。 */
+        const repoLabels = props.repoProps == null ? null
+          : repoLabelMap(reposShown(props.repoProps.list, props.repoProps.effective))
         for (let g = 0; g < groups.length; g += 1) {
           const group = groups[g]
           const one = group.refs
-          const label = repoBaseName(group.repo)
+          const label = repoLabels == null ? repoBaseName(group.repo) : repoShortName(repoLabels, group.repo)
           const branchCount = one != null && one.ok === true ? one.local.length : 0
           /* 组头也是「单击只看这个仓库」的入口：多选视图是找东西用的，找到之后
              大多数时候要的就是钻进那一个仓库。 */
@@ -353,7 +357,7 @@
             title: group.repo + '（单击 = 只看这个仓库）',
             onClick: function () { props.onRepoSingle(group.repo) },
           },
-            h('span', { key: 'm', className: 'dsh-git-repo-mark' }, '▣'),
+            h('span', { key: 'g', className: 'dsh-git-repo-glyph' }, h(Icon, { name: 'repo', size: 11 })),
             h('span', { key: 'n', className: 'dsh-git-repo-name' }, label),
             h('span', { key: 'c', className: 'dsh-git-repo-dim' }, String(branchCount))))
           if (one == null || one.ok !== true) {

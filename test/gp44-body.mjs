@@ -275,3 +275,90 @@ seen = await repaint()
 console.log('  变更页签:', JSON.stringify(tabLabel(seen.panel)), ' chip:', JSON.stringify(badgeText(seen.chip)))
 ok('面板页签上的数字和 chip 上的徽标是同一个',
   tabLabel(seen.panel) === '变更2' && badgeText(seen.chip) === '2')
+
+console.log('')
+console.log('=== 多仓库：同名仓库的短名，和装它们的那个块 ===')
+/* git/repos 的答复换成同名场景：最浅的 /tmp/ws/d 保裸名 d；/tmp/ws/c/d 补一层
+   （c/d）；/tmp/ws/c/e/d 的第一层（e/d）被 /tmp/q/e/d 占了，再补一层（c/e/d）；
+   不冲突的 other / ws 不动。扫描按会话只发一次，所以换新会话 s-2 去问。 */
+let reposReply = {
+  ok: true, workspace: '/tmp/ws',
+  repos: ['/tmp/ws/c/e/d', '/tmp/ws/d', '/tmp/ws/c/d', '/tmp/q/e/d', '/tmp/ws/other'],
+  manual: [], missing: [],
+}
+const realCallRepos = host.call
+host.call = function (method, args) {
+  if (method === 'git/repos') return Promise.resolve(reposReply)
+  return realCallRepos(method, args)
+}
+const pop2 = async () => renderUntilStable(makeElement(popover, { sessionId: 's-2' }), 'pop2')
+let multi = await pop2()
+await wait(20)
+multi = await pop2()
+const switcherNames = (t) => byClass(t, 'dsh-git-repo-name').map(textOf)
+const pickRow = (t, path) => byClass(t, 'dsh-git-repo-row').find((r) => String(r.props.key) === 'repo:' + path)
+const rgroupNames = (t) => byClass(t, 'dsh-git-rgroup').map((g) => textOf(byClass(g, 'dsh-git-repo-name')[0]))
+console.log('  切换器行:', JSON.stringify(switcherNames(multi)))
+ok('仓库块是一个独立容器，不再和树行平铺在一起', byClass(multi, 'dsh-git-repo-box').length === 1)
+ok('同名仓库：最浅的保裸名、其余最小扩展、还撞再补一层，不冲突的不动',
+  switcherNames(multi).join('|') === '全部|c/e/d|d|c/d|e/d|other|ws|添加目录')
+const repoRowsA = byClass(multi, 'dsh-git-repo-row').filter((r) => String(r.props.key).indexOf('repo:') === 0)
+ok('每一行的悬浮 title 仍是完整路径',
+  repoRowsA.length === 6 && repoRowsA.every((r) => String(r.props.title).indexOf(r.props.key.slice(5)) === 0))
+const curRow = byClass(multi, 'dsh-git-repo-cur')[0]
+ok('生效仓库行还是那个语义：● 加粗品牌色（dsh-git-repo-cur）',
+  curRow !== undefined && textOf(curRow) === '●ws' && String(curRow.props.title).indexOf('/tmp/ws\n当前生效仓库') === 0)
+
+console.log('  -- Ctrl 多选：两处分组头用同一套短名 --')
+pickRow(multi, '/tmp/ws/c/e/d').props.onClick({ ctrlKey: true })
+await wait(10)
+multi = await pop2()
+pickRow(multi, '/tmp/ws/d').props.onClick({ ctrlKey: true })
+await wait(10)
+multi = await pop2()
+pickRow(multi, '/tmp/ws/c/d').props.onClick({ ctrlKey: true })
+await wait(10)
+multi = await pop2()
+console.log('  分支分组头:', JSON.stringify(rgroupNames(multi)))
+ok('分支分组头和切换器行叫同一个名字', rgroupNames(multi).join('|') === 'c/e/d|d|c/d')
+ok('分组头的 title 仍是完整路径', String(byClass(multi, 'dsh-git-rgroup')[0].props.title).indexOf('/tmp/ws/c/e/d') === 0)
+ok('Ctrl 挑中的三个行有选中底色', byClass(multi, 'dsh-git-repo-sel').length === 3)
+
+console.log('  -- 折叠：标题行仍看得出当前生效仓库 --')
+byClass(multi, 'dsh-git-repo-head')[0].props.onClick()
+multi = await pop2()
+const foldedHead = textOf(byClass(multi, 'dsh-git-repo-head')[0])
+ok('折叠后行收起，标题带着计数和 ● 短名',
+  byClass(multi, 'dsh-git-repo-row').length === 0 && foldedHead.indexOf('仓库 6') >= 0 && foldedHead.indexOf('● ws') >= 0)
+byClass(multi, 'dsh-git-repo-head')[0].props.onClick()
+multi = await pop2()
+ok('再点一下展开，行都回来', byClass(multi, 'dsh-git-repo-row').length === 7)
+
+console.log('  -- 变更页侧栏：同一个块，选择态各自独立 --')
+await clickIn(multi, '变更')
+multi = await pop2()
+const changesSide = byClass(multi, 'dsh-git-reposide')[0]
+ok('变更页侧栏继承同一个容器', changesSide !== undefined && byClass(changesSide, 'dsh-git-repo-box').length === 1)
+pickRow(multi, '/tmp/ws/c/d').props.onClick({ ctrlKey: true })
+await wait(10)
+multi = await pop2()
+pickRow(multi, '/tmp/ws/d').props.onClick({ ctrlKey: true })
+await wait(10)
+multi = await pop2()
+console.log('  变更分组头:', JSON.stringify(rgroupNames(multi)))
+ok('变更分组头也是同一套短名（和分支树的选择互不干扰）', rgroupNames(multi).join('|') === 'c/d|d')
+
+console.log('  -- 没有同名时与现状一致 --')
+reposReply = {
+  ok: true, workspace: '/tmp/ws',
+  repos: ['/tmp/ws/alpha', '/tmp/ws/beta'],
+  manual: ['/tmp/m/gone/x'], missing: ['/tmp/m/gone/x'],
+}
+let solo = await renderUntilStable(makeElement(popover, { sessionId: 's-3' }), 'pop3')
+await wait(20)
+solo = await renderUntilStable(makeElement(popover, { sessionId: 's-3' }), 'pop3')
+console.log('  切换器行:', JSON.stringify(switcherNames(solo)))
+ok('无同名时都是裸 basename', switcherNames(solo).join('|') === '全部|alpha|beta|ws|x|添加目录')
+const goneRow = byClass(solo, 'dsh-git-repo-gone')[0]
+ok('missing 行还在：压暗、写着已不存在、title 是完整路径',
+  goneRow !== undefined && textOf(goneRow).indexOf('已不存在') >= 0 && String(goneRow.props.title).indexOf('/tmp/m/gone/x') === 0)

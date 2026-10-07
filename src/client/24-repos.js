@@ -181,6 +181,96 @@
       return cut < 0 ? trimmed : trimmed.slice(cut + 1)
     }
 
+    /* ── 同名仓库的短名：同一份清单，同一份标签 ──
+
+       一个工作区里嵌两个同目录名的仓库（/a/b/d 和 /a/b/c/d）时，裸 basename 分不清
+       谁是谁。规则按读路径的习惯来：路径最浅的那个保住裸名（d），其余向上补父目录、
+       补到刚好不重名为止（c/d）；补完仍撞（/x/y/d 对 /z/y/d，第一层都是 y/d）就继续
+       加段，加到整条路径为止 —— 两个仓库的完整路径不会相同，所以总有一步能停下来。
+
+       标签的依据是**这份清单**（reposShown 那份，见下）而不是某个渲染点自己看到的
+       几行：切换器行、分支分组头、变更分组头都从同一次 memo 里取，一个仓库在面板里
+       只有一个短名。memo 按清单内容记 —— 清单只在扫描落地、手动增删时才变，重渲染
+       不该重算。 */
+    const repoLabelMemo = { key: null, map: null }
+
+    function repoPathParts(path) {
+      const trimmed = text(path).replace(/\/+$/, '')
+      const body = trimmed.indexOf('/') === 0 ? trimmed.slice(1) : trimmed
+      return body.length === 0 ? [] : body.split('/')
+    }
+
+    function computeRepoLabels(shown) {
+      const partsOf = []
+      const baseCount = {}
+      for (let i = 0; i < shown.length; i += 1) {
+        const parts = repoPathParts(shown[i])
+        partsOf.push(parts)
+        const base = parts.length > 0 ? parts[parts.length - 1] : text(shown[i])
+        baseCount[base] = (baseCount[base] === undefined ? 0 : baseCount[base]) + 1
+      }
+      const labels = {}
+      const taken = {}
+      /* 不冲突的先定裸名；冲突的按 basename 归堆，堆内再排 —— 裸名只有堆里最浅的
+         那个能保住，其余都在堆内扩展，所以跨堆的扩展名（总以别的 basename 结尾）不
+         可能互相撞上，贪心地一个个定就够了。 */
+      const conflicted = {}
+      for (let i = 0; i < shown.length; i += 1) {
+        const parts = partsOf[i]
+        const base = parts.length > 0 ? parts[parts.length - 1] : text(shown[i])
+        if (baseCount[base] === 1) {
+          labels[shown[i]] = base
+          taken[base] = true
+        } else if (conflicted[base] === undefined) {
+          conflicted[base] = [i]
+        } else {
+          conflicted[base].push(i)
+        }
+      }
+      const names = Object.keys(conflicted)
+      for (let c = 0; c < names.length; c += 1) {
+        const base = names[c]
+        const members = conflicted[base].slice()
+        /* 浅的在前（保裸名的是它）；一样深时按路径排 —— 结果因此是确定的，清单
+           没变，两次算出的标签就不会变。 */
+        members.sort(function (a, b) {
+          const byDepth = partsOf[a].length - partsOf[b].length
+          if (byDepth !== 0) return byDepth
+          return shown[a] < shown[b] ? -1 : (shown[a] > shown[b] ? 1 : 0)
+        })
+        labels[shown[members[0]]] = base
+        taken[base] = true
+        for (let m = 1; m < members.length; m += 1) {
+          const parts = partsOf[members[m]]
+          /* 兜底是整条路径：每一层都试过了还撞，就没有再可加的段了。 */
+          let label = parts.join('/')
+          for (let k = 1; k < parts.length; k += 1) {
+            const candidate = parts.slice(parts.length - 1 - k).join('/')
+            if (taken[candidate] !== true) { label = candidate; break }
+          }
+          labels[shown[members[m]]] = label
+          taken[label] = true
+        }
+      }
+      return labels
+    }
+
+    function repoLabelMap(shown) {
+      const key = shown.join('\u0000')
+      if (repoLabelMemo.key === key && repoLabelMemo.map != null) return repoLabelMemo.map
+      const map = computeRepoLabels(shown)
+      repoLabelMemo.key = key
+      repoLabelMemo.map = map
+      return map
+    }
+
+    /* 不在清单里的路径（missing 那几行、扫描落地前留下的旧选择）退回裸 basename：
+       标签的依据是清单，清单里没有它，就没有「和谁冲突」可解。 */
+    function repoShortName(labels, path) {
+      const found = labels[text(path)]
+      return found === undefined ? repoBaseName(path) : found
+    }
+
     /* 切换器要画的那几行（也是「全部」的语义边界）：扫描结果 + 生效仓库兜底。生效
        仓库要种进去，因为扫描还没回来（或失败）时列表也得有它 —— 它是唯一确定存在
        的仓库，「切回主仓库」恰恰是最常用的那一格。 */
@@ -199,6 +289,9 @@
       const list = props.list
       const effective = text(props.effective)
       const shown = reposShown(list, effective)
+      /* 同名仓库的短名（上面的 memo）：这一栏画行用它，两处分组头（50-log.js、
+         54-changes.js）按同一份清单取同一个 map —— 一个仓库在面板里只有一个短名。 */
+      const labels = repoLabelMap(shown)
       const selection = repoSelection(sessionId, pane).filter(function (path) {
         return shown.indexOf(path) >= 0 || list.missing.indexOf(path) >= 0
       })
@@ -207,6 +300,9 @@
       const [draft, setDraft] = React.useState('')
       const [busy, setBusy] = React.useState(false)
       const [problem, setProblem] = React.useState('')
+      /* 折叠只收起这一块的行，不碰任何仓库选择，跟着组件挂载走（换会话面板重挂、
+         折叠复位）就够了 —— 存模块层反而要在换工作区时多清一份。 */
+      const [folded, setFolded] = React.useState(false)
 
       /* 手动加：路径交给 Host 校验（存在且是仓库）并持久化；答复里带着整份新清单。
          失败的那句话摆在输入框下面 —— 这一行错误是关于这一次输入的，不该升到面板
@@ -239,13 +335,29 @@
       }
 
       const rows = []
-      rows.push(h('div', { key: 'repo-head', className: 'dsh-git-repo-head' },
-        h('span', { key: 't', className: 'dsh-git-repo-head-name' }, '仓库'),
+      /* 标题行就是折叠开关，也是折叠后唯一剩下的一行：生效仓库的短名带着 ●（和行里
+         同一个记号）留在标题上，收起来了也知道现在在哪个仓库上。 */
+      rows.push(h('div', {
+        key: 'repo-head',
+        className: 'dsh-git-repo-head',
+        title: folded ? '展开仓库列表' : '收起仓库列表（当前生效仓库仍显示在标题行）',
+        onClick: function () { setFolded(!folded) },
+      },
+        h('span', { key: 'c', className: 'dsh-git-repo-caret' + (folded ? ' dsh-git-repo-caret-off' : '') },
+          h(Icon, { name: 'down', size: 10 })),
+        h('span', { key: 'i', className: 'dsh-git-repo-head-ico' }, h(Icon, { name: 'repo', size: 12 })),
+        h('span', { key: 't', className: 'dsh-git-repo-head-name' }, '仓库 ' + String(shown.length)),
+        folded && effective.length > 0
+          ? h('span', { key: 'now', className: 'dsh-git-repo-now', title: effective + '\n当前生效仓库' },
+            '● ' + repoShortName(labels, effective))
+          : null,
         list.phase === 'scanning' || list.phase === 'idle'
           ? h('span', { key: 's', className: 'dsh-git-repo-note' }, '正在扫描…')
           : (list.phase === 'failed'
             ? h('span', { key: 'f', className: 'dsh-git-repo-note' }, '扫描失败')
             : (list.note.length > 0 ? h('span', { key: 'n', className: 'dsh-git-repo-note', title: list.note }, '…') : null))))
+
+      if (folded) return h('div', { className: 'dsh-git-repo-box' }, rows)
 
       /* 「全部」在列表最前面。单击和 Ctrl+单击都是全选语义（需求如此：多选时再点
          「全部」就是全选）；它永远不改生效仓库 —— 生效仓库只跟某个仓库行的单击走。 */
@@ -257,6 +369,9 @@
         onClick: function () { props.onAll() },
       },
         h('span', { key: 'm', className: 'dsh-git-repo-mark' }),
+        /* 图标列空着占位：「全部」不是仓库，不配仓库图标，但名字要和下面仓库行的
+           名字对齐成一列。 */
+        h('span', { key: 'g', className: 'dsh-git-repo-glyph' }),
         h('span', { key: 'n', className: 'dsh-git-repo-name' }, '全部'),
         h('span', { key: 'c', className: 'dsh-git-repo-dim' }, String(shown.length))))
 
@@ -281,7 +396,8 @@
           },
         },
           h('span', { key: 'm', className: 'dsh-git-repo-mark' }, isCur ? '●' : ''),
-          h('span', { key: 'n', className: 'dsh-git-repo-name' }, repoBaseName(path)),
+          h('span', { key: 'g', className: 'dsh-git-repo-glyph' }, h(Icon, { name: 'repo', size: 12 })),
+          h('span', { key: 'n', className: 'dsh-git-repo-name' }, repoShortName(labels, path)),
           manual ? h('button', {
             key: 'x', type: 'button', className: 'dsh-git-repo-x',
             title: '从列表移除（手动登记的仓库才能移除）',
@@ -299,8 +415,9 @@
           title: path + '\n这个目录已经不存在（或不再是 git 仓库）',
         },
           h('span', { key: 'm', className: 'dsh-git-repo-mark' }, ''),
-          h('span', { key: 'n', className: 'dsh-git-repo-name' }, repoBaseName(path)),
-          h('span', { key: 'g', className: 'dsh-git-repo-dim' }, '已不存在'),
+          h('span', { key: 'g', className: 'dsh-git-repo-glyph' }, h(Icon, { name: 'repo', size: 12 })),
+          h('span', { key: 'n', className: 'dsh-git-repo-name' }, repoShortName(labels, path)),
+          h('span', { key: 'gone', className: 'dsh-git-repo-dim' }, '已不存在'),
           h('span', {
             key: 'x', className: 'dsh-git-repo-x', title: '从列表移除',
             onClick: function (event) { stopEvent(event); removeOne(path) },
@@ -333,5 +450,7 @@
       if (problem.length > 0) {
         rows.push(h('div', { key: 'repo-problem', className: 'dsh-git-repo-problem' }, problem))
       }
-      return rows
+      /* 整块收进一个容器（.dsh-git-repo-box，46-css.js）：仓库行和下面分支树的行
+         原来是同一种平铺行，读者分不出「上面在切仓库、下面在看分支」。 */
+      return h('div', { className: 'dsh-git-repo-box' }, rows)
     }

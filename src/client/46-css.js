@@ -319,19 +319,43 @@ textarea.dsh-git-input{resize:vertical}
 /* ── 仓库切换列表 ──
     一个工作区里嵌着多个仓库时，左栏分支树和变更页各有一列这样的行。它刻意不用
     dsh-git-trow 那套类名：树行带着折叠、树选中和一串跟着类名走的断言，仓库行是
-    另一类控件 —— 不折叠、不属于哪棵树，被当成树行数进去只会搅浑两边。 */
-.dsh-git-repo-head{display:flex;align-items:center;gap:6px;padding:6px 6px 2px;color:var(--dsw-alias-label-secondary);font-size:10px;text-transform:uppercase;letter-spacing:.04em}
+    另一类控件 —— 不折叠、不属于哪棵树，被当成树行数进去只会搅浑两边。
+
+    整块是一个 inset 容器：仓库行和下面分支树的行原来是同一种平铺行（同高、同字
+    号、直接铺在侧栏底上），读者分不出「上面在切仓库、下面在看分支」。浅底 + 描边
+    + 圆角 + 与树之间的留白把两块隔开；行里再小一号字号、每行一个仓库图标，不读
+    字也认得出哪块是哪块。 */
+.dsh-git-repo-box{flex:none;margin:6px 6px 10px;padding:2px 3px 5px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-2)}
+/* 标题行同时是折叠开关，也是折叠后唯一剩下的一行：加重的字重 + 常规色 —— 原来那
+   行是次级色的小号大写，读起来像树的分组标题而不是一块的题目。 */
+.dsh-git-repo-head{display:flex;align-items:center;gap:5px;min-height:20px;padding:3px 5px;border-radius:5px;color:var(--dsw-alias-label-primary);font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;-webkit-user-select:none;user-select:none}
+.dsh-git-repo-head:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dsh-git-repo-head-ico{display:inline-flex;flex:none;color:var(--dsw-alias-label-secondary)}
 .dsh-git-repo-head-name{flex:none}
-.dsh-git-repo-note{margin-left:auto;flex:none;font-size:10px}
-.dsh-git-repo-row{display:flex;align-items:center;gap:5px;padding:2px 6px;border-radius:4px;cursor:pointer;white-space:nowrap;-webkit-user-select:none;user-select:none}
-.dsh-git-repo-row:hover{background:var(--dsw-alias-bg-layer-2)}
-.dsh-git-repo-mark{flex:none;width:10px;font-size:9px;text-align:center;color:var(--dsw-alias-brand-primary)}
-.dsh-git-repo-name{overflow:hidden;text-overflow:ellipsis;min-width:0}
+.dsh-git-repo-caret{display:inline-flex;flex:none;color:var(--dsw-alias-label-secondary)}
+.dsh-git-repo-caret-off{transform:rotate(-90deg)}
+/* 折叠后当前生效仓库要还看得见：● 和仓库行里同一个记号（品牌色圆点 = 生效仓库）。 */
+.dsh-git-repo-now{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-brand-primary);font-weight:600}
+.dsh-git-repo-note{margin-left:auto;flex:none;font-size:10px;color:var(--dsw-alias-label-secondary)}
+/* 行比树行更紧凑（min-height 20px、11px 字号）：块本身的密度和树不同，也是区分
+   的一部分。 */
+.dsh-git-repo-row{display:flex;align-items:center;gap:5px;min-height:20px;padding:1px 5px;border-radius:5px;font-size:11px;cursor:pointer;white-space:nowrap;-webkit-user-select:none;user-select:none}
+/* 容器底是 bg-layer-2，悬停/选中就得再亮一档 —— 和头部工具条上的按钮同一个搭配。 */
+.dsh-git-repo-row:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dsh-git-repo-mark{flex:none;width:9px;font-size:9px;text-align:center;color:var(--dsw-alias-brand-primary)}
+/* 每行一个小仓库图标（60-icons.js 的 repo 立方）：分支行的行首是折叠箭头，仓库行
+   的行首是这个盒子。固定宽度，「全部」那行空着占位，名字仍对齐成一列。 */
+.dsh-git-repo-glyph{display:inline-flex;align-items:center;justify-content:center;flex:none;width:13px;height:13px;color:var(--dsw-alias-label-secondary)}
+/* 名字可收缩：同名仓库补了父目录（c/d）之后标签会变长，行不能被它撑爆 —— dim 和
+   × 是 flex:none，让出来的只能是名字自己（省略号在名字上）。 */
+.dsh-git-repo-name{flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .dsh-git-repo-dim{flex:none;margin-left:auto;padding-right:4px;color:var(--dsw-alias-label-secondary);font-size:10px}
-/* 生效仓库：名字加粗，左缘一道品牌色竖线 —— 和分支树里「筛选范围」那一格同一个
-   读法（dsh-git-trow-scope），见过一次就不用再学。 */
+/* 生效仓库：名字加粗、左缘一道品牌色竖线 —— 和分支树里「筛选范围」那一格同一个
+   读法（dsh-git-trow-scope），见过一次就不用再学。图标跟着上品牌色：● + 竖线 + 图
+   标一起说「就是这一行」。 */
 .dsh-git-repo-cur{box-shadow:inset 2px 0 0 var(--dsw-alias-brand-primary)}
 .dsh-git-repo-cur .dsh-git-repo-name{font-weight:600;color:var(--dsw-alias-brand-primary)}
+.dsh-git-repo-cur .dsh-git-repo-glyph{color:var(--dsw-alias-brand-primary)}
 /* Ctrl+单击挑中的仓库 */
 .dsh-git-repo-sel{background:var(--dsw-alias-interactive-bg-hover)}
 .dsh-git-repo-sel:hover{background:var(--dsw-alias-interactive-bg-hover)}
@@ -339,23 +363,24 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-repo-gone{opacity:.55}
 .dsh-git-repo-x{flex:none;border:0;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:1;padding:0 2px;border-radius:3px;cursor:pointer}
 .dsh-git-repo-x:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
-.dsh-git-repo-add{display:flex;align-items:center;gap:5px;margin-top:2px;padding:2px 6px;border-radius:4px;cursor:pointer;white-space:nowrap}
-.dsh-git-repo-add:hover{background:var(--dsw-alias-bg-layer-2)}
-.dsh-git-repo-addrow{display:flex;gap:4px;padding:2px 6px}
+.dsh-git-repo-add{display:flex;align-items:center;gap:5px;margin-top:2px;min-height:20px;padding:1px 5px;border-radius:5px;font-size:11px;cursor:pointer;white-space:nowrap}
+.dsh-git-repo-add:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dsh-git-repo-addrow{display:flex;gap:4px;padding:2px 5px}
 .dsh-git-repo-input{flex:1;min-width:0;border:1px solid var(--dsw-alias-border-l1);border-radius:4px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-size:11px;padding:2px 4px;outline:none}
 .dsh-git-repo-input:focus{border-color:var(--dsw-alias-brand-primary)}
 .dsh-git-repo-ok{flex:none}
-.dsh-git-repo-problem{padding:2px 8px 4px;font-size:10px;line-height:14px;color:var(--dsw-alias-state-error-primary)}
+.dsh-git-repo-problem{padding:2px 6px 3px;font-size:10px;line-height:14px;color:var(--dsw-alias-state-error-primary)}
 /* 设置页（这里还不是仓库）下面挂的那份仓库清单：RepoSetup 自己是可滚动的整页，
    清单跟在它下面同页滚动，一条细线隔开。 */
 .dsh-git-setupwrap{flex:1;display:flex;flex-direction:column;min-height:0;overflow:auto}
 .dsh-git-setupwrap .dsh-git-setup{flex:none;overflow:visible}
 .dsh-git-setup-repos{padding:0 20px 16px;border-top:1px solid var(--dsw-alias-border-l1)}
 /* 变更页左侧那列仓库侧栏：宽度对着分支树那栏（208px）收窄一点 —— 变更树本身还有
-   一列目录缩进要放。 */
+   一列目录缩进要放。容器（.dsh-git-repo-box）自带的外边距在这里同样成立。 */
 .dsh-git-reposide{width:168px;flex:none;overflow:auto;padding:2px 0 6px;border-right:1px solid var(--dsw-alias-border-l1)}
 /* 按仓库分组的组头：左栏分支树（多选时）和变更树（多选时）共用。点它就是「只看
-   这个仓库」，所以它是可点的，但样式是标题 —— 组里那些行才是内容。 */
+   这个仓库」，所以它是可点的，但样式是标题 —— 组里那些行才是内容。行首是和切换
+   器同一个仓库图标：两处的「同一个仓库」长得也一样。 */
 .dsh-git-rgroup{display:flex;align-items:center;gap:5px;margin-top:4px;padding:3px 6px;border-radius:4px;font-weight:600;cursor:pointer;white-space:nowrap}
 .dsh-git-rgroup:hover{background:var(--dsw-alias-bg-layer-2)}
 .dsh-git-rgroup .dsh-git-repo-dim{margin-left:0;padding-left:4px}
