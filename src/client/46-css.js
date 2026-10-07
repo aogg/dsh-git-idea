@@ -384,6 +384,42 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-rgroup{display:flex;align-items:center;gap:5px;margin-top:4px;padding:3px 6px;border-radius:4px;font-weight:600;cursor:pointer;white-space:nowrap}
 .dsh-git-rgroup:hover{background:var(--dsw-alias-bg-layer-2)}
 .dsh-git-rgroup .dsh-git-repo-dim{margin-left:0;padding-left:4px}
+
+/* ── 差异页右列：这批修改的来源文件列表 ──
+   补丁区 flex:1、右列固定 240px。右列的行复用树行那套类名（dsh-git-trow），
+   悬停/选中/省略号因此和别处的树一个读法；min-width:0 是给补丁区的 —— 行方向
+   的 flex 里默认 min-width:auto，一条 200 字的补丁行会把整块撑到列外而不是在
+   自己的滚动容器里横滚。 */
+.dsh-git-diffsplit{flex:1;display:flex;min-height:0;min-width:0}
+.dsh-git-diffsplit>.dsh-git-diffbody,.dsh-git-diffsplit>.dsh-git-pane{flex:1;min-width:0}
+.dsh-git-diffsplit .dsh-git-diffsec-wrap{min-width:0}
+.dsh-git-diffrail{width:240px;flex:none;display:flex;flex-direction:column;min-height:0;border-left:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1)}
+.dsh-git-diffrail-head{flex:none;padding:4px 8px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-2);border-bottom:1px solid var(--dsw-alias-border-l1)}
+.dsh-git-diffrail-list{flex:1;min-height:0;overflow:auto;padding:4px 0}
+/* 变更右列行尾的 暂存/未跟踪 标记：右对齐、小一号，不与路径抢地方（名字那格
+   才是要读的）。 */
+.dsh-git-diffrail-mark{flex:none;margin-left:auto;padding:0 5px;color:var(--dsw-alias-label-secondary);font-size:10px;line-height:15px}
+
+/* ── 命令页（57-cmdlog.js）：会话记录里这个工作区跑过的 git 命令 ── */
+.dsh-git-cmd{flex:1;display:flex;flex-direction:column;min-height:0}
+.dsh-git-cmdbar{flex:none;display:flex;align-items:center;gap:8px;padding:5px 8px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2)}
+.dsh-git-cmdfilter{flex:1 1 auto;min-width:80px;border:1px solid var(--dsw-alias-border-l1);border-radius:5px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:2px 6px;outline:none}
+.dsh-git-cmdfilter:focus{border-color:var(--dsw-alias-brand-primary)}
+.dsh-git-cmdfilter::placeholder{color:var(--dsw-alias-label-secondary)}
+.dsh-git-cmdlist{flex:1;min-height:0;overflow:auto;padding:4px 0}
+.dsh-git-cmdline{display:flex;align-items:center;gap:8px;padding:2px 8px;cursor:pointer;white-space:nowrap;-webkit-user-select:none;user-select:none}
+.dsh-git-cmdline:hover{background:var(--dsw-alias-bg-layer-2)}
+/* 100px 放得下最长的 YYYY-MM-DD HH:mm（10px 的表格数字），今天的那种短格式
+   留白 —— 列对齐了，扫一眼就是时间轴。 */
+.dsh-git-cmdtime{flex:none;width:100px;font-size:10px;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}
+.dsh-git-cmdtext{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
+.dsh-git-cmdesc{flex:0 1 auto;max-width:32%;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-secondary);font-size:11px}
+.dsh-git-cmdfail{flex:none;color:var(--dsh-alias-state-error-primary);font-size:10px;font-weight:600}
+.dsh-git-cmdsrc{flex:none;color:var(--dsw-alias-label-secondary);font-size:10px}
+.dsh-git-cmdopen{display:flex;align-items:flex-start;gap:8px;margin:0 8px 4px;padding:6px;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l1);border-left:2px solid var(--dsw-alias-border-l2);border-radius:4px}
+.dsh-git-cmdpre{flex:1;min-width:0;margin:0;white-space:pre-wrap;word-break:break-all;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:16px}
+.dsh-git-cmdnote{flex:none;padding-top:5px;font-size:10px;color:var(--dsw-alias-label-secondary)}
+.dsh-git-cmdtrunc{flex:none;font-size:10px;color:var(--dsw-alias-state-warn-primary)}
 `)
     }, 'dsh-git-idea panel styles')
 

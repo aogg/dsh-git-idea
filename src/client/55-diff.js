@@ -140,8 +140,11 @@
        there", and the glyph the panel's own refresh already draws. */
     function diffIconButton(key, glyph, title, onClick, options) {
       const opts = options == null ? {} : options
+      const classes = ['dsh-git-tool', 'dsh-git-tool-ico']
+      /* 显隐开关要看得见自己现在的状态：和面板头部工具条同一个「按亮」的读法。 */
+      if (opts.on === true) classes.push('dsh-git-tool-on')
       return h('button', {
-        key: key, type: 'button', className: 'dsh-git-tool dsh-git-tool-ico',
+        key: key, type: 'button', className: classes.join(' '),
         disabled: opts.disabled === true, title: title, onClick: onClick,
       }, glyph)
     }
@@ -181,11 +184,111 @@
       ]
     }
 
+    /* ── the diff's right rail: the list this patch came from ──
+
+       补丁回答的是一个文件，而点开它的那个列表（一次提交的文件、变更页的改动）
+       几乎从来不止一个文件 —— 退回去再点下一个是两步，右列把它并成一步。提交
+       那一路用 CommitDetail 同一棵树（同一套 buildTree/flattenTree、同一个
+       '@files' 前缀：在详情里折起来的目录，右列里仍然折着）；变更那一路用扁平
+       列表，行尾带上 暂存/未跟踪 的标记（状态字母复用 statusClass/statusLabel，
+       和变更页是同一个读法）。 */
+
+    function DiffFileRail(props) {
+      const rail = props.rail
+      const current = text(props.current)
+      /* 目录行自己的选中：右列是导航列表，面板那格 selectedKey 管的是被这块屏
+         替换掉的两块列表，不该被这里的单击挪走。 */
+      const [dirKey, setDirKey] = React.useState(null)
+      /* 当前文件那一行的节点：换文件时把它滚进视野。block:'nearest' —— 已经在
+         屏上就一个像素都不动，读者不会被突然的滚动带走。 */
+      const [rowBox] = React.useState(function () { return { node: null } })
+      React.useEffect(function () {
+        if (rowBox.node != null && typeof rowBox.node.scrollIntoView === 'function') {
+          rowBox.node.scrollIntoView({ block: 'nearest' })
+        }
+      }, [current])
+
+      /* 目录行复用 treeDirRow（44-treerow.js）那份唯一的构造，两边长得一样；
+         折叠沿用面板的 collapsed 表 —— 键名与 CommitDetail 的树相同。 */
+      const dirHandle = { selectedKey: dirKey, onSelect: setDirKey, onToggle: props.onToggle }
+      let title = ''
+      const rows = []
+      if (rail.kind === 'commit') {
+        const entries = []
+        for (let i = 0; i < rail.files.length; i += 1) {
+          const path = text(rail.files[i].path)
+          if (path.length === 0) continue
+          entries.push({ segments: path.split('/'), data: rail.files[i] })
+        }
+        title = String(rail.files.length) + ' 个文件'
+        const tree = buildTree(entries)
+        const flat = flattenTree(tree, 0, '@files', props.collapsed, [], '@files')
+        for (let i = 0; i < flat.length; i += 1) {
+          const node = flat[i]
+          if (node.kind === 'dir') {
+            rows.push(treeDirRow(node, dirHandle, String(node.count) + ' 个文件'))
+            continue
+          }
+          const file = node.data || {}
+          const mine = text(file.path) === current
+          rows.push(h('div', {
+            className: 'dsh-git-trow' + (mine ? ' dsh-git-trow-sel' : ''),
+            key: node.id,
+            style: { paddingLeft: (6 + node.depth * 12) + 'px' },
+            title: text(file.path) + '（点开看差异）',
+            ref: mine === true ? function (node) { rowBox.node = node } : undefined,
+            onClick: function () { if (typeof props.onOpenFile === 'function') props.onOpenFile(file) },
+          },
+            h('span', { className: 'dsh-git-tw' }),
+            h('span', { className: 'dsh-git-st' + statusClass(file.status) }, statusLabel(file.status)),
+            h('span', { className: 'dsh-git-tname' }, node.name)))
+        }
+      } else {
+        /* 变更那一路：扁平列表，名字在前、目录压暗跟在后面 —— 240px 的列里先铺
+           整条路径的话，行尾裁掉的正好是文件名（54-changes.js 扁平视图同理）。
+           git 折叠成一条的未跟踪目录（路径以 / 结尾）不是文件，点它也没有差异，
+           不给行。 */
+        title = '变更文件'
+        const sorted = rail.changes.slice()
+        sorted.sort(function (a, b) { return a.path < b.path ? -1 : (a.path > b.path ? 1 : 0) })
+        for (let i = 0; i < sorted.length; i += 1) {
+          const entry = sorted[i]
+          const path = text(entry.path)
+          if (path.length === 0 || path.slice(-1) === '/') continue
+          const cut = path.lastIndexOf('/')
+          const mine = path === current
+          const mark = entry.staged === true ? '已暂存' : (entry.untracked === true ? '未跟踪' : '未暂存')
+          rows.push(h('div', {
+            className: 'dsh-git-trow' + (mine ? ' dsh-git-trow-sel' : ''),
+            key: 'f:' + path,
+            title: path + '（点开看差异）',
+            ref: mine === true ? function (node) { rowBox.node = node } : undefined,
+            onClick: function () { if (typeof props.onOpenFile === 'function') props.onOpenFile(entry) },
+          },
+            h('span', { className: 'dsh-git-st' + statusClass(entry.displayCode) }, statusLabel(entry.displayCode)),
+            h('span', { className: 'dsh-git-tname' }, cut < 0 ? path : path.slice(cut + 1)),
+            cut > 0 ? h('span', { key: 'd', className: 'dsh-git-tpath' }, path.slice(0, cut + 1)) : null,
+            h('span', {
+              key: 'm', className: 'dsh-git-diffrail-mark',
+              title: entry.staged === true ? '已暂存（改动在索引里）'
+                : (entry.untracked === true ? '未跟踪（git 还没见过这个路径）' : '未暂存（改动在工作区）'),
+            }, mark)))
+        }
+      }
+
+      return h('div', { className: 'dsh-git-diffrail' },
+        h('div', { key: 'h', className: 'dsh-git-diffrail-head' }, title),
+        h('div', { key: 'l', className: 'dsh-git-diffrail-list' }, rows))
+    }
+
     function DiffView(props) {
       const target = props.target
       const requests = diffRequests(target)
       const shape = diffShape(requests, target)
       const [rows, setRows] = React.useState(null)
+      /* 右列默认在：要看的是「这一批修改」，藏起来才是少数场合 —— 头部那个按钮
+         一下把它收掉，补丁区拿回整宽。 */
+      const [railOpen, setRailOpen] = React.useState(true)
 
       React.useEffect(function () {
         let alive = true
@@ -251,7 +354,12 @@
           ? h('span', { key: 'c', className: 'dsh-git-diffcount' }, '读取中…')
           : h('span', { key: 'c', className: 'dsh-git-diffcount' }, diffCounts({ added: added, removed: removed })),
         staged,
-        diffIconButton('again', '⟳', '重新读取这个文件的差异', props.onRefresh))
+        diffIconButton('again', '⟳', '重新读取这个文件的差异', props.onRefresh),
+        /* 有来源列表可列时才给这个开关：没有列表的 diff（详情已不在、快照没到），
+           按下去也没有东西会响应。 */
+        props.rail != null
+          ? diffIconButton('rail', '☰', '文件列表', function () { setRailOpen(railOpen !== true) }, { on: railOpen === true })
+          : null)
 
       const warn = []
       if (truncated) warn.push('差异过长，只显示了开头一部分')
@@ -270,5 +378,18 @@
       return h('div', { className: 'dsh-git-diffview' },
         head,
         warn.length > 0 ? h('div', { key: 'warn', className: 'dsh-git-diffwarn' }, warn.join(' · ')) : null,
-        body)
+        /* 补丁区拿剩余宽度（flex:1），右列固定 240px 贴在右边；右列收起时这一层
+           只剩补丁，布局回到原来的样子。 */
+        h('div', { key: 'split', className: 'dsh-git-diffsplit' },
+          body,
+          railOpen === true && props.rail != null
+            ? h(DiffFileRail, {
+                key: 'rail',
+                rail: props.rail,
+                current: target.path,
+                onOpenFile: props.onOpenFile,
+                collapsed: props.collapsed,
+                onToggle: props.onToggle,
+              })
+            : null))
     }

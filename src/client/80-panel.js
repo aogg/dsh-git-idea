@@ -103,6 +103,15 @@
          end in this one view, which is why it lives here and not in either. */
       const [diffTarget, setDiffTarget] = React.useState(null)
       const [diffAt, setDiffAt] = React.useState(0)
+      /* ── 命令页的读数（57-cmdlog.js 只管画）──
+
+         null = 还没读过：第一次切到那一页才发起；「重新读取」清回 null 让 effect
+         再跑一次。读数里记着它属于哪个会话 —— 组件没重挂而 sessionId 变了的场合
+         （防御；DSH 换会话通常是整块重挂），旧列表不当作「已读」。 */
+      const [cmdLog, setCmdLog] = React.useState(null)
+      /* 在飞的那次读取的序号：连续两次「重新读取」时，旧答复不许翻盘（和
+         repoEpoch 是同一个问题，见 10-state.js）。 */
+      const [cmdLogBox] = React.useState(function () { return { seq: 0 } })
       /* Which collapsed untracked directories are open, and what is inside the
          ones that have been read. Keyed by the directory's path; the read happens
          on the click that opens one, never for the whole tree up front. */
@@ -541,6 +550,39 @@
         })
         return function () { alive = false }
       }, [appliedRepo, repoOk, tab, freshAt, props.ready])
+
+      /* ── 命令页：第一次切到才读，切走再切回不重读 ──
+
+         会话记录要真去扫文件，和其它「切到那页才读」的读一个待遇。与 authors
+         那条 effect 不同，这里**不**因切走页签作废在飞的那次读：扫一遍不该白扫，
+         答复落在 state 里，读者切回来正好用上 —— 「不重新请求」因此连读还没完的
+         那种场合也成立。 */
+      React.useEffect(function () {
+        if (tab !== 'cmdlog' || props.ready !== true) return undefined
+        if (cmdLog !== null && cmdLog.sessionId === sessionId) return undefined
+        cmdLogBox.seq += 1
+        const seq = cmdLogBox.seq
+        setCmdLog({ sessionId: sessionId, loading: true })
+        callHost('git/command-log', { sessionId: sessionId, limit: 500 }).then(function (data) {
+          if (seq !== cmdLogBox.seq) return
+          /* ok:false（沙箱拒绝、PATH 上没有 node、超时……）是「读得了答复、读不了
+             记录」：原话在 data.error 里，折成空列表就成了「这个项目没跑过 git」。 */
+          if (data == null || data.ok !== true) {
+            const said = data != null && text(data.error).length > 0 ? text(data.error) : '读不了会话记录'
+            setCmdLog({ sessionId: sessionId, error: said })
+            return
+          }
+          setCmdLog({
+            sessionId: sessionId,
+            commands: Array.isArray(data.commands) ? data.commands : [],
+            truncated: data.truncated === true,
+          })
+        }, function (failure) {
+          if (seq !== cmdLogBox.seq) return
+          setCmdLog({ sessionId: sessionId, error: failureText(failure) })
+        })
+        return undefined
+      }, [tab, sessionId, cmdLog, props.ready])
 
       React.useEffect(function () {
         if (props.ready !== true) return undefined
@@ -1337,7 +1379,12 @@
                 '变更',
                 changesBadge > 0 ? h('span', { key: 'n', className: 'dsh-git-tool-badge' }, String(changesBadge)) : null),
               h('button', { type: 'button', className: 'dsh-git-tab' + (tab === 'log' ? ' dsh-git-tab-on' : ''),
-                title: '提交历史', onClick: function () { setTab('log'); setDiffTarget(null) } }, '历史')),
+                title: '提交历史', onClick: function () { setTab('log'); setDiffTarget(null) } }, '历史'),
+              /* 命令页不带数字角标：会话记录里有多少条 git 命令，这个数既不稳定也
+                 不指导任何操作，放在页签上只是噪音；数量在读进来之后说在页面里。 */
+              h('button', { type: 'button', className: 'dsh-git-tab' + (tab === 'cmdlog' ? ' dsh-git-tab-on' : ''),
+                title: '这个项目执行过的 git 命令（来自 DSH 会话记录）',
+                onClick: function () { setTab('cmdlog'); setDiffTarget(null) } }, '命令')),
         needsSetup ? null : syncGroup,
         needsSetup ? null : branchChip,
         h('span', { key: 'grow', className: 'dsh-git-grow' }),
@@ -1388,6 +1435,42 @@
            the arrow in its own header — a drill-down rather than a third pane,
            because a pane narrow enough to fit beside two other columns is not
            wide enough to read a patch in. */
+        /* ── 右列的数据：这个补丁是从哪个列表点开的，那个列表就跟过来 ──
+
+           提交那一路直接用当前 detail 的文件（没有多仓库问题：一次提交属于它自己
+           的仓库）；变更那一路是工作区快照 —— 多选分组里点开的文件属于**它自己
+           那个**仓库，右列得是那个仓库的变更（全局那份读数，10-state.js 的
+           treeRecord），拿屏上生效仓库的列表凑数会把两个仓库的路径混在一列。 */
+        let diffRail = null
+        if (diffTarget.kind === 'commit') {
+          if (detail != null && detail.ok === true && Array.isArray(detail.files) && detail.files.length > 0) {
+            diffRail = { kind: 'commit', files: detail.files }
+          }
+        } else {
+          let railChanges = changes
+          if (diffRepo !== appliedRepo) {
+            const record = treeRecord(diffRepo)
+            railChanges = record != null && record.status != null && record.status.ok === true
+              ? mergeChanges(record.status) : []
+          }
+          diffRail = { kind: 'changes', changes: railChanges }
+        }
+        /* 右列换文件：提交那一路 ref 不动、只换 path/from/status（和提交详情里
+           点开一个文件是同一条路，diffSig 随 shape 变化自动重读补丁）；变更那一
+           路走 changeDiffTarget，仓库跟着文件原来的那一格走。 */
+        const diffRailOpen = diffRail === null ? undefined : function (file) {
+          if (diffTarget.kind === 'commit') {
+            setDiffTarget({
+              kind: 'commit',
+              path: text(file.path),
+              from: text(file.from),
+              ref: text(diffTarget.ref),
+              status: text(file.status),
+            })
+            return
+          }
+          setDiffTarget(changeDiffTarget(file, text(diffTarget.repo)))
+        }
         body = h(DiffView, {
           key: 'diff',
           target: diffTarget,
@@ -1395,6 +1478,10 @@
           sessionId: sessionId,
           sig: diffSig,
           busy: busy,
+          rail: diffRail,
+          onOpenFile: diffRailOpen,
+          collapsed: collapsed,
+          onToggle: toggle,
           onBack: function () { setDiffTarget(null) },
           onRefresh: function () { setDiffAt(diffAt + 1) },
           onStage: diffTarget.kind === 'file'
@@ -1430,6 +1517,13 @@
           untrackedOpen: untrackedOpen,
           untrackedFiles: untrackedFiles,
           onToggleUntracked: toggleUntracked,
+        })
+      } else if (tab === 'cmdlog') {
+        /* 只读页：列表是上面的 effect 攒下的那份快照，「重新读取」清回 null 让它
+           再扫一遍会话文件。 */
+        body = h(CommandLogPane, {
+          log: cmdLog,
+          onReload: function () { setCmdLog(null) },
         })
       } else {
         body = h('div', { className: 'dsh-git-body' },

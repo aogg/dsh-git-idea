@@ -54,6 +54,7 @@ export const TARGETS = [
       'src/client/54-changes.js',
       'src/client/55-diff.js',
       'src/client/56-setup.js',
+      'src/client/57-cmdlog.js',
       'src/client/58-branchinfo.js',
       'src/client/60-icons.js',
       'src/client/62-branchstate.js',
