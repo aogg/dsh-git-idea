@@ -1,3 +1,39 @@
+    /* ── 面板能长多高：跟着输入框的位置走 ──
+
+       新会话的输入框垂直居中于屏幕，而面板从输入框上沿向上生长（bottom:100%），
+       74vh 的默认高度会把头部（.dsh-git-top）整个顶出视口上沿。面板打开期间，实际
+       渲染的高度被「输入框上沿之上的空间」钳制；日志列表本身是虚拟滚动
+       （12-window.js 按容器 clientHeight 算可见行），容器一矮显示条数自动变少，
+       列表那半边不用动。 */
+    const PANEL_DEFAULT_VH = 0.74    /* 与 46-css.js 里 .dsh-git-pop 的 74vh 是同一个数 */
+    const PANEL_ANCHOR_GAP = 8       /* .dsh-git-pop 的 margin-bottom：面板与输入框的间距 */
+    const PANEL_ANCHOR_SAFETY = 1    /* 亚像素取整的余量：头部差 1px 被裁也看得难受 */
+    const PANEL_MIN_HEIGHT = 160     /* 下限：极端情况下宁可顶部被裁一点，也不能面板缩没 */
+
+    /* 面板 absolute 定位在输入区 overlay 槽位的容器里，那个容器随输入框移动（新会话
+       居中、发送第一条消息后落底）。可用高度要量它，不能量面板自己：面板的 top 会随
+       钳制后的高度变化，拿自己当锚点就成了自我反馈。offsetParent 会跳过不生成盒子的
+       display:contents 包裹层（.dsh-git-layer）直达真正的定位容器；实在问不到容器
+       （没有布局的环境）就退化为面板自己 —— 面板贴着容器上沿（bottom:100% 加
+       margin-bottom:8px），容器上沿 ≈ 面板 top + 面板高 + 8。 */
+    const panelAnchorBox = function (node) {
+      if (node == null) return null
+      const host = node.offsetParent != null ? node.offsetParent : node.parentElement
+      if (host != null && typeof host.getBoundingClientRect === 'function') {
+        const box = host.getBoundingClientRect()
+        /* 有宽或高才可信：display:none（面板藏着时）与无布局环境里 rect 全是 0，
+           那个 0 不能当成「输入框贴着视口顶」。 */
+        if (parseFloat(box.width) > 0 || parseFloat(box.height) > 0) return box
+      }
+      if (typeof node.getBoundingClientRect === 'function') {
+        const own = node.getBoundingClientRect()
+        if (parseFloat(own.height) > 0) {
+          return { top: parseFloat(own.top) + parseFloat(own.height) + PANEL_ANCHOR_GAP }
+        }
+      }
+      return null
+    }
+
     function GitPanel(props) {
       const plugin = usePluginConfig()
       const prefs = useGitSettings()
@@ -50,6 +86,14 @@
          come back to the foreground still showing the branch it used to be on. */
       const reloadAt = useDataVersion()
       const [size, setSize] = React.useState(panelSize)
+      /* 锚点容器（输入区 overlay 槽位）量到的 {top, vh}。null = 还没量过（首帧、或
+         没有布局的环境），此时不钳制，维持 CSS 的 74vh / 记忆的 size.h。vh 和 top
+         一起量、一起进变化判据：默认期望高度是 74% 个视口，只盯 top 的话纵向
+         resize 就漏掉了。 */
+      const [anchor, setAnchor] = React.useState(null)
+      /* 这个挂载自己的面板节点。panelNode 是全局单值，同一页挂着多个会话时，别的
+         会话一重画它就被指到别人的节点上；量锚点必须认自己这一块。 */
+      const [nodeBox] = React.useState(function () { return { node: null } })
       const [armed, setArmed] = React.useState('')
       const [prompt, setPrompt] = React.useState(null)
       const [needsUpstream, setNeedsUpstream] = React.useState(false)
@@ -639,6 +683,43 @@
           setSize({ w: panelSize.w, h: panelSize.h })
         })
       }, [])
+
+      /* ── 面板打开期间，跟着输入框量 ──
+
+         「发送第一条消息后输入框立刻从居中落到底部」这种 DOM 位移对插件没有事件
+         可听，只能自己量：active 期间用一个 rAF 循环每帧读一次锚点容器的
+         rect.top，与上次差超过 1px 才 setState —— 没动的帧只读一个 rect、零渲染；
+         窗口 resize（rect 会变）也顺带被覆盖。active 变 false 时取消循环。
+
+         用 useLayoutEffect 是为了让「打开面板」的那一帧就把高度钳住：先画一帧
+         74vh、下一帧再缩回来，正好闪一下头部跑出视口的样子。 */
+      useLayoutEffect(function () {
+        if (props.active !== true) return undefined
+        const doc = nodeBox.node != null ? nodeBox.node.ownerDocument : null
+        const view = doc != null ? doc.defaultView : null
+        let raf = 0
+        let lastTop = NaN
+        let lastVh = NaN
+        const readAnchor = function () {
+          const box = panelAnchorBox(nodeBox.node)
+          const top = box == null ? NaN : parseFloat(box.top)
+          const vh = view != null ? parseFloat(view.innerHeight) : NaN
+          if (!isFinite(top)) return
+          if (Math.abs(top - lastTop) > 1 || Math.abs(vh - lastVh) > 1) {
+            lastTop = top
+            if (isFinite(vh)) lastVh = vh
+            setAnchor({ top: lastTop, vh: lastVh })
+          }
+        }
+        readAnchor()
+        if (view == null || typeof view.requestAnimationFrame !== 'function') return undefined
+        const tick = function () {
+          readAnchor()
+          raf = view.requestAnimationFrame(tick)
+        }
+        raf = view.requestAnimationFrame(tick)
+        return function () { view.cancelAnimationFrame(raf) }
+      }, [props.active])
 
       /* The panel watches fast only while it is the thing on screen; closed, it
          falls back to the chip's slow lane and shares that poller. */
@@ -1406,10 +1487,28 @@
       const popProps = {
         className: 'dsh-git-pop' + (props.active === true ? '' : ' dsh-git-hidden')
           + (switcher === 'panel' ? ' dsh-git-pop-overflow' : ''),
-        ref: function (node) { panelNode = node },
+        ref: function (node) { panelNode = node; nodeBox.node = node },
       }
       if (size.w > 0) popProps.style = { width: size.w + 'px', left: '50%', right: 'auto', transform: 'translateX(-50%)' }
-      if (size.h > 0) popProps.style = Object.assign({}, popProps.style, { height: size.h + 'px' })
+      /* 高度：记忆的 size.h（没有就是默认 74vh）是「期望」，实际渲染时再被输入框
+         上沿之上的空间钳一道 —— 只改这一个 style，size / panelSize 的记忆语义完全
+         不动，空间恢复后自然回到期望值（拖拽记下的期望高度也照此被钳制但不丢）。
+         没量到锚点（anchor 为 null）时一行都不写，维持原样。 */
+      const sizeH = parseFloat(size.h)
+      const wantH = sizeH > 0 ? sizeH
+        : (anchor != null && parseFloat(anchor.vh) > 0 ? Math.round(parseFloat(anchor.vh) * PANEL_DEFAULT_VH) : 0)
+      const availH = anchor != null && isFinite(anchor.top)
+        ? Math.floor(parseFloat(anchor.top) - PANEL_ANCHOR_GAP - PANEL_ANCHOR_SAFETY)
+        : 0
+      let panelH = 0
+      /* 记忆过高度就照旧写 inline（哪怕空间够，也维持和从前一样的渲染路径）；没记忆
+         时只有默认 74vh 真的放不下才写 —— 平时仍交给 CSS，跟随窗口。 */
+      if (wantH > 0 && (sizeH > 0 || availH < wantH)) {
+        panelH = wantH
+        if (availH > 0 && availH < panelH) panelH = availH
+        if (panelH < PANEL_MIN_HEIGHT) panelH = PANEL_MIN_HEIGHT
+        popProps.style = Object.assign({}, popProps.style, { height: panelH + 'px' })
+      }
 
       return h('div', popProps,
         h('div', { key: 'gn', className: 'dsh-git-grip dsh-git-grip-n', title: '拖动调整高度', onPointerDown: startDrag('n') }),
