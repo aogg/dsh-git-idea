@@ -32,6 +32,7 @@ export const TARGETS = [
       'src/host/70-config.js',
       'src/host/72-gitbin.js',
       'src/host/74-identity.js',
+      'src/host/76-cmdlog.js',
       'src/host/80-rpc.js',
     ],
   },

@@ -82,6 +82,11 @@ onRpc('git/repos', function (input) { return readWorkspaceRepos(input) })
 
 onRpc('git/repos-save', function (input) { return saveWorkspaceRepo(input) })
 
+/* 面板「命令」页：这个工作区里执行过的所有 git 命令，数据源是 DSH 的会话记录
+   而不是仓库（76-cmdlog.js）。和上面两个 repos 读一样按工作区走，不进读缓存 ——
+   它要的就是「刚刚又跑了什么」，每次都重读一遍会话文件。 */
+onRpc('git/command-log', function (input) { return commandLogSnapshot(input) })
+
 onRpc('git/commit-detail', function (input) { return commitDetailSnapshot(input) })
 
 /* The one read the panel asks for by path rather than by repository: the patch
