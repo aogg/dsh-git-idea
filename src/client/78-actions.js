@@ -151,9 +151,9 @@
       }, [open])
     }
 
-    /* ── ⋯ 菜单：压缩提交 + 删除分支 ──
+    /* ── ⋯ 菜单：压缩提交 + 删除提交 + 删除分支 ──
 
-       压缩的区间与提交信息由面板算（它才有图和多选），这里只放入口；删除分支照
+       压缩/删除的区间由面板算（它才有图、单选和多选），这里只放入口；删除分支照
        branchpicker 的成熟交互：-d 被拒（提交没合并到别处）才给出 -D，两段式确认。 */
     function MoreActionsMenu(props) {
       const [box] = React.useState(function () { return { node: null } })
@@ -254,6 +254,17 @@
             : 'Ctrl+点击提交行选择多个提交（至少 2 个，最新端要选到列表第一行的 HEAD）',
           onClick: function (event) { stopEvent(event); if (props.count >= 2) props.onSquash() },
         }, '压缩提交' + (props.count >= 2 ? '（已选 ' + String(props.count) + ' 个）' : '')),
+        /* 删除与压缩同一个区间语义（HEAD 到最旧所选的整段），差别只在 reset 的 soft/hard：
+           压缩把整段收进一个新提交，删除连提交带改动一起丢。生效集合比压缩宽一档 ——
+           没有多选时作用于单选那条（和左边那四个工具一致），所以 N≥1 就能点。 */
+        h('button', {
+          key: 'drop', type: 'button', className: 'dsh-git-menu-item',
+          disabled: props.dropCount < 1,
+          title: props.dropCount >= 1
+            ? '把从 HEAD 到最旧所选的整段区间连提交带改动一起从分支尖端丢弃（hard reset 到最旧选中项的父提交；改动不保留，须在当前分支的无筛选视图里选）'
+            : '先在历史里点选一个提交，或 Ctrl+点击 选一段（最新端要选到列表第一行的 HEAD）',
+          onClick: function (event) { stopEvent(event); if (props.dropCount >= 1) props.onDrop() },
+        }, '删除提交' + (props.dropCount >= 1 ? '（已选 ' + String(props.dropCount) + ' 个）' : '')),
         h('div', { key: 's1', className: 'dsh-git-menu-sep' }),
         h('button', {
           key: 'delh', type: 'button', className: 'dsh-git-menu-item',

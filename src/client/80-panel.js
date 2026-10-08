@@ -410,17 +410,20 @@
       }
 
       /* 哪些操作能把整棵树改掉：切分支、pull、merge/cherry-pick/revert（开始、继续、
-         跳过、中止都算）和压缩（soft reset 把 HEAD 挪到段首的父提交、索引变成整段的
-         合计）会重写工作区/引用，它们的答案必须是一次全树读。别的（提交、暂存、取消
+         跳过、中止都算）、压缩（soft reset 把 HEAD 挪到段首的父提交、索引变成整段的
+         合计）和删除（hard reset 把整段连提交带改动一起丢）会重写工作区/引用，它们的
+         答案必须是一次全树读。别的（提交、暂存、取消
          暂存、fetch、push、tag、建/删分支）只动索引或引用 —— 那里用屏上那些路径确认
          就够了。真机上量到的是：一次全树读 8–10s，而且这期间整条 RPC 通道都被它占着，
          为一次「提交」让读者等十秒、十秒内点什么都要排队，是没有道理的。 */
-      const REWRITES_TREE = ['git/checkout', 'git/pull', 'git/sequence', 'git/init', 'git/squash']
+      const REWRITES_TREE = ['git/checkout', 'git/pull', 'git/sequence', 'git/init', 'git/squash', 'git/drop']
 
       /* One path for every panel operation. A failed operation still re-reads,
          because the failures that matter — a conflicting cherry-pick, merge or
          revert — leave the repository in a different state than they found it.
-         onOk（可选）只在成功后跑一次：压缩用它清空多选 —— 失败时选择要留着好重试。 */
+         onOk（可选）只在成功后跑一次：压缩/删除用它清空多选 —— 失败时选择要留着好
+         重试；host 那份 ok:true 的答复作为参数传给它，删除要从里面读 preHead 给出
+         找回通道。 */
       const runOp = function (method, payload, onOk) {
         if (busy) return
         setBusy(true)
@@ -431,9 +434,9 @@
         panelBox.needFull = REWRITES_TREE.indexOf(method) >= 0
         const request = base(appliedRepo)
         if (payload != null) Object.assign(request, payload)
-        rpc(method, request).then(function () {
+        rpc(method, request).then(function (reply) {
           setBusy(false)
-          if (typeof onOk === 'function') onOk()
+          if (typeof onOk === 'function') onOk(reply)
           bump()
         }, function (failure) {
           setBusy(false)
@@ -502,9 +505,26 @@
 
       const submitPrompt = function () {
         if (prompt == null) return
+        const kind = prompt.kind
+        /* 删除提交没有输入框（改动一并丢弃，没有可填的东西），必须先于「空值即返回」
+           走。载荷与压缩同款：base 是最旧所选的父提交，expect 是删除前的 HEAD。成功后
+           多选清空（这一段已经不存在了），并从答复的 preHead 里给出 30 天的找回通道。 */
+        if (kind === 'drop') {
+          const dropPayload = { base: text(prompt.base) }
+          if (text(prompt.expect).length > 0) dropPayload.expect = text(prompt.expect)
+          const count = typeof prompt.count === 'number' && prompt.count > 0 ? prompt.count : 1
+          setPrompt(null)
+          runOp('git/drop', dropPayload, function (reply) {
+            setMultiSel([])
+            const preHead = reply != null && typeof reply.preHead === 'string' ? reply.preHead : ''
+            setOkNote(preHead.length > 0
+              ? '已删除 ' + String(count) + ' 个提交；30 天内可 git reset --hard ' + preHead.slice(0, 12) + ' 找回'
+              : '已删除 ' + String(count) + ' 个提交（改动一并丢弃）')
+          })
+          return
+        }
         const value = prompt.value.trim()
         if (value.length === 0) return
-        const kind = prompt.kind
         /* 压缩走自己的载荷：base 是最旧选中项的父提交，expect 是压缩前的 HEAD（防呆，
            见 host 78-actions.js 的顺序）。成功后多选清空 —— 这一段已经不存在了。 */
         if (kind === 'squash') {
@@ -926,6 +946,47 @@
         })
       }
 
+      /* ── 删除入口（⋯ 菜单点「删除提交」后走到这里）──
+
+         门卫与压缩完全同款：reset --hard 同样只会落在当前 HEAD 上，段的新端必须是
+         HEAD，防呆的 expect 同样要对着无筛选视图的列表第一行。差别有两处：生效集合
+         比压缩宽一档 —— 没有多选时作用于单选那条（和拣选/还原/标签/分支四个工具
+         一致）；语义更狠 —— reset --hard 连段里的改动一起丢，所以确认文案必须说清
+         「改动一并丢弃」。 */
+      const openDrop = function () {
+        const scoped = allRefs || activeRef.length > 0 || search.length > 0 || author.length > 0
+          || datePreset !== 'all' || pathFilter.length > 0
+        if (scoped) {
+          setError('删除要对着当前分支的完整历史选：先清掉分支范围、筛选与搜索，再从列表第一行（HEAD）开始选 —— Ctrl+点击选段，或单选第一行')
+          return
+        }
+        const commits = graph != null && graph.ok === true && Array.isArray(graph.commits) ? graph.commits : []
+        const picked = multiSel.length > 0 ? multiSel
+          : (selected !== null && text(selected).length > 0 ? [text(selected)] : [])
+        const spots = []
+        for (let i = 0; i < commits.length; i += 1) {
+          if (picked.indexOf(text(commits[i].hash)) >= 0) spots.push(i)
+        }
+        if (spots.length < 1) return
+        if (spots[0] !== 0) {
+          setError('删除区间的最新端必须是 HEAD（列表第一行）：把第一行也选进来再删 —— 列表中间的一段删不掉，从 HEAD 到所选的整段都会被丢弃')
+          return
+        }
+        const newest = commits[spots[0]]
+        const oldest = commits[spots[spots.length - 1]]
+        const parents = Array.isArray(oldest.parents) ? oldest.parents : []
+        if (parents.length === 0 || text(parents[0]).length === 0) {
+          setError('所选最旧的那个提交（' + text(oldest.short) + '）没有父提交 —— 仓库的第一个提交删不掉（它前面没有可停留的位置）')
+          return
+        }
+        const count = spots[spots.length - 1] - spots[0] + 1
+        setPrompt({
+          kind: 'drop', value: '', base: text(parents[0]),
+          expect: text(commits[0].hash), count: count,
+          hint: '将 ' + text(oldest.short) + '…' + text(newest.short) + ' 共 ' + String(count) + ' 个提交删除（改动一并丢弃）',
+        })
+      }
+
       const toggle = function (path) {
         setCollapsed(function (previous) {
           const next = Object.assign({}, previous)
@@ -1225,6 +1286,9 @@
       const commitCount = graph != null && graph.ok === true ? graph.commits.length : 0
       const selectedCommit = selected !== null ? text(selected) : ''
       const canAct = repoOk && busy !== true && selectedCommit.length > 0
+      /* 删除提交的生效集合条数：多选优先（跟压缩一样按段走）；没有多选时作用于单选
+         那条（跟左边四个工具一致）。菜单项的角标与禁用态说的都是这个数。 */
+      const dropCount = multiSel.length > 0 ? multiSel.length : (selectedCommit.length > 0 ? 1 : 0)
       const currentName = refs != null && refs.ok === true && refs.current.length > 0 ? refs.current[0] : ''
       const ahead = work != null && work.ok === true ? work.ahead : 0
       const behind = work != null && work.ok === true ? work.behind : 0
@@ -1519,7 +1583,7 @@
           h('button', {
             key: 'more', type: 'button',
             className: 'dsh-git-acts-btn' + (menuOpen === 'more' ? ' dsh-git-acts-btn-on' : ''),
-            title: '更多操作：压缩提交（Ctrl+点击多选）、删除分支',
+            title: '更多操作：压缩提交（Ctrl+点击多选）、删除提交、删除分支',
             disabled: !repoOk,
             ref: function (node) { moreBox.node = node },
             onClick: function (event) {
@@ -1545,7 +1609,9 @@
                 onClose: function () { setMenuOpen(null) },
                 trigger: moreBox,
                 count: multiSel.length,
+                dropCount: dropCount,
                 onSquash: function () { setMenuOpen(null); openSquash() },
+                onDrop: function () { setMenuOpen(null); openDrop() },
                 reqBase: base(appliedRepo),
                 refs: refs, current: currentName, busy: busy,
                 onNote: function (said) { setOkNote(said) },
@@ -1573,7 +1639,8 @@
 
       /* 压缩的内联表单：提示行说清区间（abc…def 共 N 个 → 1 个），下面是多行的提交信息
          （预填：最新 subject 起头 + 段内各条缩进列出，可编辑）。Enter 确认、Shift+Enter
-         换行、Esc 取消 —— 信息本来就是多行的，Enter 直接确认与单行 prompt 一个手感。 */
+         换行、Esc 取消 —— 信息本来就是多行的，Enter 直接确认与单行 prompt 一个手感。
+         删除是它的无输入款（见下面 drop 分支的注释），两种都从 ⋯ 菜单进来。 */
       const editSquashPrompt = function (value) {
         setPrompt({ kind: 'squash', value: value, base: prompt.base, expect: prompt.expect, hint: prompt.hint })
       }
@@ -1593,6 +1660,27 @@
               key: 'ok', type: 'button', className: 'dsh-git-btn dsh-git-primary',
               disabled: prompt.value.trim().length === 0, onClick: submitPrompt,
             }, '压缩'),
+            h('button', {
+              key: 'no', type: 'button', className: 'dsh-git-btn',
+              onClick: function () { setPrompt(null) },
+            }, '取消'))
+        : prompt.kind === 'drop'
+        /* 删除的确认：没有输入框（改动一并丢弃，没有可填的东西），只有提示行 + 删除 +
+           取消。Enter/Esc 挂在容器上、autoFocus 聚焦「删除」按钮 —— 键从焦点冒泡上来
+           （QuickCommandConfirm 无输入时同一做法），键盘路径与有输入框的 prompt 一个
+           手感，确认按钮本身就是 danger 色。 */
+        ? h('div', {
+            className: 'dsh-git-prompt',
+            onKeyDown: function (event) {
+              if (event.key === 'Enter') { event.preventDefault(); submitPrompt() }
+              if (event.key === 'Escape') { event.preventDefault(); setPrompt(null) }
+            },
+          },
+            h('span', { key: 'l', className: 'dsh-git-hint' }, text(prompt.hint)),
+            h('button', {
+              key: 'ok', type: 'button', className: 'dsh-git-btn dsh-git-danger',
+              autoFocus: true, onClick: submitPrompt,
+            }, '删除'),
             h('button', {
               key: 'no', type: 'button', className: 'dsh-git-btn',
               onClick: function () { setPrompt(null) },

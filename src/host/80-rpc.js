@@ -251,10 +251,13 @@ onRpc('git/tag', function (input) {
   return panelMutate(input, ['tag', name])
 })
 
-/* 压缩与快捷命令（78-actions.js）：一个是多步改写（身份预检 → 防呆 → 干净检查 →
-   soft reset → commit，失败兜底回滚），一个是把读者自定义的命令行原样交给会话沙箱
-   里的 shell。 */
+/* 压缩、删除与快捷命令（78-actions.js）：压缩是多步改写（身份预检 → 防呆 → 干净
+   检查 → soft reset → commit，失败兜底回滚）；删除是它的 hard 款（防呆 → 干净检查
+   → hard reset，成功答复带删除前 HEAD 供找回）；快捷命令把读者自定义的命令行原样
+   交给会话沙箱里的 shell。 */
 onRpc('git/squash', function (input) { return squashRun(input) })
+
+onRpc('git/drop', function (input) { return dropRun(input) })
 
 onRpc('git/quick', function (input) { return quickRun(input) })
 

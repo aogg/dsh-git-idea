@@ -2590,9 +2590,9 @@ async function commandLogSnapshot(input) {
   }
   return { ok: true, commands: Array.isArray(parsed.commands) ? parsed.commands : [], truncated: parsed.truncated === true }
 }
-/* ─────────────── 压缩提交 / 快捷命令 / 变更页三件套 ───────────────
+/* ─────────────── 压缩提交 / 删除提交 / 快捷命令 / 变更页三件套 ───────────────
  *
- * 前两个在面板「更多操作（⋯）」和「快捷命令（⚡）」按钮底下（客户端 78-actions.js），
+ * 前三个在面板「更多操作（⋯）」和「快捷命令（⚡）」按钮底下（客户端 78-actions.js），
  * 后两个是变更页「默认变更列表」那排按钮里的还原与暂存（客户端 54-changes.js）。
  * 放在 80-rpc.js 前面只影响阅读顺序：squashRun 用到的 commitMutation、restoreRun
  * 和 stashRun 用到的 panelMutate / panelPaths 都声明在那儿，而这些函数只在 RPC
@@ -2670,14 +2670,17 @@ async function squashRun(input) {
     }
   }
 
-  /* 4. soft reset 到最旧选中项的父提交，再 commit。 */
-  const reset = await panelMutate(input, ['reset', '--soft', '--', base])
+  /* 4. soft reset 到最旧选中项的父提交，再 commit。base 前不放 '--'：git 把 '--'
+     之后的一切当 pathspec，`reset --soft -- <sha>` 只会得到 fatal: Cannot do soft
+     reset with paths（hard 款同理）—— base 是图读给的全十六进制父提交 hash，不是
+     路径，本来就没有歧义要防。 */
+  const reset = await panelMutate(input, ['reset', '--soft', base])
   if (reset.ok !== true) return reset
   const commit = await commitMutation(input, ['commit', '-m', message])
   if (commit.ok === true) return commit
 
   /* 5. commit 没成：把分支 soft reset 回压缩前的 HEAD，成没成都要说清楚。 */
-  const rollback = await panelMutate(input, ['reset', '--soft', '--', preHead])
+  const rollback = await panelMutate(input, ['reset', '--soft', preHead])
   const said = isStr(commit.stderr) ? commit.stderr.replace(/\s+$/, '').slice(0, 400) : ''
   const story = rollback.ok === true
     ? '压缩里的 commit 这一步失败了，已把分支 soft reset 回压缩前的 ' + preHead.slice(0, 12)
@@ -2694,6 +2697,71 @@ async function squashRun(input) {
     noGit: commit.noGit === true,
     stderr: (said.length > 0 ? story + '\n' + said : story),
   }
+}
+
+/* ── git/drop：把从 HEAD 到最旧所选的整段区间连提交带改动一起丢弃 ──
+ *
+ * 与压缩对称但语义更狠：压缩是 reset --soft + 重新提交（整段的改动收进一个新提交，
+ * 东西还在）；删除是 reset --hard —— 分支尖端挪到最旧选中项的父提交，那一段提交
+ * **连同它们带来的改动**一起从工作区消失。客户端的确认框已把「改动一并丢弃」说在
+ * 前头，这里再把安全顺序走完（骨架照 squashRun，差异就两处：不创建提交，所以没有
+ * 身份预检；reset 是 hard，所以干净检查的理由更硬）：
+ *
+ *   1. 防呆：expect 是客户端读图时的 HEAD，先 rev-parse 比对（允许短 hash 前缀，
+ *      同 squashRun）；对不上说明列表读数过期，拒绝，同样什么都不动。
+ *   2. 工作区干净检查：`git status --porcelain` 里只允许「未跟踪」（'??'）一种行。
+ *      reset --hard 会把已暂存/未暂存的改动一起卷掉 —— 对压缩那只是「捎带」，对
+ *      删除是必然发生，必须先挡；未跟踪文件 reset --hard 不动，放行。
+ *   3. hard reset 到 base。成功答复附加 preHead（删除前的 HEAD）：被删的提交在
+ *      reflog 里还有约 30 天，`git reset --hard <preHead>` 是唯一的找回通道，必须
+ *      随成功一起送到读者眼前。 */
+async function dropRun(input) {
+  const base = input != null && isStr(input.base) ? input.base.trim() : ''
+  const expect = input != null && isStr(input.expect) ? input.expect.trim() : ''
+  if (base.length === 0) return { ok: false, error: 'a base commit is required' }
+  const args = argsFor(input)
+
+  /* 1. 防呆 + 删除前 HEAD：一次 rev-parse 两用（比对 expect、成功答复里的找回位置）。 */
+  const head = await git(args, ['rev-parse', 'HEAD'], null, {})
+  const preHead = head.stdout.trim()
+  if (head.exitCode !== 0 || preHead.length === 0) {
+    return { ok: false, error: 'no-head', repo: args.repo || null, stderr: head.stderr, noGit: gitMissing(head) }
+  }
+  if (expect.length > 0 && preHead !== expect && preHead.indexOf(expect) !== 0) {
+    /* expect 允许是短 hash：答复里给两个都能读的写法。 */
+    return {
+      ok: false, error: 'head-moved', repo: args.repo || null,
+      stderr: '删除前的 HEAD 是 ' + preHead.slice(0, 12) + '，现在已经是别的提交（期望 ' + expect.slice(0, 12)
+        + '）—— 列表读数过期了。重新读一次再选，没有做任何改动。',
+    }
+  }
+
+  /* 2. 工作区干净：只放行「未跟踪」（上限沿用 squash 的那份：同一条 status，同样
+     的体积顾虑）。 */
+  const status = await gitC(args, ['--no-optional-locks', '-c', 'core.quotePath=false',
+    'status', '--porcelain', '--untracked-files=normal'], null, { maxBytes: SQUASH_STDOUT_MAX })
+  if (status.exitCode !== 0) {
+    return { ok: false, error: 'status-failed', repo: args.repo || null, stderr: status.stderr, noGit: gitMissing(status) }
+  }
+  const rows = status.stdout.split('\n')
+  for (let i = 0; i < rows.length; i += 1) {
+    const row = rows[i]
+    if (row.length < 2) continue
+    if (row.charAt(0) !== '?' || row.charAt(1) !== '?') {
+      return {
+        ok: false, error: 'dirty-tree', repo: args.repo || null,
+        stderr: '工作区还有已暂存或未暂存的改动（' + row.slice(3).slice(0, 120) + '）—— 先提交或 stash 掉它们再删除：'
+          + '删除会把这段提交连同工作区的改动一并丢弃，未跟踪文件不受影响。没有做任何改动。',
+      }
+    }
+  }
+
+  /* 3. hard reset：段连提交带改动一起从分支尖端消失。base 前不放 '--'，原因同上：
+     git 把 '--' 之后的一切当 pathspec，`reset --hard -- <sha>` 会被 fatal: Cannot
+     do hard reset with paths 拒掉；base 是全十六进制的父提交 hash，不是路径。 */
+  const reset = await panelMutate(input, ['reset', '--hard', base])
+  if (reset.ok !== true) return reset
+  return Object.assign({}, reset, { preHead: preHead })
 }
 
 /* ── git/quick：跑读者自定义的一条命令行 ──
@@ -3021,10 +3089,13 @@ onRpc('git/tag', function (input) {
   return panelMutate(input, ['tag', name])
 })
 
-/* 压缩与快捷命令（78-actions.js）：一个是多步改写（身份预检 → 防呆 → 干净检查 →
-   soft reset → commit，失败兜底回滚），一个是把读者自定义的命令行原样交给会话沙箱
-   里的 shell。 */
+/* 压缩、删除与快捷命令（78-actions.js）：压缩是多步改写（身份预检 → 防呆 → 干净
+   检查 → soft reset → commit，失败兜底回滚）；删除是它的 hard 款（防呆 → 干净检查
+   → hard reset，成功答复带删除前 HEAD 供找回）；快捷命令把读者自定义的命令行原样
+   交给会话沙箱里的 shell。 */
 onRpc('git/squash', function (input) { return squashRun(input) })
+
+onRpc('git/drop', function (input) { return dropRun(input) })
 
 onRpc('git/quick', function (input) { return quickRun(input) })
 
