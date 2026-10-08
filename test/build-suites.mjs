@@ -24,6 +24,7 @@ export const SUITES = [
   ['gp43-body.mjs', 'gp43-settings-test.mjs'],
   ['gp44-body.mjs', 'gp44-shared-test.mjs'],
   ['gp45-body.mjs', 'gp45-actions-test.mjs'],
+  ['gp46-body.mjs', 'gp46-panelbounds-test.mjs'],
   ['bench-body.mjs', 'bench.mjs'],
   ['bench-branch-body.mjs', 'bench-branch.mjs'],
 ]

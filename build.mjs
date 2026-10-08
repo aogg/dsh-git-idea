@@ -43,6 +43,7 @@ export const TARGETS = [
       'src/client/00-plugin.js',
       'src/client/10-state.js',
       'src/client/12-window.js',
+      'src/client/14-geometry.js',
       'src/client/20-prefs.js',
       'src/client/24-repos.js',
       'src/client/30-watch.js',

@@ -234,6 +234,12 @@ textarea.dsh-git-input{resize:vertical}
    card past its own right edge. */
 .dsh-git-switch-panel{top:calc(100% + 6px);left:8px;max-width:calc(100% - 16px)}
 .dsh-git-switch-hover{left:8px;bottom:100%;margin-bottom:8px;max-width:calc(100% - 16px)}
+/* 悬停卡片被钳住时（.dsh-git-switch-cap，maxHeight 由 94-popover.js 实测写入）：
+   卡片是 bottom:100% 从下往上长的，收的是它自己的顶。头部行和建行脚不缩，
+   分支列表吃掉余下的高度自己滚 —— 列表本来就是滚动容器（max-height:330 放开，
+   由钳出来的空间接管）。flyout 仍挂在卡片外，卡片照旧不裁剪。 */
+.dsh-git-switch-cap .dsh-git-bs{flex:0 1 auto;min-height:0}
+.dsh-git-switch-cap .dsh-git-bs-list{max-height:none;flex:0 1 auto;min-height:0}
 .dsh-git-bs{display:flex;flex-direction:column;min-height:0;position:relative}
 .dsh-git-bs-head{display:flex;align-items:center;flex-wrap:wrap;gap:5px;padding:6px 9px;border-bottom:1px solid var(--dsw-alias-border-l1)}
 .dsh-git-bs-mag{display:inline-flex;flex:none;color:var(--dsw-alias-label-secondary)}

@@ -86,10 +86,14 @@
          come back to the foreground still showing the branch it used to be on. */
       const reloadAt = useDataVersion()
       const [size, setSize] = React.useState(panelSize)
-      /* 锚点容器（输入区 overlay 槽位）量到的 {top, vh}。null = 还没量过（首帧、或
-         没有布局的环境），此时不钳制，维持 CSS 的 74vh / 记忆的 size.h。vh 和 top
-         一起量、一起进变化判据：默认期望高度是 74% 个视口，只盯 top 的话纵向
-         resize 就漏掉了。 */
+      /* 锚点容器（输入区 overlay 槽位）量到的 {top, ceiling, vh}。null = 还没量过
+         （首帧、或没有布局的环境），此时不钳制，维持 CSS 的 74vh / 记忆的 size.h。
+         top 是锚点上沿（面板下沿就在它上面 8px）；ceiling 是真实上界（14-geometry.js
+         的 clipCeiling：沿祖先量到的最近裁剪边界——会话滚动体的可见上沿——比视口
+         上沿低，量不到时为 null，钳制按 0 处理，即 15ab5a3 的旧边界）。vh、top、
+         ceiling 一起量、一起进变化判据：默认期望高度是 74% 个视口，只盯 top 的话
+         纵向 resize 就漏掉了；只盯 top+vh 的话，滚动体自己的位移（页头伸缩、布局
+         变化、滚动位置）也会漏。 */
       const [anchor, setAnchor] = React.useState(null)
       /* 这个挂载自己的面板节点。panelNode 是全局单值，同一页挂着多个会话时，别的
          会话一重画它就被指到别人的节点上；量锚点必须认自己这一块。 */
@@ -791,9 +795,14 @@
       /* ── 面板打开期间，跟着输入框量 ──
 
          「发送第一条消息后输入框立刻从居中落到底部」这种 DOM 位移对插件没有事件
-         可听，只能自己量：active 期间用一个 rAF 循环每帧读一次锚点容器的
-         rect.top，与上次差超过 1px 才 setState —— 没动的帧只读一个 rect、零渲染；
-         窗口 resize（rect 会变）也顺带被覆盖。active 变 false 时取消循环。
+         可听，只能自己量：active 期间用一个 rAF 循环每帧读一次锚点容器的 rect.top
+         与真实上界（clipCeiling），与上次差超过 1px 才 setState —— 没动的帧只读
+         一个 rect 加十几个 computedStyle、零渲染；窗口 resize（rect 会变）也顺带被
+         覆盖。active 变 false 时取消循环。
+
+         上界必须和锚点同帧同量：hero→settling→active 的相位切换没有事件，居中的
+         输入框落底、页头伸缩、滚动体自己被滚，全都是「下一帧 rect 就不一样」的事，
+         rAF 循环是唯一靠得住的跟随方式。
 
          用 useLayoutEffect 是为了让「打开面板」的那一帧就把高度钳住：先画一帧
          74vh、下一帧再缩回来，正好闪一下头部跑出视口的样子。 */
@@ -804,15 +813,29 @@
         let raf = 0
         let lastTop = NaN
         let lastVh = NaN
+        let lastCeiling = NaN
         const readAnchor = function () {
           const box = panelAnchorBox(nodeBox.node)
           const top = box == null ? NaN : parseFloat(box.top)
           const vh = view != null ? parseFloat(view.innerHeight) : NaN
           if (!isFinite(top)) return
-          if (Math.abs(top - lastTop) > 1 || Math.abs(vh - lastVh) > 1) {
+          /* 真实上界：会话滚动体（或任何会裁竖向溢出的祖先）的可见上沿。量不到
+             （没有布局的环境、祖先全不裁）时是 null，钳制按 0 —— 即视口上沿。 */
+          const ceiling = clipCeiling(nodeBox.node, view)
+          const ceilingNum = isFinite(ceiling) ? ceiling : NaN
+          /* 「上次」是 NaN 的第一帧必须判成动过 —— 比较式 `Math.abs(x - NaN) > 1`
+             恒为 false，把第一帧也算「没动」的话，一次都不会 setState，钳制就永远
+             不生效（15ab5a3 正是栽在这里：锚点从没写进 state，hero 相位照旧显示
+             不全）。上界/vh 的「有没有」变化（NaN↔数值）也算动过。 */
+          const ceilingMoved = isFinite(ceilingNum) !== isFinite(lastCeiling)
+            || (isFinite(ceilingNum) && Math.abs(ceilingNum - lastCeiling) > 1)
+          if (!isFinite(lastTop) || Math.abs(top - lastTop) > 1
+            || isFinite(vh) !== isFinite(lastVh) || (isFinite(vh) && Math.abs(vh - lastVh) > 1)
+            || ceilingMoved) {
             lastTop = top
-            if (isFinite(vh)) lastVh = vh
-            setAnchor({ top: lastTop, vh: lastVh })
+            lastVh = vh
+            lastCeiling = ceilingNum
+            setAnchor({ top: lastTop, ceiling: isFinite(ceilingNum) ? ceilingNum : null, vh: lastVh })
           }
         }
         readAnchor()
@@ -1994,15 +2017,22 @@
         ref: function (node) { panelNode = node; nodeBox.node = node },
       }
       if (size.w > 0) popProps.style = { width: size.w + 'px', left: '50%', right: 'auto', transform: 'translateX(-50%)' }
-      /* 高度：记忆的 size.h（没有就是默认 74vh）是「期望」，实际渲染时再被输入框
-         上沿之上的空间钳一道 —— 只改这一个 style，size / panelSize 的记忆语义完全
-         不动，空间恢复后自然回到期望值（拖拽记下的期望高度也照此被钳制但不丢）。
-         没量到锚点（anchor 为 null）时一行都不写，维持原样。 */
+      /* 高度：记忆的 size.h（没有就是默认 74vh）是「期望」，实际渲染时再被「锚点
+         上沿之上的可见空间」钳一道 —— 只改这一个 style，size / panelSize 的记忆语义
+         完全不动，空间恢复后自然回到期望值（拖拽记下的期望高度也照此被钳制但不丢）。
+         没量到锚点（anchor 为 null）时一行都不写，维持原样。
+         可见空间的上界不是视口上沿（0），是真实上界 ceiling（14-geometry.js 的
+         clipCeiling）：面板长在会话滚动体里面，超出滚动体上沿的部分永远滚不回来。
+         hero 相位输入框垂直居中、锚点上沿在屏幕中段，旧算法会把面板顶推到视口顶
+         附近，正好整条头部落在滚动体上沿之上被裁 —— ceiling 就是量给它的。 */
       const sizeH = parseFloat(size.h)
       const wantH = sizeH > 0 ? sizeH
         : (anchor != null && parseFloat(anchor.vh) > 0 ? Math.round(parseFloat(anchor.vh) * PANEL_DEFAULT_VH) : 0)
+      const ceilingH = anchor != null && anchor.ceiling != null && isFinite(parseFloat(anchor.ceiling))
+        ? parseFloat(anchor.ceiling)
+        : 0
       const availH = anchor != null && isFinite(anchor.top)
-        ? Math.floor(parseFloat(anchor.top) - PANEL_ANCHOR_GAP - PANEL_ANCHOR_SAFETY)
+        ? Math.floor(parseFloat(anchor.top) - PANEL_ANCHOR_GAP - PANEL_ANCHOR_SAFETY - ceilingH)
         : 0
       let panelH = 0
       /* 记忆过高度就照旧写 inline（哪怕空间够，也维持和从前一样的渲染路径）；没记忆

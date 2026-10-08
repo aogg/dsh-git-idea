@@ -1,14 +1,52 @@
+    /* 悬停卡片低于这个可见空间就不钳：塞不下搜索行 + 几行分支 + 建行脚的卡片，
+       钳了也是一张压碎的卡，不如维持自然高度（极端矮窗口下保持原行为）。 */
+    const SWITCH_MIN_ROOM = 200
+
     function GitPopover(props) {
       const isOpen = useOpen()
       const mode = useSwitchMode()
       /* 分支卡片上那个「几个改动」也来自全局那一份读数：同一个数字在面板、chip 和这张
          卡片上必须是同一个。 */
       useTreeVersion()
+      /* 悬停卡片的高度上界（像素，null = 不钳）。卡片和面板挂在同一个锚点上、同样
+         bottom:100% 向上生长，hero 相位（新会话输入框居中）时卡片顶同样会被会话
+         滚动体裁掉 —— 面板是靠钳高度让列表少显示几行，卡片同款：把量到的可见空间
+         写成 maxHeight，让卡片里的分支列表（本来就是滚动容器）自己缩、自己滚。
+         打开那一刻量一次（useLayoutEffect + setState 发生在绘制前，不会闪一帧自然
+         高度）；悬停是转瞬的手势，收起再悬停会重新量，不做逐帧跟随。 */
+      const [hoverCap, setHoverCap] = React.useState(null)
       /* Unmounting on close threw away the tab, the filters, the selection and
          the scroll position, and made every reopen a fresh mount that re-read
          everything. Closing now only hides it: the panel keeps its state, and
          nothing is fetched again until something actually changes. */
       if (isOpen) everOpened = true
+
+      useLayoutEffect(function () {
+        if (mode !== 'hover' || isOpen === true) {
+          /* 收起即松开钳制：下次打开按当时的几何重新量。值没变时 setter 不触发重画。 */
+          setHoverCap(function (previous) { return previous === null ? previous : null })
+          return undefined
+        }
+        /* 量的是 chip 的定位祖先（panelAnchorBox 通用：offsetParent 的 rect）：chip
+           挂在输入框卡片里、卡片就是定位祖先，卡片上沿 == overlayAnchor（卡片顶的
+           零高锚点）的上沿 == 卡片和悬停卡片共同的锚点上沿。从 chip 量而不是从面板
+           量，是因为悬停恰恰发生在面板 display:none 的时候——隐藏元素的 offsetParent
+           是 null，量不出锚点；chip 永远在屏。 */
+        const from = chipNode != null ? chipNode : panelNode
+        const doc = from != null ? from.ownerDocument : null
+        const view = doc != null ? doc.defaultView : null
+        /* 没有布局的环境（测试、连 rAF 都没有）不钳：卡片按 CSS 的自然高度走。 */
+        if (view == null || typeof view.requestAnimationFrame !== 'function') return undefined
+        const anchorBox = panelAnchorBox(from)
+        const anchorTop = anchorBox != null ? parseFloat(anchorBox.top) : NaN
+        if (!isFinite(anchorTop)) return undefined
+        const ceiling = clipCeiling(from, view)
+        const room = anchorTop - PANEL_ANCHOR_GAP - PANEL_ANCHOR_SAFETY
+          - (ceiling != null && isFinite(ceiling) ? ceiling : 0)
+        if (!isFinite(room)) return undefined
+        setHoverCap(room >= SWITCH_MIN_ROOM ? Math.floor(room) : null)
+        return undefined
+      }, [mode, isOpen])
 
       React.useEffect(function () {
         if (!isOpen && mode === null) return undefined
@@ -60,7 +98,13 @@
         h(GitPanel, { key: 'panel', sessionId: props.sessionId, active: isOpen, ready: everOpened }),
         mode === 'hover' && isOpen !== true
           ? h('div', {
-              key: 'switch', className: 'dsh-git-switch dsh-git-switch-hover',
+              key: 'switch',
+              className: 'dsh-git-switch dsh-git-switch-hover'
+                + (hoverCap !== null ? ' dsh-git-switch-cap' : ''),
+              /* 实测的可见空间（见上面的 useLayoutEffect）：卡片从下往上生长，
+                maxHeight 收的是它自己的顶。配套的 .dsh-git-switch-cap 让分支列表
+                吃掉余下高度自己滚（46-css.js）。 */
+              style: hoverCap !== null ? { maxHeight: hoverCap + 'px' } : undefined,
               ref: function (node) { switcherNode = node },
               onPointerEnter: function () { clearHoverTimer() },
               onPointerLeave: function () { hoverCloseSoon() },
