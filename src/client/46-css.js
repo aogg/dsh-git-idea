@@ -85,6 +85,9 @@
 .dsh-git-st-R{color:var(--dsw-alias-brand-primary)}
 .dsh-git-st-C{color:var(--dsw-alias-brand-primary)}
 .dsh-git-st-U{color:var(--dsw-alias-state-error-primary)}
+/* 未解决的合并冲突（UU/AA/DU…）：红色加粗的双码，和修改的黄色单字母一眼分开。
+   槽位只有 12px（装一个字母的），双码还回 width:auto 才装得下两个字。 */
+.dsh-git-st-CF{color:var(--dsw-alias-state-error-primary);font-weight:700;width:auto}
 .dsh-git-cbox{flex:none;width:14px;font-size:11px;color:var(--dsw-alias-label-secondary);cursor:pointer}
 .dsh-git-cbox-on{color:var(--dsw-alias-brand-primary)}
 .dsh-git-cbox-part{color:var(--dsw-alias-state-warn-primary)}

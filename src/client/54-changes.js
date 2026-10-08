@@ -29,6 +29,14 @@
        unversioned *directory* still expands it into the files it holds, and those
        files stay in this group too — each with its own ticked box.
 
+       ── 冲突那组 ──
+
+       合并、拣选、stash pop 留下的 unmerged 路径（porcelain v2 的 `u` 行，双码
+       UU/AA/DU…）不进 staged/unstaged，mergeChanges 给它们打了 `conflict` 标。
+       分桶先看这个标再看新增：冲突行的框语义和别组不同 —— 勾＝`git add` 标记
+       **已解决**，不是普通的「进索引」—— 混进别的组，读者就会在错误的理解下勾框。
+       没有冲突时这组整个不出现，树和从前一字不差。
+
        ── two views ──
 
        IDEA's other toggle, next to the changes: a tree of directories, or a flat
@@ -209,23 +217,34 @@
 
       /* One tracked change: box, status letter, name. In either view the click
          opens the patch (IDEA's commit window previews the selection too); the
-         tree adds the indent the flat list does not have. */
+         tree adds the indent the flat list does not have.
+
+         未解决的冲突（打了 conflict 标的 unmerged 路径）不走 statusClass 的单字母：
+         `UU` 在那里落进黄色 M 桶，和一次普通修改长得一样，读者看不出有活要干。
+         这里改画红色加粗的完整双码（git 的 X/Y：UU/AA/DU…），勾选框的措辞也换成
+         「标记已解决」—— `git add` 在冲突路径上的含义是「我解决完了」，不是普通
+         的「进索引」，所以框的悬停话不能照抄。 */
       const fileRow = function (scope, entry, key, depth, flat, label) {
+        const conflict = entry.conflict === true
         return h('div', {
           className: rowClass(scope, key),
           key: key,
-          title: text(entry.path) + '（点开看差异）',
+          title: conflict === true
+            ? text(entry.path) + '（未解决的合并冲突：编辑文件处理 <<<<<<< ======= >>>>>>> 标记，然后勾选＝git add 标记已解决；点开看差异）'
+            : text(entry.path) + '（点开看差异）',
           onClick: function () {
             scope.onSelect(key)
             if (typeof scope.onOpenDiff === 'function') scope.onOpenDiff(entry)
           },
         },
           stageBox('box', entry.staged === true ? 'all' : 'none',
-            entry.staged === true ? '取消暂存' : '暂存',
+            entry.staged === true ? '取消暂存' : (conflict === true ? '标记已解决（git add）' : '暂存'),
             function () { scope.onSetStaged([entry], entry.staged !== true) }),
           indentPad(depth),
           h('span', { className: 'dsh-git-tw' }),
-          h('span', { className: 'dsh-git-st' + statusClass(entry.displayCode) }, statusLabel(entry.displayCode)),
+          conflict === true
+            ? h('span', { className: 'dsh-git-st dsh-git-st-CF', title: '未解决的冲突（' + text(entry.workCode) + '）' }, text(entry.workCode))
+            : h('span', { className: 'dsh-git-st' + statusClass(entry.displayCode) }, statusLabel(entry.displayCode)),
           nameCell(label, flat))
       }
 
@@ -348,7 +367,7 @@
          level up: tick it and the whole changelist goes into the index, untick it
          and it comes back out. The untracked group's entries are by definition
          never staged, so its box only ever reads empty. */
-      const groupTitle = function (scope, label, key, hint, entries) {
+      const groupTitle = function (scope, label, key, hint, entries, tickTitle) {
         let staged = 0
         for (let i = 0; i < entries.length; i += 1) if (entries[i].staged === true) staged += 1
         const allStaged = entries.length > 0 && staged === entries.length
@@ -361,7 +380,8 @@
           onDoubleClick: function () { scope.onToggle(key) },
         },
           stageBox('box', allStaged ? 'all' : (someStaged ? 'some' : 'none'),
-            allStaged ? '把这一组全部撤出索引' : '把这一组全部暂存',
+            /* tickTitle：组自己那句话（冲突组说「标记已解决」），不给就用默认文案。 */
+            allStaged ? '把这一组全部撤出索引' : (tickTitle == null ? '把这一组全部暂存' : tickTitle),
             function () { scope.onSetStaged(entries, !allStaged) }),
           twisty({ collapsed: scope.collapsed[key] === true, onToggle: function () { scope.onToggle(key) } }),
           h('span', { className: 'dsh-git-tname' }, label),
@@ -455,20 +475,28 @@
           }, '无法读取这个仓库的变更')]
         }
         const changes = mergeChanges(one)
+        /* 冲突桶在最前：先判 conflict 再判 isNewFile —— 冲突行的框是「标记已解决」，
+           和新增/修改的「进索引」不是一个动作，绝不能让一条冲突被别的关系领走。 */
+        const conflicted = []
         const tracked = []
         const fresh = []
         for (let i = 0; i < changes.length; i += 1) {
           const entry = changes[i]
           if (entry.path.length === 0) continue
-          if (isNewFile(entry)) fresh.push(entry)
+          if (entry.conflict === true) conflicted.push(entry)
+          else if (isNewFile(entry)) fresh.push(entry)
           else tracked.push(entry)
         }
         const byPath = function (a, b) { return a.path < b.path ? -1 : (a.path > b.path ? 1 : 0) }
+        conflicted.sort(byPath)
         tracked.sort(byPath)
         fresh.sort(byPath)
 
         const rows = []
+        /* 冲突组排第一（要处理的活顶在最上面），entries 为空时下面的循环直接跳过，
+           所以没有冲突时这组不存在，列表和从前一字不差。 */
         const scopedGroups = [
+          { key: '@conflict', label: '冲突', hint: '合并/拣选/stash pop 留下的未解决冲突，勾上＝git add 标记已解决', tickTitle: '把这一组全部标记已解决（git add）', entries: conflicted },
           { key: '@tracked', label: '默认变更列表', hint: 'git 管着的改动，框勾上就是进了索引', entries: tracked },
           { key: '@new', label: '新增的文件', hint: 'git 还没提交过的文件：勾上就是加入索引，但留在这一组里，直到提交', entries: fresh },
         ]
@@ -477,8 +505,15 @@
           const group = scopedGroups[g]
           if (group.entries.length === 0) continue
           shown += 1
-          rows.push(groupTitle(scope, group.label, group.key, group.hint, group.entries))
+          rows.push(groupTitle(scope, group.label, group.key, group.hint, group.entries, group.tickTitle))
           if (scope.collapsed[group.key] === true) continue
+          if (group.key === '@conflict') {
+            /* 组头之下一行灰字指引，不占别的组：冲突文件该干什么（找标记、勾选的
+               含义）第一次见的人未必知道。键带 repo —— 多仓库时每组各来一行，别撞。 */
+            rows.push(h('div', {
+              key: 'guide:' + repo, className: 'dsh-git-trow dsh-git-dim', style: { paddingLeft: '18px' },
+            }, '编辑文件解决 <<<<<<< ======= >>>>>>> 标记后，勾选暂存＝git add 标记已解决；点文件名看差异'))
+          }
           /* 工具条只属于默认变更列表那一组（理由见 trackedTools 的注释），且跟着组的
              展开走：折叠时它和文件行一起收起，组头还留着。 */
           if (group.key === '@tracked') rows.push(trackedTools(scope, group.entries))
@@ -523,6 +558,11 @@
       const stagedEntries = []
       for (let i = 0; i < changes.length; i += 1) if (changes[i].staged === true) stagedEntries.push(changes[i])
       const stagedCount = stagedEntries.length
+      /* 冲突数和上面同源（同一份 mergeChanges(work)）：side 永远属于生效仓库，多选
+         视图里别的仓库不进这个数 —— 提交按钮提交的是生效仓库的索引，警告也只说
+         它的冲突（防的正是「直接提交被 git 拒」那一次白点）。 */
+      let conflictCount = 0
+      for (let i = 0; i < changes.length; i += 1) if (changes[i].conflict === true) conflictCount += 1
       const totalChanges = changes.length
       const allKind = kindOf(changes)
       const canCommit = props.busy !== true && props.message.trim().length > 0 && totalChanges > 0
@@ -546,6 +586,13 @@
           ? h('div', { key: 'ident', className: 'dsh-git-hint dsh-git-warn' },
             '这台机器还没配 git 提交身份，提交会被 git 拒绝。设置页「dsh-git-idea配置 → 提交身份」里能填，'
             + '或在终端里跑：git config --global user.name "你的名字"、git config --global user.email "你的邮箱"。')
+          : null,
+        /* 同一件事也说在提交前：带未解决冲突的索引 `git commit` 会直接拒（「cannot
+           commit a merge」/ unmerged files），让读者先看见路，而不是先撞一次墙。 */
+        conflictCount > 0
+          ? h('div', { key: 'conflict', className: 'dsh-git-hint dsh-git-warn' },
+            '有 ' + String(conflictCount) + ' 个冲突未解决，直接提交会被 git 拒绝；在变更页编辑文件解决 '
+            + '<<<<<<< ======= >>>>>>> 标记后，勾选暂存（标记已解决）再提交。')
           : null,
         clearable('msg', h('textarea', {
           className: 'dsh-git-input',
