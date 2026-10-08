@@ -1068,6 +1068,73 @@
         })
       }
 
+      /* ── 默认变更列表的三件套：还原 / 暂存（54-changes.js 的工具条）──
+
+         「添加」那一件就是 git add，走上面那个 setStaged —— 勾选==已暂存，所以它幂等，
+         不需要自己的处理器。这两件不同：restore 把路径从索引和工作区一起抹回 HEAD，
+         stash 把它们收进 stash 栈，答案都是「那几个路径现在干净了」，善后因此照
+         setStaged 的样子：只问那几条路径的确认读（confirmStaged，0.2s 那条路），列表里
+         那几行立刻消失，不为它们排一次全树读。
+
+         与 tick 不同，这两个要动面板的 busy：它们各只有一次点击、没有乐观补丁可打
+         （git 说了算），点下去到读回来之间，按钮自己得看得见在忙 —— tick 那条
+         「不许让面板闪」的规矩（见 queueMutation 的注释）买的是连点，这里没有连点。 */
+      const pickedPaths = function (files) {
+        const paths = []
+        for (let i = 0; i < files.length; i += 1) {
+          const path = text(files[i].path)
+          if (path.length > 0) paths.push(path)
+        }
+        return paths
+      }
+
+      const runGroupOp = function (method, files, at, extra, note) {
+        const paths = pickedPaths(files)
+        if (paths.length === 0) return
+        const repo = at != null && at.length > 0 ? at : appliedRepo
+        setBusy(true)
+        setError(null)
+        setOkNote('')
+        /* 与 setStaged 同一个理由：在飞的读描述的是这次操作之前的仓库。 */
+        bumpRepoEpoch(repo, sessionId)
+        const epoch = repoEpoch(repo, sessionId)
+        const request = base(repo)
+        request.paths = paths
+        if (extra != null) Object.assign(request, extra)
+        queueMutation(function () {
+          return rpc(method, request).then(function () {
+            setBusy(false)
+            setError(null)
+            setOkNote(note(paths.length))
+            if (epoch === repoEpoch(repo, sessionId)) confirmStaged(paths, repo)
+          }, function (failure) {
+            setBusy(false)
+            setError(failureText(failure))
+            /* git 没做成也要重读那几条路径：失败的原因（比如 stash 拒绝）常常已经改了
+               它们的状态，屏幕不能停留在操作前的那一份上。 */
+            if (epoch === repoEpoch(repo, sessionId)) confirmStaged(paths, repo)
+          })
+        })
+      }
+
+      /* 还原：git restore --source=HEAD --staged --worktree。破坏性，客户端已经两段式
+         确认过；成功的话把「做了什么」说在成功条里，读者不用猜那几个文件去了哪。 */
+      const revertPicked = function (files, at) {
+        runGroupOp('git/restore', files, at, null, function (n) {
+          return '已还原 ' + String(n) + ' 项：索引和工作区都回到 HEAD（被删的文件也已恢复）。'
+        })
+      }
+
+      /* 暂存（stash）：非破坏，成功条里得说怎么拿回来 —— 不说的话 stash 就是黑洞。 */
+      const stashPicked = function (files, at) {
+        const count = pickedPaths(files).length
+        runGroupOp('git/stash', files, at,
+          { message: 'dsh-git-idea：暂存 ' + String(count) + ' 个文件' },
+          function (n) {
+            return '已收进 stash：' + String(n) + ' 项。git stash pop 可找回（git stash list 里能看到这一次）。'
+          })
+      }
+
       const changes = status != null && status.ok === true ? mergeChanges(status) : []
       let stagedCount = 0
       for (let i = 0; i < changes.length; i += 1) if (changes[i].staged === true) stagedCount += 1
@@ -1749,12 +1816,18 @@
           onSetStagedAll: setStagedAll,
           onMessage: setMessage,
           onCommit: commit,
+          /* 默认变更列表工具条的还原/暂存：与 onSetStaged 同一套「单仓库不带仓库、多仓库
+             带仓库」的接法（见 makeScope 的转发）。 */
+          onRevert: revertPicked,
+          onStash: stashPicked,
           /* 多仓库：侧栏、分组、按仓库落下去的四个回调。分组为 null 时（单选/没多选）
              变更树与今天完全一样 —— 分组、键名、勾选手势一字不差。 */
           repoProps: repoPropsFor('changes'),
           groups: changeGroups,
           onRepoSingle: function (path) { repoSingle('changes', path) },
           onSetStagedAt: function (repo, files, staged) { setStaged(files, staged, repo) },
+          onRevertAt: function (repo, files) { revertPicked(files, repo) },
+          onStashAt: function (repo, files) { stashPicked(files, repo) },
           onToggleUntrackedAt: function (repo, dir) { toggleUntracked(dir, repo) },
           onOpenDiffAt: function (repo, file) { setDiffTarget(changeDiffTarget(file, repo)) },
           /* One click on a file row, in either list, is what opens the patch —

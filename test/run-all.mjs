@@ -26,9 +26,10 @@ const COUNTING = [
   'gp42-diff-test.mjs',
   'gp43-settings-test.mjs',
   'gp44-shared-test.mjs',
+  'gp45-actions-test.mjs',
 ]
 /* Suites that report by exit code and print their own lines. */
-const PROSE = ['gp34a-host-test.mjs', 'gp34d-config-test.mjs', 'gp34e-bridge-test.mjs']
+const PROSE = ['gp34a-host-test.mjs', 'gp34d-config-test.mjs', 'gp34e-bridge-test.mjs', 'gp45-host-test.mjs']
 
 /* ── GP_FRESH：不落仓库产物也做回归 ──
 
@@ -56,11 +57,12 @@ if (FRESH) {
 
 function run(file) {
   const started = Date.now()
-  /* 这两个套件读的是 host 那一半，其余读 client 那一半（GP_SRC 在它们各自文件里
+  /* 这三个套件读的是 host 那一半，其余读 client 那一半（GP_SRC 在它们各自文件里
      的含义就是「要测的那份源码」）。 */
   const env = Object.assign({}, process.env)
   if (FRESH) {
-    env.GP_SRC = file === 'gp34a-host-test.mjs' || file === 'gp34d-config-test.mjs' ? freshHost : freshClient
+    env.GP_SRC = file === 'gp34a-host-test.mjs' || file === 'gp34d-config-test.mjs' || file === 'gp45-host-test.mjs'
+      ? freshHost : freshClient
   }
   const result = spawnSync(process.execPath, [path.join(HERE, file)], { encoding: 'utf8', env: env })
   const out = (result.stdout || '') + (result.stderr || '')

@@ -51,6 +51,12 @@
     function ChangesPane(props) {
       /* Read before the early returns: a hook cannot be skipped by a branch. */
       const settings = useGitSettings()
+      /* ── 默认变更列表工具条的两段式确认 ──
+         还原是破坏性操作，第一次点只把按钮换成「确认还原 n 项」（78-actions.js 里删除
+         分支的 delArm 是同一个交互）。记的是「哪个仓库、勾了几项」这个键，而不是一个
+         布尔：勾选数一变或换了仓库，armed 自动失效 —— 第二次点确认的永远是读者正看着
+         的那一组，而不是点击之间被换掉的一组。同样必须在早退之前读（hook 的规矩）。 */
+      const [revertArm, setRevertArm] = React.useState('')
       const view = settings.changesView === 'flat' ? 'flat' : 'tree'
       const work = props.work
       if (work == null) return h('div', { className: 'dsh-git-pane dsh-git-dim' }, '正在读取工作区…')
@@ -159,6 +165,7 @@
             selectedKey: props.selectedKey, collapsed: props.collapsed,
             onSelect: props.onSelect, onToggle: props.onToggle,
             onSetStaged: props.onSetStaged, onOpenDiff: props.onOpenDiff,
+            onRevert: props.onRevert, onStash: props.onStash,
             untrackedOpen: props.untrackedOpen, untrackedFiles: props.untrackedFiles,
             onToggleUntracked: props.onToggleUntracked,
           }
@@ -183,9 +190,12 @@
           onSelect: function (key) { props.onSelect(prefix + key) },
           onToggle: function (path) { props.onToggle(prefix + path) },
           /* 勾选与差异都落回**文件自己的**仓库：多选视图里勾 repo-b 的文件得真的
-             add 到 repo-b，而不是悄悄进了生效仓库的索引。 */
+             add 到 repo-b，而不是悄悄进了生效仓库的索引。工具条的还原/暂存是同一件
+             事 —— 按钮长在哪个仓库的组里，就动哪个仓库。 */
           onSetStaged: function (entries, staged) { props.onSetStagedAt(repo, entries, staged) },
           onOpenDiff: function (entry) { props.onOpenDiffAt(repo, entry) },
+          onRevert: function (entries) { props.onRevertAt(repo, entries) },
+          onStash: function (entries) { props.onStashAt(repo, entries) },
           untrackedOpen: localView(props.untrackedOpen),
           untrackedFiles: localView(props.untrackedFiles),
           onToggleUntracked: function (dir) { props.onToggleUntrackedAt(repo, dir) },
@@ -358,6 +368,69 @@
           h('span', { className: 'dsh-git-tdim' }, countText(kindOf(entries))))
       }
 
+      /* ── 默认变更列表的工具条：添加 / 还原 / 暂存，都对着勾选项 ──
+
+         勾选==已暂存（见上面 fileRow 的框），所以三个按钮的对象就是组里
+         staged===true 的那些条目，一个都没勾时禁用并说明。只加在 @tracked 这一组：
+         用户要的是「默认变更列表」的工具条，而「新增的文件」那组的语义不同 —— HEAD
+         里还没有那些路径，还原和暂存对它们都说不通。它是组的内容而不是标题的一部分，
+         组一折叠就跟着文件行一起藏起来。
+
+         「添加」走 onSetStaged：和勾一个框完全是同一条路（乐观补丁 + 路径确认读），
+         幂等，重复点没有副作用。「还原」是破坏性的，两段式确认 —— arm 键的构成见
+         ChangesPane 开头那个 useState 的注释。「暂存」收进 stash，非破坏，单击即可。 */
+      const trackedTools = function (scope, entries) {
+        const picked = []
+        for (let i = 0; i < entries.length; i += 1) if (entries[i].staged === true) picked.push(entries[i])
+        const count = picked.length
+        const idle = props.busy === true
+        const whyNone = '先勾选这一组里的文件（勾上就是已暂存），这三个按钮都对勾选项做事'
+        const armKey = (scope.repo.length > 0 ? scope.repo + '\u001f' : '') + '@revert:' + String(count)
+        const armed = revertArm === armKey
+        return h('div', { key: '@tracked:tools', className: 'dsh-git-ctools' },
+          h('button', {
+            key: 'add', type: 'button', className: 'dsh-git-ctool',
+            disabled: count === 0 || idle,
+            title: count === 0 ? whyNone
+              : 'git add 勾选的 ' + String(count) + ' 项（勾选即已暂存，重复执行没有副作用）',
+            onClick: function (event) {
+              stopEvent(event)
+              if (count === 0 || idle) return
+              scope.onSetStaged(picked, true)
+            },
+          }, '添加'),
+          h('button', {
+            key: 'revert', type: 'button',
+            className: 'dsh-git-ctool' + (armed ? ' dsh-git-ctool-danger' : ''),
+            disabled: count === 0 || idle,
+            title: count === 0 ? whyNone
+              : (armed
+                ? '再点一次执行：' + String(count) + ' 项的索引和工作区一起回到 HEAD —— 改动将丢弃，不可撤销'
+                : '丢弃勾选的 ' + String(count) + ' 项改动：git restore --source=HEAD --staged --worktree（索引+工作区回 HEAD，被删的文件也恢复；破坏性，需再点一次确认）'),
+            onClick: function (event) {
+              stopEvent(event)
+              if (count === 0 || idle) return
+              /* 第一次点只武装；第二次点才动手，动完把武装清掉（成没成都清 —— 失败的
+                 重试也要从第一步重新来）。 */
+              if (armed !== true) { setRevertArm(armKey); return }
+              setRevertArm('')
+              scope.onRevert(picked)
+            },
+          }, armed ? '确认还原 ' + String(count) + ' 项' : '还原'),
+          h('button', {
+            key: 'stash', type: 'button', className: 'dsh-git-ctool',
+            disabled: count === 0 || idle,
+            title: count === 0 ? whyNone
+              : 'git stash push 收起勾选的 ' + String(count) + ' 项（非破坏：git stash pop 可找回）',
+            onClick: function (event) {
+              stopEvent(event)
+              if (count === 0 || idle) return
+              scope.onStash(picked)
+            },
+          }, '暂存'),
+          h('span', { key: 'n', className: 'dsh-git-tdim' }, '已勾选 ' + String(count) + ' 项'))
+      }
+
       /* ── one repository's rows ──
 
          The order is a property of the paths, not of the index: `mergeChanges`
@@ -406,6 +479,9 @@
           shown += 1
           rows.push(groupTitle(scope, group.label, group.key, group.hint, group.entries))
           if (scope.collapsed[group.key] === true) continue
+          /* 工具条只属于默认变更列表那一组（理由见 trackedTools 的注释），且跟着组的
+             展开走：折叠时它和文件行一起收起，组头还留着。 */
+          if (group.key === '@tracked') rows.push(trackedTools(scope, group.entries))
           rows.push.apply(rows, view === 'flat' ? flatRows(scope, group.entries, group.key) : treeRows(scope, group.entries, group.key))
         }
         /* 多仓库视图里「干净」是某个仓库自己的事：组头底下给一行，而不是整页那句

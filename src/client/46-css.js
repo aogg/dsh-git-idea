@@ -104,6 +104,18 @@
    同样的手势、同样的悬停与选中。 */
 .dsh-git-cgroup{margin-top:4px}
 .dsh-git-cgroup .dsh-git-tname{font-weight:600}
+/* ── 默认变更列表的工具条（54-changes.js）：添加 / 还原 / 暂存 ──
+    类名刻意不用 dsh-git-tool / dsh-git-tool-ico：那两个类说的是「作用于选中提交的
+    那四个工具」，测试也按个数认它们（78-actions.js 开头说明了原因）——这一排是对
+    一组勾选做事，名字分开对两边都诚实。左边 20px 让按钮避开勾选框那一列，和组里
+    的行对得上。 */
+.dsh-git-ctools{display:flex;align-items:center;gap:4px;flex:none;padding:1px 6px 3px 20px}
+.dsh-git-ctool{display:inline-flex;align-items:center;border:1px solid var(--dsw-alias-border-l1);background:transparent;color:var(--dsw-alias-label-primary);border-radius:4px;padding:1px 8px;font-size:11px;font-family:inherit;line-height:16px;cursor:pointer;flex:none}
+.dsh-git-ctool:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
+.dsh-git-ctool:disabled{opacity:.45;cursor:default}
+/* 还原的两段式确认：第一次点之后按钮变红（和删除分支的确认同一个 danger 语义 ——
+    下一次点击不可撤销）。 */
+.dsh-git-ctool-danger{color:var(--dsw-alias-state-error-primary);border-color:var(--dsw-alias-state-error-primary)}
 .dsh-git-commitpane{width:304px;flex:none;border-left:1px solid var(--dsw-alias-border-l1);padding:8px;display:flex;flex-direction:column;gap:8px}
 .dsh-git-crow{display:flex;align-items:center;gap:8px;height:26px;box-sizing:border-box;padding:0 8px;cursor:pointer;white-space:nowrap;-webkit-user-select:none;user-select:none}
 .dsh-git-crow:hover{background:var(--dsw-alias-bg-layer-2)}

@@ -110,6 +110,13 @@ onRpc('git/unstage', function (input) {
   return panelMutate(input, ['restore', '--staged', '--'].concat(paths))
 })
 
+/* 变更页「默认变更列表」工具条的还原与暂存（78-actions.js 的 restoreRun/stashRun）。
+    与上面 stage/unstage 同一条 panelMutate 路：读缓存的无条件失效对它们同样是必须的
+    —— restore 连工作区一起动了，stash 则把路径连同索引里的那份一起收走。 */
+onRpc('git/restore', function (input) { return restoreRun(input) })
+
+onRpc('git/stash', function (input) { return stashRun(input) })
+
 /* A failed commit is the one mutation whose failure can be about this machine
    instead of about the repository: git will not author a commit until it knows
    who the author is, and no amount of retrying here changes that. Asked of git

@@ -1,9 +1,10 @@
-/* ─────────────── 压缩提交 / 快捷命令 ───────────────
+/* ─────────────── 压缩提交 / 快捷命令 / 变更页三件套 ───────────────
  *
- * 两个都在面板「更多操作（⋯）」和「快捷命令（⚡）」按钮底下（客户端 78-actions.js）。
- * 放在 80-rpc.js 前面只影响阅读顺序：squashRun 用到的 commitMutation 声明在那儿，
- * 而这些函数只在 RPC 处理函数被调用时才运行 —— 同一个函数作用域里声明提升已经把它们
- * 备好了。 */
+ * 前两个在面板「更多操作（⋯）」和「快捷命令（⚡）」按钮底下（客户端 78-actions.js），
+ * 后两个是变更页「默认变更列表」那排按钮里的还原与暂存（客户端 54-changes.js）。
+ * 放在 80-rpc.js 前面只影响阅读顺序：squashRun 用到的 commitMutation、restoreRun
+ * 和 stashRun 用到的 panelMutate / panelPaths 都声明在那儿，而这些函数只在 RPC
+ * 处理函数被调用时才运行 —— 同一个函数作用域里声明提升已经把它们备好了。 */
 
 /* ── git/squash：把一段提交压成一个 ──
  *
@@ -146,4 +147,32 @@ async function quickRun(input) {
     sandboxDenied: run.sandboxDenied === true,
     timedOut: run.timedOut === true,
   }
+}
+
+/* ── git/restore 与 git/stash：变更页「默认变更列表」的工具条 ──
+ *
+ * 那排按钮（客户端 54-changes.js）作用于组里勾选的路径，两条 RPC 的形状因此和
+ * git/stage 一样：panelPaths 校验路径数组，panelMutate 跑命令 —— 读缓存的无条件
+ * 失效、noGit、sandboxDenied 这些每条写命令都要带的字段都由它统一给出，错误也把
+ * git 的原话原样带回。
+ *
+ * restore 是三件套里唯一破坏性的一件：`--source=HEAD --staged --worktree` 把索引和
+ * 工作区**一起**拉回 HEAD —— 被删的文件也由此恢复，这正是「还原」要的意思。客户端
+ * 已经用两段式确认挡过一次，这里照办不再多问（会挡两次的还是同一个读者）。
+ *
+ * stash 不破坏任何东西：`push -m <说明> -- <paths>` 只把勾选的路径收进 stash 栈，
+ * `git stash pop` 就能拿回来。说明由客户端写好带来（带个数，`git stash list` 里认得出
+ * 是哪一次）；缺了就让 git 自己写它的 WIP 句子 —— 这不是一个值得拒绝读者的错误。 */
+async function restoreRun(input) {
+  const paths = panelPaths(input)
+  if (paths.length === 0) return { ok: false, error: 'no paths given' }
+  return panelMutate(input, ['restore', '--source=HEAD', '--staged', '--worktree', '--'].concat(paths))
+}
+
+async function stashRun(input) {
+  const paths = panelPaths(input)
+  if (paths.length === 0) return { ok: false, error: 'no paths given' }
+  const message = input != null && isStr(input.message) ? input.message.trim() : ''
+  const said = message.length > 0 ? ['-m', message] : []
+  return panelMutate(input, ['stash', 'push'].concat(said, ['--'], paths))
 }
