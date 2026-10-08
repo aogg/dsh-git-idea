@@ -181,6 +181,9 @@
       /* 「这个目录不是 Git 仓库」那一页没有路径框（路径不是问题，没什么可填的），
          所以这里也不再承诺「点击选择路径」—— 承诺一个点不到的东西比不承诺更坏。 */
       else if (info.reason === 'not-a-repo') title = where + ' 这个目录不是 Git 仓库 —— 点击查看'
+      /* 属主被 git 拒了：能自动修好的根本不会停在这个状态，标题里就别再说成
+         「不是仓库」—— 仓库明明就在那里。 */
+      else if (info.reason === 'unsafe-owner') title = where + ' 的目录属主不同，git 拒绝读取 —— 点击查看'
       else if (info.reason === '') title = 'Git —— 点击打开面板'
       else title = where + ' 读不动这个目录 —— 点击查看'
 

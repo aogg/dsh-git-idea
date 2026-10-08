@@ -15,13 +15,32 @@
         editable: false,
         init: false,
       },
+      /* 仓库就在这个路径上，git 却拒读它：目录属主不是运行 dsh 的那个用户，
+         safe.directory 保护挡在前面（fatal: detected dubious ownership）。
+         面板读到时已经自动把路径写进过 global 配置并重试 —— 写成功就根本到不了
+         这一页；写不进去（只读的会话/沙箱）才落到这里。所以这一页不许再说
+         「不是 Git 仓库」：要给读者自己就能执行的完整命令。safe.directory 只认
+         system/global 配置，-c 与仓库内配置 git 一律忽略，所以命令必须是 --global。
+         路径每个仓库不同，hint 在 setupReason 里按当前路径补全。 */
+      'unsafe-owner': {
+        title: 'git 拒绝读取这个仓库（目录属主不同）',
+        editable: false,
+        init: false,
+        hintFor: function (path) {
+          return '目录属主与运行 dsh 的用户不同，git 出于保护拒绝读取；面板自动写入 '
+            + 'safe.directory 没有成功（可能是只读的会话或沙箱）。可以在终端自己执行下面这句，'
+            + '然后点「打开这个目录」重试：git config --global --add safe.directory ' + path
+        },
+      },
       'git-error': { title: 'git 命令执行失败', hint: '目录存在，但 git 没能读取它。下方是 git 的原话。' },
     }
 
-    function setupReason(id) {
+    function setupReason(id, path) {
       const found = SETUP_REASONS[id]
-      if (found !== undefined) return found
-      return { title: '这里还不是 Git 仓库', hint: '' }
+      if (found === undefined) return { title: '这里还不是 Git 仓库', hint: '' }
+      /* 只有 safe.directory 这一页的提示里带着仓库自己的路径，其余页都是静态的。 */
+      if (found.hintFor !== undefined) return Object.assign({}, found, { hint: found.hintFor(path) })
+      return found
     }
 
     function RepoSetup(props) {
@@ -30,7 +49,7 @@
       const [armed, setArmed] = React.useState(false)
       const [busy, setBusy] = React.useState(false)
       const [problem, setProblem] = React.useState(null)
-      const info = setupReason(props.reason)
+      const info = setupReason(props.reason, props.initial)
       /* 只有「路径还没定」或「这个路径有问题」时才需要人改路径。
          路径本身没错、只是这里没有仓库时，上面那行已经说清是哪个目录了。 */
       const editable = info.editable !== false

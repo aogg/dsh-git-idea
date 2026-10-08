@@ -96,6 +96,57 @@ function branchIdentityShell(target) {
   ].join('\n')
 }
 
+/* ── the third refusal that is not the repository's fault ──
+
+   A repository owned by another user is refused outright — `fatal: detected
+   dubious ownership in repository at '<path>'` — and as far as `pathShell` can
+   see, that refusal is indistinguishable from a directory with no repository at
+   all: the stderr is dropped on the floor, `$gd` comes out empty, and the setup
+   page tells the reader a perfectly good repository is "not a Git repository"
+   (found live: the repository is owned by `node`, dsh runs as root).
+
+   The refusal is git's safe.directory protection, so the fix has to be written
+   where git reads that list from: the system or the **global** configuration,
+   and nowhere else. This is not a style choice — git deliberately ignores
+   `-c safe.directory=...` and every repository-level value for this one key,
+   because a repository that could name itself safe would have whitelisted
+   itself; only config the repository cannot write counts. `git config --global`
+   is the one place a per-repository answer can land and be honored.
+
+   Recognition is pinned to the C locale: git translates its messages, and the
+   refusal is matched out of the probe's output, so the probe runs under
+   `LC_ALL=C` and matches the one phrase this refusal says there — `dubious
+   ownership`. Nothing localized is ever matched, for the same reason
+   `PANEL_NO_GIT` is a marker instead of a match on bash's own translated words.
+
+   The fix is idempotent: the global list is asked for first (`--get-all`), and
+   `--add` runs only when the path is not already in it — a panel that reads
+   every few seconds must not append the same line forever. After the write (or
+   the skip), the rev-parse that failed is retried exactly once, and this script
+   has no loop: one failed retry is the end of it. When the repository is STILL
+   unreadable — the write was refused (a read-only session or sandbox) or the
+   entry did not help — the state travels out as the `PANEL_UNSAFE_OWNER`
+   marker, the same transport `PANEL_NO_GIT` uses inside this multiplexed
+   stdout, so the Host gives the reader a reason of their own and the command
+   that fixes it, instead of "not a Git repository". */
+const PANEL_UNSAFE_OWNER = 'O:safedir'
+
+function safeDirectoryShell(target) {
+  const quoted = shq(target)
+  return [
+    '    if [ -z "$gd" ]; then',
+    '      probe=$(LC_ALL=C ' + gitCmd() + ' -C ' + quoted + ' rev-parse --absolute-git-dir 2>&1)',
+    '      case "$probe" in',
+    "        *'dubious ownership'*)",
+    '          ' + gitCmd() + ' config --global --get-all safe.directory 2>/dev/null | grep -Fxq -- ' + quoted + ' || ' + gitCmd() + ' config --global --add safe.directory ' + quoted + ' >/dev/null 2>&1',
+    '          gd=$(' + gitCmd() + ' -C ' + quoted + ' rev-parse --absolute-git-dir 2>/dev/null)',
+    "          if [ -z \"$gd\" ]; then printf '" + PANEL_UNSAFE_OWNER + "\\n'; fi",
+    '        ;;',
+    '      esac',
+    '    fi',
+  ].join('\n')
+}
+
 /* The shape both reads share: the three answers about the path itself, the one
    gitdir both of them need, and the half-done-operation markers — with everything
    that is actually asked of the repository in the middle. Written once because
@@ -122,6 +173,7 @@ function pathShell(target, middle) {
        answers for a parent one. */
     '  if ' + repoHere(target) + '; then',
     '    gd=$(' + gitCmd() + ' -C ' + quoted + ' rev-parse --absolute-git-dir 2>/dev/null)',
+    safeDirectoryShell(target),
     '  else',
     "    gd=''",
     '  fi',
@@ -230,6 +282,16 @@ function panelCommand(target, paths) {
    on a slow mount, every tick — and it is only worth paying while something is
    showing the working tree, which is what `deep` asks for. Everything else in
    the signature is three stats, one for-each-ref and one small file read. */
+/* ── what this tick deliberately does not fix ──
+
+   A repository git refuses for dubious ownership leaves `$gd` empty here, so the
+   tick answers an empty signature until the ownership is settled — and this
+   script runs no recognition and no fix of its own. It does not have to: the
+   panel read repairs the situation by writing the path into the **global**
+   safe.directory list (see `safeDirectoryShell` above), and global configuration
+   is read by every later git process — this tick's included. So the tick after
+   that write resolves `$gd` again and the signature resumes on its own; nothing
+   here changes, and nothing here has to retry. */
 function watchCommand(target, deep, paths) {
   const quoted = shq(target)
   const asked = paths == null ? [] : paths

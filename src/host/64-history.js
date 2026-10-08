@@ -83,9 +83,11 @@ async function readPanelIdentity(input, target) {
   let upstream = null
   let track = ''
   let noGit = false
+  let unsafeOwner = false
   for (let i = 1; i < lines.length; i += 1) {
     const line = lines[i]
     if (line === PANEL_NO_GIT) { noGit = true; continue }
+    if (line === PANEL_UNSAFE_OWNER) { unsafeOwner = true; continue }
     if (line.indexOf('RC:') === 0) { exitCode = parseInt(line.slice(3), 10); continue }
     if (line.indexOf('S:') === 0) { if (sequencer === null) sequencer = line.slice(2); continue }
     if (line.indexOf('B:') === 0) { branch = line.slice(2); continue }
@@ -100,6 +102,12 @@ async function readPanelIdentity(input, target) {
   /* Before the exit code, which the script never reached: "this machine has no
      git" is not a repository that failed to read, and the reader can act on it. */
   if (noGit) return missingPanel(target, 'no-git')
+  /* Before the exit code too, for the same shape of reason: the exit code only
+     says the read failed, the marker says why — git refuses this repository's
+     owner, the panel already attempted the global safe.directory write and the
+     retry, and the reader gets a state of their own with the command that fixes
+     it, not "not a repository" (see `safeDirectoryShell`). */
+  if (unsafeOwner) return missingPanel(target, 'unsafe-owner')
   if (exitCode !== 0) {
     const failed = missingPanel(target, 'not-a-repo')
     failed.exitCode = exitCode
@@ -130,11 +138,13 @@ async function readPanel(input, target, paths) {
   let exitCode = null
   let sequencer = null
   let noGit = false
+  let unsafeOwner = false
   let needsIdentity = false
   const body = []
   for (let i = 1; i < lines.length; i += 1) {
     const line = lines[i]
     if (line === PANEL_NO_GIT) { noGit = true; continue }
+    if (line === PANEL_UNSAFE_OWNER) { unsafeOwner = true; continue }
     if (line === PANEL_NO_IDENT) { needsIdentity = true; continue }
     if (line.indexOf('RC:') === 0) { exitCode = parseInt(line.slice(3), 10); continue }
     if (line.indexOf('S:') === 0) { if (sequencer === null) sequencer = line.slice(2); continue }
@@ -143,6 +153,12 @@ async function readPanel(input, target, paths) {
   const output = body.join('\n')
 
   if (noGit) return missingPanel(target, 'no-git')
+  /* Before the exit-code branch below, and for the same reason `noGit` comes
+     first: the marker says the read failed because git refuses the repository's
+     owner — after the panel's own global safe.directory write and the one retry
+     already happened — and that is a different page for the reader than either
+     "not a repository" or a git error (see `safeDirectoryShell`). */
+  if (unsafeOwner) return missingPanel(target, 'unsafe-owner')
   if (exitCode !== 0) {
     const outsideRepo = output.indexOf('not a git repository') >= 0
     const failed = missingPanel(target, outsideRepo ? 'not-a-repo' : 'git-error')
