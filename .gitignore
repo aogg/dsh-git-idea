@@ -1,3 +1,4 @@
 test/.last-run.json
 bridge.log
 node_modules/
+.dsh
