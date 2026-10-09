@@ -29,6 +29,10 @@ function normalizeConfig(raw) {
        upstream asks first. git's own `push.default` / `pull.rebase` still apply
        underneath and are not overridden. */
     fetchPrune: true, pullRebase: false, pushSetUpstream: false,
+    /* 会话完成后的两件事（客户端 92-chip.js 听 DSH 的会话状态）：跑完自动刷新一次，
+       全部跑完（稳定 5 秒）后自动推一次。默认「只刷新、不推送」—— 刷新只是把屏幕
+       上已有的数字对齐现实，推送却是把读者的工作发到远端，没问过就不能替他做。 */
+    refreshOnComplete: true, pushOnAllComplete: false,
     /* 手动登记的仓库，按工作区分组（61-repos.js）。放在这份配置而不是浏览器
        localStorage：它描述的是「这个项目有哪些仓库」，跟着项目走 —— 换浏览器、
        换机器打开同一个工作区，清单应该还是同一份；localStorage 那层（20-prefs.js）
@@ -45,6 +49,8 @@ function normalizeConfig(raw) {
   out.fetchPrune = raw.fetchPrune !== false
   out.pullRebase = raw.pullRebase === true
   out.pushSetUpstream = raw.pushSetUpstream === true
+  out.refreshOnComplete = raw.refreshOnComplete !== false
+  out.pushOnAllComplete = raw.pushOnAllComplete === true
   out.repos = normalizeRepoMap(raw.repos)
   out.quickCommands = normalizeQuickCommands(raw.quickCommands)
   return out

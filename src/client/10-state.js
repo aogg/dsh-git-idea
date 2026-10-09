@@ -193,6 +193,33 @@
     }
     const useDataVersion = dataSignal.use
 
+    /* ── 「有会话刚跑完，去把整棵树重新量一遍」的那声铃 ──
+
+       chip 听 DSH 的会话状态（92-chip.js），但「整棵树重读」的原语一半住在面板里
+       （panelBox.needFull 才决定下一次读是全树还是只问屏上那几条路径）：铃只负责
+       喊，面板听见后自己把 needFull 立起来、走 ⟳ 同一条读路。计一个数而不是布爾，
+       连着的两次完成才不会被合并成一次没喊过。 */
+    let treeReloadBell = 0
+    const treeReloadSignal = createSignal(function () { return treeReloadBell })
+    const ringTreeReload = function () {
+      treeReloadBell += 1
+      treeReloadSignal.notify()
+    }
+    const useTreeReload = treeReloadSignal.use
+
+    /* ── 最近一次自动推送 ──
+
+       「所有会话都完成」那一推（92-chip.js）在面板关着时也会发生，而结果要说给
+       「配置」页的那行状态听 —— 两头不住在同一个组件里，所以是模块级的一份：
+       {time, ok, detail}，null = 从来没推过。 */
+    let autoPush = null
+    const autoPushSignal = createSignal(function () { return autoPush })
+    const setAutoPush = function (next) {
+      autoPush = next
+      autoPushSignal.notify()
+    }
+    const useAutoPush = autoPushSignal.use
+
     /* ── a read that is no longer wanted ──
 
        A read takes as long as the mount makes it take — seconds, on the reader's
@@ -303,6 +330,19 @@
       const record = treeRecord(repo)
       if (record === null || record.fullAt === 0) return true
       return Date.now() - record.fullAt >= fullReadGapMs(record.costMs)
+    }
+
+    /* 会话刚动过这个仓库（92-chip.js 的完成监听）：那份全树读数从这一刻起不再能
+       证明自己是完整的 —— 会话新建的文件只有全树读看得见，而快照里的脏路径清单
+       还是旧的。把 fullAt 记成 0 就是这个意思（treeReadDue 因此答 true，chip 也照
+       实改口「正在核对」），比丢掉整份快照好：屏上那些旧路径仍然问得动，整树读
+       落地之前界面不至于闪一帧空。 */
+    function markTreePartial(repo) {
+      const record = treeRecord(repo)
+      if (record === null || record.fullAt === 0) return
+      treeReads[repo] = Object.assign({}, record, { fullAt: 0 })
+      treeVersion += 1
+      treeSignal.notify()
     }
 
     /* 有一次**会改变那个数字**的读正在飞（这个仓库）—— 全树读，或者只问几条路径的那种

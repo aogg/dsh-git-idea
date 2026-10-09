@@ -95,7 +95,13 @@
          itself against the same ancestor it always did, and the hover card is an
          absolutely positioned sibling that cannot push it around. */
       return h('div', { className: 'dsh-git-layer' },
-        h(GitPanel, { key: 'panel', sessionId: props.sessionId, active: isOpen, ready: everOpened }),
+        h(GitPanel, {
+          key: 'panel', sessionId: props.sessionId, active: isOpen, ready: everOpened,
+          /* 本页有没有会话状态可听（useSession 这类 props）：bridge 版没有，配置页
+             拿这句话代替开关的 hint。只看 props 的存在与否，不在这里调 hook —— 真
+             的听在 chip 那边（92-chip.js）。 */
+          sessionAware: typeof props.useSession === 'function',
+        }),
         mode === 'hover' && isOpen !== true
           ? h('div', {
               key: 'switch',

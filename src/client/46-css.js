@@ -208,6 +208,11 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-ab-out{color:var(--dsw-alias-state-success)}
 .dsh-git-set{display:flex;flex-direction:column;gap:14px;padding:4px 2px;max-width:660px}
 .dsh-git-set-h{font-size:14px;font-weight:600}
+/* 面板的「配置」页（80-panel.js）住在面板正文里：设置页那套排版照搬，外层改成
+   「占满正文、自己滚」—— 面板的高度是钳出来的，内容超出时滚，不把面板撑变形。 */
+.dsh-git-config{flex:1;min-height:0;overflow:auto;padding:10px 12px}
+.dsh-git-set-select{box-sizing:border-box;flex:0 1 auto;min-width:0;max-width:260px;border:1px solid var(--dsh-alias-border-l1);border-radius:4px;background:var(--dsh-alias-bg-base);color:var(--dsh-alias-label-primary);font:inherit;font-size:12px;font-family:inherit;padding:4px 6px}
+.dsh-git-set-select:disabled{opacity:.45;cursor:default}
 .dsh-git-set-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .dsh-git-set-label{flex:none;min-width:170px;font-size:12px;color:var(--dsw-alias-label-primary)}
 .dsh-git-set-input{flex:1 1 160px;width:auto;max-width:260px}

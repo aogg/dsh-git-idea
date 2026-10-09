@@ -34,6 +34,241 @@
       return null
     }
 
+    /* ── 面板的「配置」页：只关于本项目 ──
+
+       设置页那份提交身份管的是机器（`--global` 可选），而面板属于会话、常常开在别
+       的仓库上 —— 这里要的是另一件事：只看、只写**当前这个项目**的 .git/config。
+       git 自己管换行符的两个键（core.autocrlf / core.eol）是同一性质，三个分组都在
+       这一页里；样式复用设置页那套 dsh-git-set-*。 */
+
+    function GitConfigPane(props) {
+      const sessionId = props.sessionId
+      const plugin = usePluginConfig()
+      const autoPushNote = useAutoPush()
+      const [snap, setSnap] = React.useState(null)
+      const [name, setName] = React.useState('')
+      const [email, setEmail] = React.useState('')
+      const [busy, setBusy] = React.useState(false)
+      const [note, setNote] = React.useState('')
+      const [problem, setProblem] = React.useState('')
+
+      /* 只把 session id 交给 Host（设置页 GitIdentityGroup 同一条路）：路径由 Host
+         从会话的工作区解出来，写配置的沙箱策略也跟着这个会话走。 */
+      const request = function () {
+        return sessionId.length > 0 ? { sessionId: sessionId } : {}
+      }
+      React.useEffect(function () {
+        let alive = true
+        callHost('git/project-config', request()).then(function (data) {
+          if (alive !== true) return
+          setSnap(data)
+          setProblem('')
+        }, function (failure) {
+          if (alive !== true) return
+          setProblem(failureText(failure))
+        })
+        return function () { alive = false }
+      }, [sessionId])
+
+      const configOf = function (key) {
+        const one = snap != null && snap.config != null ? snap.config[key] : null
+        return one != null ? one : { local: '', global: '', effective: '', localOrigin: '', globalOrigin: '', effectiveOrigin: '' }
+      }
+
+      /* 写（或清）之后 Host 读回来的是新快照：照它重画。只重画摸过的那几格 —— 只动
+         换行符不该把读者打到一半的名字弄没。 */
+      const run = function (payload, said) {
+        if (busy) return
+        setBusy(true)
+        setNote('')
+        setProblem('')
+        const body = request()
+        if (payload != null) Object.assign(body, payload)
+        callHost('git/project-config-save', body).then(function (result) {
+          setBusy(false)
+          if (result == null || result.ok !== true) {
+            setProblem(commandDetail(result) || '保存失败')
+            return
+          }
+          setSnap(result)
+          const written = Array.isArray(result.written) ? result.written : []
+          const unset = Array.isArray(result.unset) ? result.unset : []
+          if (written.indexOf('user.name') >= 0 || unset.indexOf('user.name') >= 0) setName(text(result.config['user.name'].local))
+          if (written.indexOf('user.email') >= 0 || unset.indexOf('user.email') >= 0) setEmail(text(result.config['user.email'].local))
+          setNote(text(said).length > 0 ? said : '已写进 ' + text(result.repo) + ' 的 .git/config')
+        }, function (failure) {
+          setBusy(false)
+          setProblem(failureText(failure))
+        })
+      }
+
+      /* 设置页 setPlugin 的同款：草稿即时、落盘有 400ms 去抖（20-prefs.js）。 */
+      const setPlugin = function (key, value) {
+        const next = Object.assign({}, plugin)
+        next[key] = value
+        savePluginConfig(next)
+      }
+
+      /* 设置页 GitIdentityGroup 的 source() 同款：值 + 它来自哪个文件。 */
+      const source = function (value, origin) {
+        const one = text(value)
+        if (one.length === 0) return '没有配'
+        const from = text(origin)
+        return from.length === 0 ? one : (one + '（来自 ' + from + '）')
+      }
+      const globalPlaceholder = function (value) {
+        const one = text(value)
+        return one.length > 0 ? '留空 = 用全局（' + one + '）' : '留空 = 用全局（当前全局也未配置）'
+      }
+
+      const nameNow = configOf('user.name')
+      const emailNow = configOf('user.email')
+      const autocrlf = configOf('core.autocrlf')
+      const eol = configOf('core.eol')
+      const inside = snap != null && snap.insideRepo === true
+      const nameMissing = inside && text(nameNow.effective).length === 0
+      const emailMissing = inside && text(emailNow.effective).length === 0
+      const identMissing = nameMissing || emailMissing
+      /* 「清掉本项目覆盖」作用的那几个键：填过（local 有值）的才在列。 */
+      const localKeys = []
+      const ALL_KEYS = ['user.name', 'user.email', 'core.autocrlf', 'core.eol']
+      for (let i = 0; i < ALL_KEYS.length; i += 1) {
+        if (text(configOf(ALL_KEYS[i]).local).length > 0) localKeys.push(ALL_KEYS[i])
+      }
+      const nameDraft = text(name).trim()
+      const emailDraft = text(email).trim()
+
+      /* 换行符那两行的通用画法：下拉第一项固定是「跟随全局」（括号里带全局当前值，
+          没配就说没配），右边一句话答「此刻生效」。选中即写（或即清）—— 这两个键
+          没有草稿可言，选错一次的成本由 git 自己的语义兜着，而清掉随时可回。 */
+      const lineSelect = function (key, entry, choices, title) {
+        const value = text(entry.local)
+        const options = [h('option', {
+          key: 'follow', value: '',
+          title: '清掉本项目的 ' + key + '，用回全局那份（本来没配也算成功）',
+        }, '跟随全局' + (text(entry.global).length > 0 ? '（全局当前：' + entry.global + '）' : '（全局未配置）'))]
+        for (let i = 0; i < choices.length; i += 1) {
+          options.push(h('option', { key: choices[i], value: choices[i] }, choices[i]))
+        }
+        return h('div', { className: 'dsh-git-set-row', key: key },
+          h('span', { className: 'dsh-git-set-label' }, key),
+          h('select', {
+            className: 'dsh-git-set-select', value: value, title: title,
+            disabled: busy || inside !== true,
+            onChange: function (event) {
+              const next = event.target.value
+              if (next.length === 0) run({ unset: [key] }, '已清掉 ' + key + ' 的本项目覆盖，用回全局')
+              else {
+                const setPayload = {}
+                setPayload[key] = next
+                run({ set: setPayload }, '已把 ' + key + ' = ' + next + ' 写进本项目')
+              }
+            },
+          }, options),
+          h('span', { className: 'dsh-git-set-hint' },
+            '此刻生效：' + (text(entry.effective).length > 0
+              ? entry.effective + '（来自 ' + (text(entry.effectiveOrigin).length > 0 ? entry.effectiveOrigin : '全局') + '）'
+              : '未配置')))
+      }
+
+      const sessionHint = props.sessionAware === true
+        ? '会话跑完那一刻自动做一次 ⟳ 级别的整棵树刷新：chip 的分支名/改动数、变更/历史页跟着更新，命令页若开着也重读 —— 刚被会话新建的文件只有全树读能看见，这正是它该刷的时机。'
+        : '当前环境不支持会话状态监听（bridge 版没有会话状态的 props），这两条开关不起作用。'
+
+      return h('div', { className: 'dsh-git-set dsh-git-config' },
+        h('div', { className: 'dsh-git-set-group' }, '会话完成'),
+        h('div', { className: 'dsh-git-set-hint' }, sessionHint),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('label', { className: 'dsh-git-set-check' },
+            h('input', {
+              type: 'checkbox', checked: plugin.refreshOnComplete !== false,
+              onChange: function (event) { setPlugin('refreshOnComplete', event.target.checked) },
+            }),
+            h('span', null, '会话完成时刷新 git 状态'))),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('label', { className: 'dsh-git-set-check' },
+            h('input', {
+              type: 'checkbox', checked: plugin.pushOnAllComplete === true,
+              onChange: function (event) { setPlugin('pushOnAllComplete', event.target.checked) },
+            }),
+            h('span', null, '所有会话都完成时自动推送')),
+          h('span', { className: 'dsh-git-set-hint' },
+            '本页所有会话（含子代理会话）都停止运行且稳定 5 秒后，对当前生效仓库执行一次 push（等同顶栏 ↑）；只推「领先远端且没有未解决冲突」的分支，失败只记录不重试。')),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '最近一次自动推送'),
+          h('span', { className: 'dsh-git-set-hint' },
+            autoPushNote == null ? '还没有自动推送过'
+              : (cmdClock(autoPushNote.time) + ' · ' + (autoPushNote.ok === true ? '成功' : '失败') + '：' + text(autoPushNote.detail)))),
+
+        h('div', { className: 'dsh-git-set-group' }, '提交身份（只写这个项目的 .git/config）'),
+        h('div', { className: 'dsh-git-set-hint' },
+          '这里只写 --local，全局那份不受影响。去「设置 → dsh-git-idea配置 → 提交身份」改全局 —— 那边才选得到写进哪台机器。'),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '此刻生效'),
+          h('span', { className: identMissing === true ? 'dsh-git-set-hint dsh-git-warn' : 'dsh-git-set-hint' },
+            snap == null ? '正在读取…'
+              : (inside !== true
+                ? '这个会话的工作区还不是 Git 仓库 —— 下面只能看全局那份'
+                : (identMissing === true
+                  ? '还缺：' + (nameMissing === true ? '名字' : '') + (nameMissing === true && emailMissing === true ? '/' : '') + (emailMissing === true ? '邮箱' : '') + ' —— 提交会被 git 拒绝'
+                  : (source(nameNow.effective, nameNow.effectiveOrigin) + ' · ' + source(emailNow.effective, emailNow.effectiveOrigin)))))),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '名字（user.name）'),
+          h('input', {
+            className: 'dsh-git-input dsh-git-set-input',
+            placeholder: globalPlaceholder(nameNow.global),
+            value: name,
+            disabled: inside !== true,
+            onChange: function (event) { setName(event.target.value) },
+          })),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '邮箱（user.email）'),
+          h('input', {
+            className: 'dsh-git-input dsh-git-set-input',
+            placeholder: globalPlaceholder(emailNow.global),
+            value: email,
+            disabled: inside !== true,
+            onChange: function (event) { setEmail(event.target.value) },
+          })),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('button', {
+            type: 'button', className: 'dsh-git-btn dsh-git-primary',
+            disabled: busy || inside !== true || (nameDraft.length === 0 && emailDraft.length === 0),
+            title: '把填了的键写进本项目的 .git/config；空着的框一个字节都不写',
+            onClick: function () {
+              const setPayload = {}
+              if (nameDraft.length > 0) setPayload['user.name'] = nameDraft
+              if (emailDraft.length > 0) setPayload['user.email'] = emailDraft
+              run({ set: setPayload }, '已写进本项目')
+            },
+          }, busy ? '写入中…' : '写入本项目'),
+          h('button', {
+            type: 'button', className: 'dsh-git-btn',
+            disabled: busy || inside !== true || localKeys.length === 0,
+            title: '对填过的键执行 git config --local --unset（本来就没配也算成功）',
+            onClick: function () { run({ unset: localKeys }, '已清掉本项目覆盖，用回全局') },
+          }, '清掉本项目覆盖，用回全局'),
+          h('span', { className: 'dsh-git-set-hint' },
+            localKeys.length > 0 ? '本项目覆盖了：' + localKeys.join('、') : '本项目没有覆盖任何键')),
+
+        h('div', { className: 'dsh-git-set-group' }, '换行符（git 自己的换行配置）'),
+        h('div', { className: 'dsh-git-set-hint' },
+          '两条都是 git 的换行符配置，同样只写本项目（--local）：autocrlf=true 检出转 CRLF、提交转回 LF；input 只在提交时转 LF；eol 只对 text 文件生效。改动立即写进本项目 .git/config；选「跟随全局」= 清掉本项目的这条（不存在算成功）。'),
+
+        lineSelect('core.autocrlf', autocrlf, ['true', 'false', 'input'], '检出时把 LF 转 CRLF、提交时转回 LF（input 只在提交时转 LF，false 什么都不转）'),
+        lineSelect('core.eol', eol, ['lf', 'crlf', 'native'], 'text 文件在工作区里用哪种换行符（只对 text 文件生效）'),
+
+        note.length > 0 ? h('div', { className: 'dsh-git-set-row dsh-git-set-hint' }, note) : null,
+        problem.length > 0 ? h('div', { className: 'dsh-git-set-row dsh-git-error' }, problem) : null)
+    }
+
     function GitPanel(props) {
       const plugin = usePluginConfig()
       const prefs = useGitSettings()
@@ -416,6 +651,21 @@
         reloadChanges()
       }
 
+      /* ── 「有会话刚跑完」的那声铃（92-chip.js 敲，这里听）──
+
+         只把 needFull 立起来，读仍然走下面那条 [freshAt] 的老路 —— 铃和 chip 的
+         bump 本来就是同一次完成里的两下，读者看到的仍是**一次**整树读，而不是两个
+         组件各读各的。面板关着时读不动（freshAt 冻结），但 needFull 留着：下次打开
+         那一帧补上 —— 那时读者正要看，正该是完整的。 */
+      const [bellBox] = React.useState(function () { return { at: 0 } })
+      const bell = useTreeReload()
+      React.useEffect(function () {
+        if (bell === bellBox.at) return undefined
+        bellBox.at = bell
+        panelBox.needFull = true
+        return undefined
+      }, [bell])
+
       /* 哪些操作能把整棵树改掉：切分支、pull、merge/cherry-pick/revert（开始、继续、
          跳过、中止都算）、压缩（soft reset 把 HEAD 挪到段首的父提交、索引变成整段的
          合计）和删除（hard reset 把整段连提交带改动一起丢）会重写工作区/引用，它们的
@@ -625,20 +875,26 @@
          会话记录要真去扫文件，和其它「切到那页才读」的读一个待遇。与 authors
          那条 effect 不同，这里**不**因切走页签作废在飞的那次读：扫一遍不该白扫，
          答复落在 state 里，读者切回来正好用上 —— 「不重新请求」因此连读还没完的
-         那种场合也成立。 */
+         那种场合也成立。
+
+         读数里记着它是在哪一版数据上读的（at = freshAt）：命令页开着时仓库动过
+         一次（bump），这一页跟着重扫一遍 —— 会话里跑完的 git 命令正排队落进记录，
+         开着的命令页应当自己长出那几行，而不是等读者手点「重新读取」。切走再切
+         回、期间没有 bump 时照旧不重读。 */
       React.useEffect(function () {
         if (tab !== 'cmdlog' || props.ready !== true) return undefined
-        if (cmdLog !== null && cmdLog.sessionId === sessionId) return undefined
+        if (cmdLog !== null && cmdLog.sessionId === sessionId && cmdLog.at === freshAt) return undefined
         cmdLogBox.seq += 1
         const seq = cmdLogBox.seq
-        setCmdLog({ sessionId: sessionId, loading: true })
+        const at = freshAt
+        setCmdLog({ sessionId: sessionId, loading: true, at: at })
         callHost('git/command-log', { sessionId: sessionId, limit: 500 }).then(function (data) {
           if (seq !== cmdLogBox.seq) return
           /* ok:false（沙箱拒绝、PATH 上没有 node、超时……）是「读得了答复、读不了
              记录」：原话在 data.error 里，折成空列表就成了「这个项目没跑过 git」。 */
           if (data == null || data.ok !== true) {
             const said = data != null && text(data.error).length > 0 ? text(data.error) : '读不了会话记录'
-            setCmdLog({ sessionId: sessionId, error: said })
+            setCmdLog({ sessionId: sessionId, error: said, at: at })
             return
           }
           setCmdLog({
@@ -648,13 +904,14 @@
             /* 会话扫描那一路读不了（没有 node、被沙箱拒了……）而面板记录给得出来时，
                Host 把原话放在 warning 里随行 —— 折成空字段就成了没说过。 */
             warning: text(data.warning),
+            at: at,
           })
         }, function (failure) {
           if (seq !== cmdLogBox.seq) return
-          setCmdLog({ sessionId: sessionId, error: failureText(failure) })
+          setCmdLog({ sessionId: sessionId, error: failureText(failure), at: at })
         })
         return undefined
-      }, [tab, sessionId, cmdLog, props.ready])
+      }, [tab, sessionId, cmdLog, freshAt, props.ready])
 
       /* ── 命令页的实时推送（真包的 client-pre.js 提供 liveBus；bridge 版没有，
          typeof 守卫让它安静跳过，面板照旧靠整读）──
@@ -1852,7 +2109,12 @@
                  不指导任何操作，放在页签上只是噪音；数量在读进来之后说在页面里。 */
               h('button', { type: 'button', className: 'dsh-git-tab' + (tab === 'cmdlog' ? ' dsh-git-tab-on' : ''),
                 title: '这个项目执行过的 git 命令（来自 DSH 会话记录）',
-                onClick: function () { setTab('cmdlog'); setDiffTarget(null) } }, '命令')),
+                onClick: function () { setTab('cmdlog'); setDiffTarget(null) } }, '命令'),
+              /* 配置页只关于本项目：会话完成后的刷新/推送、只写 --local 的提交身份、
+                 git 自己的两个换行键。设置页管机器与插件，这一页管眼前这个仓库。 */
+              h('button', { type: 'button', className: 'dsh-git-tab' + (tab === 'config' ? ' dsh-git-tab-on' : ''),
+                title: '本项目：会话完成后自动刷新/推送、提交身份与换行符（只写这个项目的 .git/config）',
+                onClick: function () { setTab('config'); setDiffTarget(null) } }, '配置')),
         needsSetup ? null : syncGroup,
         needsSetup ? null : branchChip,
         h('span', { key: 'grow', className: 'dsh-git-grow' }),
@@ -1999,6 +2261,8 @@
           log: cmdLog,
           onReload: function () { setCmdLog(null) },
         })
+      } else if (tab === 'config') {
+        body = h(GitConfigPane, { sessionId: sessionId, sessionAware: props.sessionAware === true })
       } else {
         body = h('div', { className: 'dsh-git-body' },
           h('div', { className: 'dsh-git-left' },

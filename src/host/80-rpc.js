@@ -55,6 +55,14 @@ onRpc('git/identity', function (input) { return identitySnapshot(input) })
    scope, and nothing is written for a box left empty. */
 onRpc('git/identity-save', function (input) { return identitySave(input) })
 
+/* 本项目的 git 配置（面板「配置」页，74-identity.js）：四个键各答 local / global /
+   生效与来源；写只进这个仓库的 .git/config。两条都是设置类动作，不进「命令」页
+   （git/identity-save 同一个先例）：写的是 git 的配置而不是仓库内容，watcher 也不
+   会看见它，记进命令页只是噪音。 */
+onRpc('git/project-config', function (input) { return projectConfigSnapshot(input) })
+
+onRpc('git/project-config-save', function (input) { return projectConfigSave(input) })
+
 /* Never cached: its whole purpose is to observe change. `paths` narrows the
    working-tree half of the signature to what is on screen — see watchCommand for
    what a whole-tree status costs on a slow mount. */

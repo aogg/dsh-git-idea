@@ -10,6 +10,82 @@
     /* 全树读压后多久：屏幕上先有这一帧的反馈，再让那条 8–10s 的读去占通道。 */
     const COUNT_FULL_DELAY_MS = 2000
 
+    /* ── 会话完成监听 ──
+
+       DSH 的 web 端给 session 作用域的 slot 组件注入了现成的会话状态 hook
+       （useSession / useSessionStatus / useSessions，见 dsh-client-ui-session 的
+       BUILTIN_SOURCE 与 provideRoot；hook 名转 prop 名的规则是 use+首字母大写）。
+       chip 是唯一挂在每个会话输入框旁、面板关着也常驻的面，所以监听点在这里而不是
+       面板里。bridge 版／老版本没有这些 props：下面全部 typeof 守卫，没有就静默不
+       启用 —— 配置页会在两条开关的 hint 位置说明「当前环境不支持会话状态监听」。
+
+       两个开关都关着时，这段代码照常挂着但一分钱都不花：边沿判定只是读一眼手边
+       已经算好的布爾，不开任何轮询（会话状态的推送是 DSH 自己的事）。 */
+
+    /* 完成的判据都是「边沿 + 稳定窗」：goal 自动续轮之间会有一小段 running=false，
+       2 秒的防抖把那种间隙吞掉（期间又变回 running 就整轮取消）；「所有会话都停
+       了」要稳 5 秒才动身 —— 推送是往远端发读者的工作，宁可晚一分钟也不推一半。 */
+    const COMPLETE_DEBOUNCE_MS = 2000
+    const ALL_IDLE_STABLE_MS = 5000
+
+    /* 这一页还有几个会话在跑。两个来源二选一：useSessionStatus 的 Map（每会话一行
+       {running,...}，含子代理会话），读不到再用 useSessions 的列表快照（.ids 的行
+       在 .byId 里，行里也有 running）。两边都拿不到（bridge 版）返回 null —— null
+       的意思是「不知道」，绝不能当成「都停了」，否则一挂上来就推一次。 */
+    function sessionsRunningOf(statusMap, listState) {
+      if (statusMap != null && typeof statusMap.forEach === 'function') {
+        let running = 0
+        statusMap.forEach(function (one) {
+          if (one != null && one.running === true) running += 1
+        })
+        return running
+      }
+      if (listState != null && listState.byId != null && typeof listState.byId === 'object') {
+        let running = 0
+        const ids = Array.isArray(listState.ids) && listState.ids.length > 0 ? listState.ids : Object.keys(listState.byId)
+        for (let i = 0; i < ids.length; i += 1) {
+          const row = listState.byId[ids[i]]
+          if (row != null && row.running === true) running += 1
+        }
+        return running
+      }
+      return null
+    }
+
+    /* 从 git/panel 的答复判定能不能自动推：领先远端、且没有未解决的冲突。冲突推
+       上去就是推一半历史；不领先时推了也只是远端的一句 Everything up-to-date ——
+       两种都当场放弃，把原因写进「最近一次自动推送」那行状态。 */
+    function autoPushDecision(reply) {
+      if (reply == null || reply.ok !== true) return { push: false, why: '读不到仓库状态' }
+      const ahead = typeof reply.ahead === 'number' && isFinite(reply.ahead) ? reply.ahead : 0
+      if (ahead <= 0) return { push: false, why: '没有领先远端的提交，不需要推' }
+      const unmerged = Array.isArray(reply.unmerged) ? reply.unmerged.length : 0
+      if (unmerged > 0) return { push: false, why: '有 ' + String(unmerged) + ' 个未解决的冲突，不自动推' }
+      return { push: true, why: '' }
+    }
+
+    /* 这个会话名得出来的仓库清单：工作区扫描 + 手动登记 + 生效仓库 + chip 记下的
+       那个。完成刷新逐个 flush 的就是它 —— 会话可能在其中任何一个里动了文件，而
+       只有全树读能看见新建的文件。 */
+    function completionReposOf(sessionId) {
+      const out = []
+      const push = function (repo) {
+        const one = text(repo)
+        if (one.length === 0 || out.indexOf(one) >= 0) return
+        out.push(one)
+      }
+      const list = repoListForSession(sessionId)
+      if (list != null) {
+        const scanned = Array.isArray(list.repos) ? list.repos : []
+        for (let i = 0; i < scanned.length; i += 1) push(scanned[i])
+        const manual = Array.isArray(list.manual) ? list.manual : []
+        for (let i = 0; i < manual.length; i += 1) push(manual[i])
+      }
+      push(sessionRepo(sessionId))
+      push(chipInfoFor(sessionId).repo)
+      return out
+    }
+
     function GitChip(props) {
       const isOpen = useOpen()
       const switching = useSwitchingTo()
@@ -53,6 +129,142 @@
          那个面（设置页是全局的，自己不知道）。放在 effect 里而不是渲染里：渲染期间
          通知订阅者就是渲染期间改别人的 state。 */
       React.useEffect(function () { rememberSession(sessionId) }, [sessionId])
+
+      /* ── 会话状态（有则用之，bridge 版这些 props 不存在）──
+
+         hook props 是 DSH 注入的固定席位，同一个挂载上在不在是定死的，所以按存在
+         与否走两条稳定不变的调用序列是安全的。runningNow 只读本会话；runningTotal
+         读整页（含子代理会话）。 */
+      const runningNow = typeof props.useSession === 'function'
+        ? props.useSession(function (snapshot) { return snapshot != null && snapshot.running === true })
+        : false
+      const statusMap = typeof props.useSessionStatus === 'function' ? props.useSessionStatus() : null
+      const listState = statusMap == null && typeof props.useSessions === 'function' ? props.useSessions() : null
+      const runningTotal = sessionsRunningOf(statusMap, listState)
+
+      const [runEdge] = React.useState(function () { return { armed: false, was: false, timer: null } })
+      const [idleEdge] = React.useState(function () { return { armed: false, was: null, timer: null } })
+
+      /* 完成的那一刷：对本会话名得出来的每个仓库失效 Host 的读缓存（git/flush 只删
+         缓存条目，不起进程），把本地那份读数标成「不再证明完整」，然后铃 + bump ——
+         面板开着就把 needFull 立起来、走 ⟳ 同一条整树路重读并重画；关着则 chip 自己
+         的 label、分支预取和压后的整树读都在同一次 bump 里走完。刚被会话新建的文件
+         只有全树读能看见，这正是它该刷的时机。 */
+      const completeRefresh = function () {
+        if (watchPageDoc != null && watchPageDoc.hidden === true) return
+        const repos = completionReposOf(sessionId)
+        /* flush 只是删 Host 的缓存条目；运输层断了的这一次安静放过（30-watch.js 的
+           watcherTick 同款）—— 下一读拿旧答案，再下一次读自会跟上。 */
+        callHost('git/flush', { sessionId: sessionId }).catch(function () {})
+        for (let i = 0; i < repos.length; i += 1) {
+          callHost('git/flush', { sessionId: sessionId, repo: repos[i] }).catch(function () {})
+          markTreePartial(repos[i])
+        }
+        ringTreeReload()
+        bumpData()
+      }
+
+      /* 「所有会话都停满 5 秒」的那一推。只推「领先远端且没有未解决冲突」的当前
+         生效仓库（与顶栏 ↑ 同参：sessionId + repo）；失败只写进「最近一次自动推送」
+         那行状态，不重试 —— 自动的事必须有界，重试是读者自己点 ↑ 的事。 */
+      const autoPushRun = function () {
+        const applied = sessionRepo(sessionId)
+        const repo = applied.length > 0 ? applied : chipInfoFor(sessionId).repo
+        const request = { sessionId: sessionId }
+        if (repo.length > 0) request.repo = repo
+        const noted = function (ok, detail) {
+          setAutoPush({ time: Date.now(), ok: ok === true, detail: detail })
+        }
+        callHost('git/panel', request).then(function (reply) {
+          const verdict = autoPushDecision(reply)
+          if (verdict.push !== true) { noted(false, verdict.why); return }
+          const where = reply != null && text(reply.repo).length > 0 ? text(reply.repo) : repo
+          const pushRequest = { sessionId: sessionId }
+          if (where.length > 0) pushRequest.repo = where
+          const tryPush = function (payload, setUpstream) {
+            callHost('git/push', payload).then(function (result) {
+              if (result != null && result.ok === true) {
+                noted(true, '已推送 ' + (where.length > 0 ? where : '当前仓库') + (setUpstream === true ? '，并设了上游' : ''))
+                return
+              }
+              const detail = commandDetail(result)
+              /* 「还没有上游」是一次能自己走完的失败：设置里开了自动设上游、refs 又
+                 答得出 remote 与当前分支时，按 runOp 的老路补一次 setUpstream:true 的
+                 推送；问过这一次就到头。 */
+              if (setUpstream !== true && pluginConfig.pushSetUpstream === true && detail.indexOf('upstream') >= 0) {
+                callHost('git/refs', payload).then(function (refs) {
+                  const remote = refs != null && refs.ok === true && Array.isArray(refs.remote) && refs.remote.length > 0 ? text(refs.remote[0].name) : ''
+                  const branch = refs != null && refs.ok === true && Array.isArray(refs.current) && refs.current.length > 0 ? text(refs.current[0]) : ''
+                  if (remote.length === 0 || branch.length === 0) { noted(false, detail); return }
+                  tryPush(Object.assign({}, payload, { setUpstream: true, remote: remote, branch: branch }), true)
+                }, function (refsFailure) { noted(false, failureText(refsFailure)) })
+                return
+              }
+              noted(false, detail.length > 0 ? detail : '推送失败')
+            }, function (failure) { noted(false, failureText(failure)) })
+          }
+          tryPush(pushRequest, false)
+        }, function (failure) { noted(false, failureText(failure)) })
+      }
+
+      /* 本会话 running 的 true→false 边沿（初始挂载读到的不算 —— 不然每次刷新页面
+         都会白刷一遍）→ 2 秒防抖 → 刷新。 */
+      React.useEffect(function () {
+        const previous = runEdge.was
+        runEdge.was = runningNow === true
+        if (runEdge.armed !== true) { runEdge.armed = true; return undefined }
+        if (previous !== true || runningNow === true) return undefined
+        const timer = ctx.get('timer')
+        if (timer === undefined) {
+          if (pluginConfig.refreshOnComplete === true) completeRefresh()
+          return undefined
+        }
+        runEdge.timer = timer.timeout(function () {
+          runEdge.timer = null
+          /* 开关在开跑那一刻再读模块层那份（随时是新的）：挂起的这两秒里读者把它
+             关掉，这一轮就不该再跑。 */
+          if (pluginConfig.refreshOnComplete !== true) return
+          completeRefresh()
+        }, COMPLETE_DEBOUNCE_MS)
+        /* running 又变回 true（goal 自动续轮）时 effect 重跑，清理函数拆掉挂起的那轮。 */
+        return function () {
+          if (runEdge.timer != null) { runEdge.timer(); runEdge.timer = null }
+        }
+      }, [runningNow])
+
+      /* 「至少一个在跑」→「一个都不在跑」的边沿起 5 秒稳定窗；期间任何会话恢复运行
+         就取消。窗口不因无关的状态字段翻动而重置：Map 快照换了新但计数没变时，正在
+         计的那轮接着计。 */
+      React.useEffect(function () {
+        const previous = idleEdge.was
+        idleEdge.was = runningTotal
+        if (idleEdge.armed !== true) { idleEdge.armed = true; return undefined }
+        if (runningTotal === null || runningTotal > 0) {
+          if (idleEdge.timer != null) { idleEdge.timer(); idleEdge.timer = null }
+          return undefined
+        }
+        if (previous !== null && previous > 0 && idleEdge.timer == null) {
+          const timer = ctx.get('timer')
+          if (timer === undefined) {
+            if (pluginConfig.pushOnAllComplete === true) autoPushRun()
+            return undefined
+          }
+          idleEdge.timer = timer.timeout(function () {
+            idleEdge.timer = null
+            if (pluginConfig.pushOnAllComplete !== true) return
+            autoPushRun()
+          }, ALL_IDLE_STABLE_MS)
+        }
+        return undefined
+      }, [runningTotal])
+
+      /* 卸载（换会话时 DSH 会整块重挂）把手里的两个稳定窗都拆掉。 */
+      React.useEffect(function () {
+        return function () {
+          if (runEdge.timer != null) { runEdge.timer(); runEdge.timer = null }
+          if (idleEdge.timer != null) { idleEdge.timer(); idleEdge.timer = null }
+        }
+      }, [])
 
       React.useEffect(function () {
         let alive = true
@@ -138,7 +350,13 @@
           if (defer !== true) { wholeTree(); return }
           const timer = ctx.get('timer')
           if (timer === undefined) { wholeTree(); return }
-          stopFull = timer.timeout(wholeTree, COUNT_FULL_DELAY_MS)
+          stopFull = timer.timeout(function () {
+            /* 开跑之前再问一遍该不该跑：这 2 秒里面板的全树读可能已经把这份读数补
+               完整了（会话完成那一刷就是这么接力的 —— 面板听见铃先读，chip 让路），
+               再跑一次就是让最贵的那条路排两遍队。 */
+            if (treeReadDue(repoNow) !== true) return
+            wholeTree()
+          }, COUNT_FULL_DELAY_MS)
         }
 
         /* The identity read answers in about a fifth of a second on a repository

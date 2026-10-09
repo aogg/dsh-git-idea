@@ -392,6 +392,33 @@ return {
     }
     const useDataVersion = dataSignal.use
 
+    /* ── 「有会话刚跑完，去把整棵树重新量一遍」的那声铃 ──
+
+       chip 听 DSH 的会话状态（92-chip.js），但「整棵树重读」的原语一半住在面板里
+       （panelBox.needFull 才决定下一次读是全树还是只问屏上那几条路径）：铃只负责
+       喊，面板听见后自己把 needFull 立起来、走 ⟳ 同一条读路。计一个数而不是布爾，
+       连着的两次完成才不会被合并成一次没喊过。 */
+    let treeReloadBell = 0
+    const treeReloadSignal = createSignal(function () { return treeReloadBell })
+    const ringTreeReload = function () {
+      treeReloadBell += 1
+      treeReloadSignal.notify()
+    }
+    const useTreeReload = treeReloadSignal.use
+
+    /* ── 最近一次自动推送 ──
+
+       「所有会话都完成」那一推（92-chip.js）在面板关着时也会发生，而结果要说给
+       「配置」页的那行状态听 —— 两头不住在同一个组件里，所以是模块级的一份：
+       {time, ok, detail}，null = 从来没推过。 */
+    let autoPush = null
+    const autoPushSignal = createSignal(function () { return autoPush })
+    const setAutoPush = function (next) {
+      autoPush = next
+      autoPushSignal.notify()
+    }
+    const useAutoPush = autoPushSignal.use
+
     /* ── a read that is no longer wanted ──
 
        A read takes as long as the mount makes it take — seconds, on the reader's
@@ -502,6 +529,19 @@ return {
       const record = treeRecord(repo)
       if (record === null || record.fullAt === 0) return true
       return Date.now() - record.fullAt >= fullReadGapMs(record.costMs)
+    }
+
+    /* 会话刚动过这个仓库（92-chip.js 的完成监听）：那份全树读数从这一刻起不再能
+       证明自己是完整的 —— 会话新建的文件只有全树读看得见，而快照里的脏路径清单
+       还是旧的。把 fullAt 记成 0 就是这个意思（treeReadDue 因此答 true，chip 也照
+       实改口「正在核对」），比丢掉整份快照好：屏上那些旧路径仍然问得动，整树读
+       落地之前界面不至于闪一帧空。 */
+    function markTreePartial(repo) {
+      const record = treeRecord(repo)
+      if (record === null || record.fullAt === 0) return
+      treeReads[repo] = Object.assign({}, record, { fullAt: 0 })
+      treeVersion += 1
+      treeSignal.notify()
     }
 
     /* 有一次**会改变那个数字**的读正在飞（这个仓库）—— 全树读，或者只问几条路径的那种
@@ -893,6 +933,9 @@ return {
       gitPath: '',
       /* 这三条是插件自己给 git 的实参，不是 git 设置的副本。 */
       fetchPrune: true, pullRebase: false, pushSetUpstream: false,
+      /* 会话完成后的两件事（92-chip.js 听 DSH 会话状态，配置页在面板「配置」tab）。
+         与 host 70-config.js 的 normalizeConfig 两边同款：缺省 true / false。 */
+      refreshOnComplete: true, pushOnAllComplete: false,
       /* 手动登记的仓库清单（按工作区分组，24-repos.js / 61-repos.js）。这里必须跟着
          带上：设置页保存的是**整份**配置，客户端的归一化把它丢了的话，读者在设置页
          改一次 git 路径，手动仓库清单就没了。原样搬运、不做清洗 —— 那是 Host 那边
@@ -927,6 +970,8 @@ return {
       out.fetchPrune = raw.fetchPrune !== false
       out.pullRebase = raw.pullRebase === true
       out.pushSetUpstream = raw.pushSetUpstream === true
+      out.refreshOnComplete = raw.refreshOnComplete !== false
+      out.pushOnAllComplete = raw.pushOnAllComplete === true
       /* repos 见上面 PLUGIN_CONFIG_DEFAULTS 里的说明：原样搬运，Host 那边负责清洗。 */
       out.repos = raw.repos != null && typeof raw.repos === 'object' && !Array.isArray(raw.repos) ? raw.repos : {}
       out.quickCommands = normalizeQuickCommands(raw.quickCommands)
@@ -2070,6 +2115,11 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-ab-out{color:var(--dsw-alias-state-success)}
 .dsh-git-set{display:flex;flex-direction:column;gap:14px;padding:4px 2px;max-width:660px}
 .dsh-git-set-h{font-size:14px;font-weight:600}
+/* 面板的「配置」页（80-panel.js）住在面板正文里：设置页那套排版照搬，外层改成
+   「占满正文、自己滚」—— 面板的高度是钳出来的，内容超出时滚，不把面板撑变形。 */
+.dsh-git-config{flex:1;min-height:0;overflow:auto;padding:10px 12px}
+.dsh-git-set-select{box-sizing:border-box;flex:0 1 auto;min-width:0;max-width:260px;border:1px solid var(--dsh-alias-border-l1);border-radius:4px;background:var(--dsh-alias-bg-base);color:var(--dsh-alias-label-primary);font:inherit;font-size:12px;font-family:inherit;padding:4px 6px}
+.dsh-git-set-select:disabled{opacity:.45;cursor:default}
 .dsh-git-set-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .dsh-git-set-label{flex:none;min-width:170px;font-size:12px;color:var(--dsw-alias-label-primary)}
 .dsh-git-set-input{flex:1 1 160px;width:auto;max-width:260px}
@@ -5947,6 +5997,241 @@ textarea.dsh-git-input{resize:vertical}
       return null
     }
 
+    /* ── 面板的「配置」页：只关于本项目 ──
+
+       设置页那份提交身份管的是机器（`--global` 可选），而面板属于会话、常常开在别
+       的仓库上 —— 这里要的是另一件事：只看、只写**当前这个项目**的 .git/config。
+       git 自己管换行符的两个键（core.autocrlf / core.eol）是同一性质，三个分组都在
+       这一页里；样式复用设置页那套 dsh-git-set-*。 */
+
+    function GitConfigPane(props) {
+      const sessionId = props.sessionId
+      const plugin = usePluginConfig()
+      const autoPushNote = useAutoPush()
+      const [snap, setSnap] = React.useState(null)
+      const [name, setName] = React.useState('')
+      const [email, setEmail] = React.useState('')
+      const [busy, setBusy] = React.useState(false)
+      const [note, setNote] = React.useState('')
+      const [problem, setProblem] = React.useState('')
+
+      /* 只把 session id 交给 Host（设置页 GitIdentityGroup 同一条路）：路径由 Host
+         从会话的工作区解出来，写配置的沙箱策略也跟着这个会话走。 */
+      const request = function () {
+        return sessionId.length > 0 ? { sessionId: sessionId } : {}
+      }
+      React.useEffect(function () {
+        let alive = true
+        callHost('git/project-config', request()).then(function (data) {
+          if (alive !== true) return
+          setSnap(data)
+          setProblem('')
+        }, function (failure) {
+          if (alive !== true) return
+          setProblem(failureText(failure))
+        })
+        return function () { alive = false }
+      }, [sessionId])
+
+      const configOf = function (key) {
+        const one = snap != null && snap.config != null ? snap.config[key] : null
+        return one != null ? one : { local: '', global: '', effective: '', localOrigin: '', globalOrigin: '', effectiveOrigin: '' }
+      }
+
+      /* 写（或清）之后 Host 读回来的是新快照：照它重画。只重画摸过的那几格 —— 只动
+         换行符不该把读者打到一半的名字弄没。 */
+      const run = function (payload, said) {
+        if (busy) return
+        setBusy(true)
+        setNote('')
+        setProblem('')
+        const body = request()
+        if (payload != null) Object.assign(body, payload)
+        callHost('git/project-config-save', body).then(function (result) {
+          setBusy(false)
+          if (result == null || result.ok !== true) {
+            setProblem(commandDetail(result) || '保存失败')
+            return
+          }
+          setSnap(result)
+          const written = Array.isArray(result.written) ? result.written : []
+          const unset = Array.isArray(result.unset) ? result.unset : []
+          if (written.indexOf('user.name') >= 0 || unset.indexOf('user.name') >= 0) setName(text(result.config['user.name'].local))
+          if (written.indexOf('user.email') >= 0 || unset.indexOf('user.email') >= 0) setEmail(text(result.config['user.email'].local))
+          setNote(text(said).length > 0 ? said : '已写进 ' + text(result.repo) + ' 的 .git/config')
+        }, function (failure) {
+          setBusy(false)
+          setProblem(failureText(failure))
+        })
+      }
+
+      /* 设置页 setPlugin 的同款：草稿即时、落盘有 400ms 去抖（20-prefs.js）。 */
+      const setPlugin = function (key, value) {
+        const next = Object.assign({}, plugin)
+        next[key] = value
+        savePluginConfig(next)
+      }
+
+      /* 设置页 GitIdentityGroup 的 source() 同款：值 + 它来自哪个文件。 */
+      const source = function (value, origin) {
+        const one = text(value)
+        if (one.length === 0) return '没有配'
+        const from = text(origin)
+        return from.length === 0 ? one : (one + '（来自 ' + from + '）')
+      }
+      const globalPlaceholder = function (value) {
+        const one = text(value)
+        return one.length > 0 ? '留空 = 用全局（' + one + '）' : '留空 = 用全局（当前全局也未配置）'
+      }
+
+      const nameNow = configOf('user.name')
+      const emailNow = configOf('user.email')
+      const autocrlf = configOf('core.autocrlf')
+      const eol = configOf('core.eol')
+      const inside = snap != null && snap.insideRepo === true
+      const nameMissing = inside && text(nameNow.effective).length === 0
+      const emailMissing = inside && text(emailNow.effective).length === 0
+      const identMissing = nameMissing || emailMissing
+      /* 「清掉本项目覆盖」作用的那几个键：填过（local 有值）的才在列。 */
+      const localKeys = []
+      const ALL_KEYS = ['user.name', 'user.email', 'core.autocrlf', 'core.eol']
+      for (let i = 0; i < ALL_KEYS.length; i += 1) {
+        if (text(configOf(ALL_KEYS[i]).local).length > 0) localKeys.push(ALL_KEYS[i])
+      }
+      const nameDraft = text(name).trim()
+      const emailDraft = text(email).trim()
+
+      /* 换行符那两行的通用画法：下拉第一项固定是「跟随全局」（括号里带全局当前值，
+          没配就说没配），右边一句话答「此刻生效」。选中即写（或即清）—— 这两个键
+          没有草稿可言，选错一次的成本由 git 自己的语义兜着，而清掉随时可回。 */
+      const lineSelect = function (key, entry, choices, title) {
+        const value = text(entry.local)
+        const options = [h('option', {
+          key: 'follow', value: '',
+          title: '清掉本项目的 ' + key + '，用回全局那份（本来没配也算成功）',
+        }, '跟随全局' + (text(entry.global).length > 0 ? '（全局当前：' + entry.global + '）' : '（全局未配置）'))]
+        for (let i = 0; i < choices.length; i += 1) {
+          options.push(h('option', { key: choices[i], value: choices[i] }, choices[i]))
+        }
+        return h('div', { className: 'dsh-git-set-row', key: key },
+          h('span', { className: 'dsh-git-set-label' }, key),
+          h('select', {
+            className: 'dsh-git-set-select', value: value, title: title,
+            disabled: busy || inside !== true,
+            onChange: function (event) {
+              const next = event.target.value
+              if (next.length === 0) run({ unset: [key] }, '已清掉 ' + key + ' 的本项目覆盖，用回全局')
+              else {
+                const setPayload = {}
+                setPayload[key] = next
+                run({ set: setPayload }, '已把 ' + key + ' = ' + next + ' 写进本项目')
+              }
+            },
+          }, options),
+          h('span', { className: 'dsh-git-set-hint' },
+            '此刻生效：' + (text(entry.effective).length > 0
+              ? entry.effective + '（来自 ' + (text(entry.effectiveOrigin).length > 0 ? entry.effectiveOrigin : '全局') + '）'
+              : '未配置')))
+      }
+
+      const sessionHint = props.sessionAware === true
+        ? '会话跑完那一刻自动做一次 ⟳ 级别的整棵树刷新：chip 的分支名/改动数、变更/历史页跟着更新，命令页若开着也重读 —— 刚被会话新建的文件只有全树读能看见，这正是它该刷的时机。'
+        : '当前环境不支持会话状态监听（bridge 版没有会话状态的 props），这两条开关不起作用。'
+
+      return h('div', { className: 'dsh-git-set dsh-git-config' },
+        h('div', { className: 'dsh-git-set-group' }, '会话完成'),
+        h('div', { className: 'dsh-git-set-hint' }, sessionHint),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('label', { className: 'dsh-git-set-check' },
+            h('input', {
+              type: 'checkbox', checked: plugin.refreshOnComplete !== false,
+              onChange: function (event) { setPlugin('refreshOnComplete', event.target.checked) },
+            }),
+            h('span', null, '会话完成时刷新 git 状态'))),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('label', { className: 'dsh-git-set-check' },
+            h('input', {
+              type: 'checkbox', checked: plugin.pushOnAllComplete === true,
+              onChange: function (event) { setPlugin('pushOnAllComplete', event.target.checked) },
+            }),
+            h('span', null, '所有会话都完成时自动推送')),
+          h('span', { className: 'dsh-git-set-hint' },
+            '本页所有会话（含子代理会话）都停止运行且稳定 5 秒后，对当前生效仓库执行一次 push（等同顶栏 ↑）；只推「领先远端且没有未解决冲突」的分支，失败只记录不重试。')),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '最近一次自动推送'),
+          h('span', { className: 'dsh-git-set-hint' },
+            autoPushNote == null ? '还没有自动推送过'
+              : (cmdClock(autoPushNote.time) + ' · ' + (autoPushNote.ok === true ? '成功' : '失败') + '：' + text(autoPushNote.detail)))),
+
+        h('div', { className: 'dsh-git-set-group' }, '提交身份（只写这个项目的 .git/config）'),
+        h('div', { className: 'dsh-git-set-hint' },
+          '这里只写 --local，全局那份不受影响。去「设置 → dsh-git-idea配置 → 提交身份」改全局 —— 那边才选得到写进哪台机器。'),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '此刻生效'),
+          h('span', { className: identMissing === true ? 'dsh-git-set-hint dsh-git-warn' : 'dsh-git-set-hint' },
+            snap == null ? '正在读取…'
+              : (inside !== true
+                ? '这个会话的工作区还不是 Git 仓库 —— 下面只能看全局那份'
+                : (identMissing === true
+                  ? '还缺：' + (nameMissing === true ? '名字' : '') + (nameMissing === true && emailMissing === true ? '/' : '') + (emailMissing === true ? '邮箱' : '') + ' —— 提交会被 git 拒绝'
+                  : (source(nameNow.effective, nameNow.effectiveOrigin) + ' · ' + source(emailNow.effective, emailNow.effectiveOrigin)))))),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '名字（user.name）'),
+          h('input', {
+            className: 'dsh-git-input dsh-git-set-input',
+            placeholder: globalPlaceholder(nameNow.global),
+            value: name,
+            disabled: inside !== true,
+            onChange: function (event) { setName(event.target.value) },
+          })),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '邮箱（user.email）'),
+          h('input', {
+            className: 'dsh-git-input dsh-git-set-input',
+            placeholder: globalPlaceholder(emailNow.global),
+            value: email,
+            disabled: inside !== true,
+            onChange: function (event) { setEmail(event.target.value) },
+          })),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('button', {
+            type: 'button', className: 'dsh-git-btn dsh-git-primary',
+            disabled: busy || inside !== true || (nameDraft.length === 0 && emailDraft.length === 0),
+            title: '把填了的键写进本项目的 .git/config；空着的框一个字节都不写',
+            onClick: function () {
+              const setPayload = {}
+              if (nameDraft.length > 0) setPayload['user.name'] = nameDraft
+              if (emailDraft.length > 0) setPayload['user.email'] = emailDraft
+              run({ set: setPayload }, '已写进本项目')
+            },
+          }, busy ? '写入中…' : '写入本项目'),
+          h('button', {
+            type: 'button', className: 'dsh-git-btn',
+            disabled: busy || inside !== true || localKeys.length === 0,
+            title: '对填过的键执行 git config --local --unset（本来就没配也算成功）',
+            onClick: function () { run({ unset: localKeys }, '已清掉本项目覆盖，用回全局') },
+          }, '清掉本项目覆盖，用回全局'),
+          h('span', { className: 'dsh-git-set-hint' },
+            localKeys.length > 0 ? '本项目覆盖了：' + localKeys.join('、') : '本项目没有覆盖任何键')),
+
+        h('div', { className: 'dsh-git-set-group' }, '换行符（git 自己的换行配置）'),
+        h('div', { className: 'dsh-git-set-hint' },
+          '两条都是 git 的换行符配置，同样只写本项目（--local）：autocrlf=true 检出转 CRLF、提交转回 LF；input 只在提交时转 LF；eol 只对 text 文件生效。改动立即写进本项目 .git/config；选「跟随全局」= 清掉本项目的这条（不存在算成功）。'),
+
+        lineSelect('core.autocrlf', autocrlf, ['true', 'false', 'input'], '检出时把 LF 转 CRLF、提交时转回 LF（input 只在提交时转 LF，false 什么都不转）'),
+        lineSelect('core.eol', eol, ['lf', 'crlf', 'native'], 'text 文件在工作区里用哪种换行符（只对 text 文件生效）'),
+
+        note.length > 0 ? h('div', { className: 'dsh-git-set-row dsh-git-set-hint' }, note) : null,
+        problem.length > 0 ? h('div', { className: 'dsh-git-set-row dsh-git-error' }, problem) : null)
+    }
+
     function GitPanel(props) {
       const plugin = usePluginConfig()
       const prefs = useGitSettings()
@@ -6329,6 +6614,21 @@ textarea.dsh-git-input{resize:vertical}
         reloadChanges()
       }
 
+      /* ── 「有会话刚跑完」的那声铃（92-chip.js 敲，这里听）──
+
+         只把 needFull 立起来，读仍然走下面那条 [freshAt] 的老路 —— 铃和 chip 的
+         bump 本来就是同一次完成里的两下，读者看到的仍是**一次**整树读，而不是两个
+         组件各读各的。面板关着时读不动（freshAt 冻结），但 needFull 留着：下次打开
+         那一帧补上 —— 那时读者正要看，正该是完整的。 */
+      const [bellBox] = React.useState(function () { return { at: 0 } })
+      const bell = useTreeReload()
+      React.useEffect(function () {
+        if (bell === bellBox.at) return undefined
+        bellBox.at = bell
+        panelBox.needFull = true
+        return undefined
+      }, [bell])
+
       /* 哪些操作能把整棵树改掉：切分支、pull、merge/cherry-pick/revert（开始、继续、
          跳过、中止都算）、压缩（soft reset 把 HEAD 挪到段首的父提交、索引变成整段的
          合计）和删除（hard reset 把整段连提交带改动一起丢）会重写工作区/引用，它们的
@@ -6538,20 +6838,26 @@ textarea.dsh-git-input{resize:vertical}
          会话记录要真去扫文件，和其它「切到那页才读」的读一个待遇。与 authors
          那条 effect 不同，这里**不**因切走页签作废在飞的那次读：扫一遍不该白扫，
          答复落在 state 里，读者切回来正好用上 —— 「不重新请求」因此连读还没完的
-         那种场合也成立。 */
+         那种场合也成立。
+
+         读数里记着它是在哪一版数据上读的（at = freshAt）：命令页开着时仓库动过
+         一次（bump），这一页跟着重扫一遍 —— 会话里跑完的 git 命令正排队落进记录，
+         开着的命令页应当自己长出那几行，而不是等读者手点「重新读取」。切走再切
+         回、期间没有 bump 时照旧不重读。 */
       React.useEffect(function () {
         if (tab !== 'cmdlog' || props.ready !== true) return undefined
-        if (cmdLog !== null && cmdLog.sessionId === sessionId) return undefined
+        if (cmdLog !== null && cmdLog.sessionId === sessionId && cmdLog.at === freshAt) return undefined
         cmdLogBox.seq += 1
         const seq = cmdLogBox.seq
-        setCmdLog({ sessionId: sessionId, loading: true })
+        const at = freshAt
+        setCmdLog({ sessionId: sessionId, loading: true, at: at })
         callHost('git/command-log', { sessionId: sessionId, limit: 500 }).then(function (data) {
           if (seq !== cmdLogBox.seq) return
           /* ok:false（沙箱拒绝、PATH 上没有 node、超时……）是「读得了答复、读不了
              记录」：原话在 data.error 里，折成空列表就成了「这个项目没跑过 git」。 */
           if (data == null || data.ok !== true) {
             const said = data != null && text(data.error).length > 0 ? text(data.error) : '读不了会话记录'
-            setCmdLog({ sessionId: sessionId, error: said })
+            setCmdLog({ sessionId: sessionId, error: said, at: at })
             return
           }
           setCmdLog({
@@ -6561,13 +6867,14 @@ textarea.dsh-git-input{resize:vertical}
             /* 会话扫描那一路读不了（没有 node、被沙箱拒了……）而面板记录给得出来时，
                Host 把原话放在 warning 里随行 —— 折成空字段就成了没说过。 */
             warning: text(data.warning),
+            at: at,
           })
         }, function (failure) {
           if (seq !== cmdLogBox.seq) return
-          setCmdLog({ sessionId: sessionId, error: failureText(failure) })
+          setCmdLog({ sessionId: sessionId, error: failureText(failure), at: at })
         })
         return undefined
-      }, [tab, sessionId, cmdLog, props.ready])
+      }, [tab, sessionId, cmdLog, freshAt, props.ready])
 
       /* ── 命令页的实时推送（真包的 client-pre.js 提供 liveBus；bridge 版没有，
          typeof 守卫让它安静跳过，面板照旧靠整读）──
@@ -7765,7 +8072,12 @@ textarea.dsh-git-input{resize:vertical}
                  不指导任何操作，放在页签上只是噪音；数量在读进来之后说在页面里。 */
               h('button', { type: 'button', className: 'dsh-git-tab' + (tab === 'cmdlog' ? ' dsh-git-tab-on' : ''),
                 title: '这个项目执行过的 git 命令（来自 DSH 会话记录）',
-                onClick: function () { setTab('cmdlog'); setDiffTarget(null) } }, '命令')),
+                onClick: function () { setTab('cmdlog'); setDiffTarget(null) } }, '命令'),
+              /* 配置页只关于本项目：会话完成后的刷新/推送、只写 --local 的提交身份、
+                 git 自己的两个换行键。设置页管机器与插件，这一页管眼前这个仓库。 */
+              h('button', { type: 'button', className: 'dsh-git-tab' + (tab === 'config' ? ' dsh-git-tab-on' : ''),
+                title: '本项目：会话完成后自动刷新/推送、提交身份与换行符（只写这个项目的 .git/config）',
+                onClick: function () { setTab('config'); setDiffTarget(null) } }, '配置')),
         needsSetup ? null : syncGroup,
         needsSetup ? null : branchChip,
         h('span', { key: 'grow', className: 'dsh-git-grow' }),
@@ -7912,6 +8224,8 @@ textarea.dsh-git-input{resize:vertical}
           log: cmdLog,
           onReload: function () { setCmdLog(null) },
         })
+      } else if (tab === 'config') {
+        body = h(GitConfigPane, { sessionId: sessionId, sessionAware: props.sessionAware === true })
       } else {
         body = h('div', { className: 'dsh-git-body' },
           h('div', { className: 'dsh-git-left' },
@@ -8424,6 +8738,82 @@ textarea.dsh-git-input{resize:vertical}
     /* 全树读压后多久：屏幕上先有这一帧的反馈，再让那条 8–10s 的读去占通道。 */
     const COUNT_FULL_DELAY_MS = 2000
 
+    /* ── 会话完成监听 ──
+
+       DSH 的 web 端给 session 作用域的 slot 组件注入了现成的会话状态 hook
+       （useSession / useSessionStatus / useSessions，见 dsh-client-ui-session 的
+       BUILTIN_SOURCE 与 provideRoot；hook 名转 prop 名的规则是 use+首字母大写）。
+       chip 是唯一挂在每个会话输入框旁、面板关着也常驻的面，所以监听点在这里而不是
+       面板里。bridge 版／老版本没有这些 props：下面全部 typeof 守卫，没有就静默不
+       启用 —— 配置页会在两条开关的 hint 位置说明「当前环境不支持会话状态监听」。
+
+       两个开关都关着时，这段代码照常挂着但一分钱都不花：边沿判定只是读一眼手边
+       已经算好的布爾，不开任何轮询（会话状态的推送是 DSH 自己的事）。 */
+
+    /* 完成的判据都是「边沿 + 稳定窗」：goal 自动续轮之间会有一小段 running=false，
+       2 秒的防抖把那种间隙吞掉（期间又变回 running 就整轮取消）；「所有会话都停
+       了」要稳 5 秒才动身 —— 推送是往远端发读者的工作，宁可晚一分钟也不推一半。 */
+    const COMPLETE_DEBOUNCE_MS = 2000
+    const ALL_IDLE_STABLE_MS = 5000
+
+    /* 这一页还有几个会话在跑。两个来源二选一：useSessionStatus 的 Map（每会话一行
+       {running,...}，含子代理会话），读不到再用 useSessions 的列表快照（.ids 的行
+       在 .byId 里，行里也有 running）。两边都拿不到（bridge 版）返回 null —— null
+       的意思是「不知道」，绝不能当成「都停了」，否则一挂上来就推一次。 */
+    function sessionsRunningOf(statusMap, listState) {
+      if (statusMap != null && typeof statusMap.forEach === 'function') {
+        let running = 0
+        statusMap.forEach(function (one) {
+          if (one != null && one.running === true) running += 1
+        })
+        return running
+      }
+      if (listState != null && listState.byId != null && typeof listState.byId === 'object') {
+        let running = 0
+        const ids = Array.isArray(listState.ids) && listState.ids.length > 0 ? listState.ids : Object.keys(listState.byId)
+        for (let i = 0; i < ids.length; i += 1) {
+          const row = listState.byId[ids[i]]
+          if (row != null && row.running === true) running += 1
+        }
+        return running
+      }
+      return null
+    }
+
+    /* 从 git/panel 的答复判定能不能自动推：领先远端、且没有未解决的冲突。冲突推
+       上去就是推一半历史；不领先时推了也只是远端的一句 Everything up-to-date ——
+       两种都当场放弃，把原因写进「最近一次自动推送」那行状态。 */
+    function autoPushDecision(reply) {
+      if (reply == null || reply.ok !== true) return { push: false, why: '读不到仓库状态' }
+      const ahead = typeof reply.ahead === 'number' && isFinite(reply.ahead) ? reply.ahead : 0
+      if (ahead <= 0) return { push: false, why: '没有领先远端的提交，不需要推' }
+      const unmerged = Array.isArray(reply.unmerged) ? reply.unmerged.length : 0
+      if (unmerged > 0) return { push: false, why: '有 ' + String(unmerged) + ' 个未解决的冲突，不自动推' }
+      return { push: true, why: '' }
+    }
+
+    /* 这个会话名得出来的仓库清单：工作区扫描 + 手动登记 + 生效仓库 + chip 记下的
+       那个。完成刷新逐个 flush 的就是它 —— 会话可能在其中任何一个里动了文件，而
+       只有全树读能看见新建的文件。 */
+    function completionReposOf(sessionId) {
+      const out = []
+      const push = function (repo) {
+        const one = text(repo)
+        if (one.length === 0 || out.indexOf(one) >= 0) return
+        out.push(one)
+      }
+      const list = repoListForSession(sessionId)
+      if (list != null) {
+        const scanned = Array.isArray(list.repos) ? list.repos : []
+        for (let i = 0; i < scanned.length; i += 1) push(scanned[i])
+        const manual = Array.isArray(list.manual) ? list.manual : []
+        for (let i = 0; i < manual.length; i += 1) push(manual[i])
+      }
+      push(sessionRepo(sessionId))
+      push(chipInfoFor(sessionId).repo)
+      return out
+    }
+
     function GitChip(props) {
       const isOpen = useOpen()
       const switching = useSwitchingTo()
@@ -8467,6 +8857,142 @@ textarea.dsh-git-input{resize:vertical}
          那个面（设置页是全局的，自己不知道）。放在 effect 里而不是渲染里：渲染期间
          通知订阅者就是渲染期间改别人的 state。 */
       React.useEffect(function () { rememberSession(sessionId) }, [sessionId])
+
+      /* ── 会话状态（有则用之，bridge 版这些 props 不存在）──
+
+         hook props 是 DSH 注入的固定席位，同一个挂载上在不在是定死的，所以按存在
+         与否走两条稳定不变的调用序列是安全的。runningNow 只读本会话；runningTotal
+         读整页（含子代理会话）。 */
+      const runningNow = typeof props.useSession === 'function'
+        ? props.useSession(function (snapshot) { return snapshot != null && snapshot.running === true })
+        : false
+      const statusMap = typeof props.useSessionStatus === 'function' ? props.useSessionStatus() : null
+      const listState = statusMap == null && typeof props.useSessions === 'function' ? props.useSessions() : null
+      const runningTotal = sessionsRunningOf(statusMap, listState)
+
+      const [runEdge] = React.useState(function () { return { armed: false, was: false, timer: null } })
+      const [idleEdge] = React.useState(function () { return { armed: false, was: null, timer: null } })
+
+      /* 完成的那一刷：对本会话名得出来的每个仓库失效 Host 的读缓存（git/flush 只删
+         缓存条目，不起进程），把本地那份读数标成「不再证明完整」，然后铃 + bump ——
+         面板开着就把 needFull 立起来、走 ⟳ 同一条整树路重读并重画；关着则 chip 自己
+         的 label、分支预取和压后的整树读都在同一次 bump 里走完。刚被会话新建的文件
+         只有全树读能看见，这正是它该刷的时机。 */
+      const completeRefresh = function () {
+        if (watchPageDoc != null && watchPageDoc.hidden === true) return
+        const repos = completionReposOf(sessionId)
+        /* flush 只是删 Host 的缓存条目；运输层断了的这一次安静放过（30-watch.js 的
+           watcherTick 同款）—— 下一读拿旧答案，再下一次读自会跟上。 */
+        callHost('git/flush', { sessionId: sessionId }).catch(function () {})
+        for (let i = 0; i < repos.length; i += 1) {
+          callHost('git/flush', { sessionId: sessionId, repo: repos[i] }).catch(function () {})
+          markTreePartial(repos[i])
+        }
+        ringTreeReload()
+        bumpData()
+      }
+
+      /* 「所有会话都停满 5 秒」的那一推。只推「领先远端且没有未解决冲突」的当前
+         生效仓库（与顶栏 ↑ 同参：sessionId + repo）；失败只写进「最近一次自动推送」
+         那行状态，不重试 —— 自动的事必须有界，重试是读者自己点 ↑ 的事。 */
+      const autoPushRun = function () {
+        const applied = sessionRepo(sessionId)
+        const repo = applied.length > 0 ? applied : chipInfoFor(sessionId).repo
+        const request = { sessionId: sessionId }
+        if (repo.length > 0) request.repo = repo
+        const noted = function (ok, detail) {
+          setAutoPush({ time: Date.now(), ok: ok === true, detail: detail })
+        }
+        callHost('git/panel', request).then(function (reply) {
+          const verdict = autoPushDecision(reply)
+          if (verdict.push !== true) { noted(false, verdict.why); return }
+          const where = reply != null && text(reply.repo).length > 0 ? text(reply.repo) : repo
+          const pushRequest = { sessionId: sessionId }
+          if (where.length > 0) pushRequest.repo = where
+          const tryPush = function (payload, setUpstream) {
+            callHost('git/push', payload).then(function (result) {
+              if (result != null && result.ok === true) {
+                noted(true, '已推送 ' + (where.length > 0 ? where : '当前仓库') + (setUpstream === true ? '，并设了上游' : ''))
+                return
+              }
+              const detail = commandDetail(result)
+              /* 「还没有上游」是一次能自己走完的失败：设置里开了自动设上游、refs 又
+                 答得出 remote 与当前分支时，按 runOp 的老路补一次 setUpstream:true 的
+                 推送；问过这一次就到头。 */
+              if (setUpstream !== true && pluginConfig.pushSetUpstream === true && detail.indexOf('upstream') >= 0) {
+                callHost('git/refs', payload).then(function (refs) {
+                  const remote = refs != null && refs.ok === true && Array.isArray(refs.remote) && refs.remote.length > 0 ? text(refs.remote[0].name) : ''
+                  const branch = refs != null && refs.ok === true && Array.isArray(refs.current) && refs.current.length > 0 ? text(refs.current[0]) : ''
+                  if (remote.length === 0 || branch.length === 0) { noted(false, detail); return }
+                  tryPush(Object.assign({}, payload, { setUpstream: true, remote: remote, branch: branch }), true)
+                }, function (refsFailure) { noted(false, failureText(refsFailure)) })
+                return
+              }
+              noted(false, detail.length > 0 ? detail : '推送失败')
+            }, function (failure) { noted(false, failureText(failure)) })
+          }
+          tryPush(pushRequest, false)
+        }, function (failure) { noted(false, failureText(failure)) })
+      }
+
+      /* 本会话 running 的 true→false 边沿（初始挂载读到的不算 —— 不然每次刷新页面
+         都会白刷一遍）→ 2 秒防抖 → 刷新。 */
+      React.useEffect(function () {
+        const previous = runEdge.was
+        runEdge.was = runningNow === true
+        if (runEdge.armed !== true) { runEdge.armed = true; return undefined }
+        if (previous !== true || runningNow === true) return undefined
+        const timer = ctx.get('timer')
+        if (timer === undefined) {
+          if (pluginConfig.refreshOnComplete === true) completeRefresh()
+          return undefined
+        }
+        runEdge.timer = timer.timeout(function () {
+          runEdge.timer = null
+          /* 开关在开跑那一刻再读模块层那份（随时是新的）：挂起的这两秒里读者把它
+             关掉，这一轮就不该再跑。 */
+          if (pluginConfig.refreshOnComplete !== true) return
+          completeRefresh()
+        }, COMPLETE_DEBOUNCE_MS)
+        /* running 又变回 true（goal 自动续轮）时 effect 重跑，清理函数拆掉挂起的那轮。 */
+        return function () {
+          if (runEdge.timer != null) { runEdge.timer(); runEdge.timer = null }
+        }
+      }, [runningNow])
+
+      /* 「至少一个在跑」→「一个都不在跑」的边沿起 5 秒稳定窗；期间任何会话恢复运行
+         就取消。窗口不因无关的状态字段翻动而重置：Map 快照换了新但计数没变时，正在
+         计的那轮接着计。 */
+      React.useEffect(function () {
+        const previous = idleEdge.was
+        idleEdge.was = runningTotal
+        if (idleEdge.armed !== true) { idleEdge.armed = true; return undefined }
+        if (runningTotal === null || runningTotal > 0) {
+          if (idleEdge.timer != null) { idleEdge.timer(); idleEdge.timer = null }
+          return undefined
+        }
+        if (previous !== null && previous > 0 && idleEdge.timer == null) {
+          const timer = ctx.get('timer')
+          if (timer === undefined) {
+            if (pluginConfig.pushOnAllComplete === true) autoPushRun()
+            return undefined
+          }
+          idleEdge.timer = timer.timeout(function () {
+            idleEdge.timer = null
+            if (pluginConfig.pushOnAllComplete !== true) return
+            autoPushRun()
+          }, ALL_IDLE_STABLE_MS)
+        }
+        return undefined
+      }, [runningTotal])
+
+      /* 卸载（换会话时 DSH 会整块重挂）把手里的两个稳定窗都拆掉。 */
+      React.useEffect(function () {
+        return function () {
+          if (runEdge.timer != null) { runEdge.timer(); runEdge.timer = null }
+          if (idleEdge.timer != null) { idleEdge.timer(); idleEdge.timer = null }
+        }
+      }, [])
 
       React.useEffect(function () {
         let alive = true
@@ -8552,7 +9078,13 @@ textarea.dsh-git-input{resize:vertical}
           if (defer !== true) { wholeTree(); return }
           const timer = ctx.get('timer')
           if (timer === undefined) { wholeTree(); return }
-          stopFull = timer.timeout(wholeTree, COUNT_FULL_DELAY_MS)
+          stopFull = timer.timeout(function () {
+            /* 开跑之前再问一遍该不该跑：这 2 秒里面板的全树读可能已经把这份读数补
+               完整了（会话完成那一刷就是这么接力的 —— 面板听见铃先读，chip 让路），
+               再跑一次就是让最贵的那条路排两遍队。 */
+            if (treeReadDue(repoNow) !== true) return
+            wholeTree()
+          }, COUNT_FULL_DELAY_MS)
         }
 
         /* The identity read answers in about a fifth of a second on a repository
@@ -8733,7 +9265,13 @@ textarea.dsh-git-input{resize:vertical}
          itself against the same ancestor it always did, and the hover card is an
          absolutely positioned sibling that cannot push it around. */
       return h('div', { className: 'dsh-git-layer' },
-        h(GitPanel, { key: 'panel', sessionId: props.sessionId, active: isOpen, ready: everOpened }),
+        h(GitPanel, {
+          key: 'panel', sessionId: props.sessionId, active: isOpen, ready: everOpened,
+          /* 本页有没有会话状态可听（useSession 这类 props）：bridge 版没有，配置页
+             拿这句话代替开关的 hint。只看 props 的存在与否，不在这里调 hook —— 真
+             的听在 chip 那边（92-chip.js）。 */
+          sessionAware: typeof props.useSession === 'function',
+        }),
         mode === 'hover' && isOpen !== true
           ? h('div', {
               key: 'switch',
