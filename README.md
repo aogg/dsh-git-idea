@@ -270,7 +270,7 @@ Settings → **dsh-git-idea配置**。
 ```sh
 node build-package.mjs          # 正式包：lib/index.js + client/client.js
 node build.mjs                  # 动态桥：host.js + client.js
-node test/run-all.mjs           # 全部断言（1003 条）
+node test/run-all.mjs           # 全部断言（1105 条）
 node build.mjs --check && node build-package.mjs --check   # 产物是否最新
 node test/bench.mjs             # 基准：200 条提交的历史列表
 node test/bench-branch.mjs      # 基准：300 个分支的切换器

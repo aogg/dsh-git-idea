@@ -280,8 +280,8 @@ const ok = (label, value) => console.log('  ' + (value ? '✓' : '✗') + ' ' + 
  *      给它们打了 conflict 标）在 scopeRows 里单独分桶成「冲突」组（key @conflict），
  *      排在「默认变更列表」之前；组内按 path 排序 —— git 回答的顺序不作数。没有冲突
  *      时这组整个不出现：组头、指引行、CF 格一样都不留，树和从前一字不差；
- *   2. 冲突组展开时组头之下有一行 dsh-git-dim 指引，文字说 <<<<<<< ======= >>>>>>>
- *      标记和「git add 标记已解决」；
+ *   2. 冲突组展开时组头之下有一行 dsh-git-dim 指引，文字说点行打开三方合并界面
+ *      与「git add 标记已解决」（gp50 起冲突行点击进合并界面，文案跟着换了）；
  *   3. fileRow 对冲突行：状态格画完整双码（class dsh-git-st dsh-git-st-CF，title 说
  *      未解决的冲突），勾选框的措辞换成「标记已解决，普通修改行（单字母 M）与
  *      未跟踪行（?）照旧；
@@ -369,10 +369,12 @@ ok('冲突组出现了：key @conflict:title、组头样式 dsh-git-cgroup、lab
 ok('组顺序：冲突 → 默认变更列表 → 新增的文件（置顶，不插在中间）',
   ci < keys.indexOf('@tracked:title') && keys.indexOf('@tracked:title') < keys.indexOf('@new:title'))
 const guide = allRows[ci + 1]
-ok('指引行紧跟冲突组头：key 带 repo（单仓库是 guide:）、dim 行，文字说 <<<<<<< ======= >>>>>>> 与「git add 标记已解决」',
+/* 指引行的文案随 gp50 换过：冲突行的活儿从「编辑文件找标记」变成「点开三方合并
+   界面」，灰字说的是新手势（点行打开界面）+ 老出路（勾选＝git add 标记已解决）。 */
+ok('指引行紧跟冲突组头：key 带 repo（单仓库是 guide:）、dim 行，文字说三方合并界面与「git add 标记已解决」',
   guide !== undefined && guide.key === 'guide:'
   && String(guide.props.className).indexOf('dsh-git-dim') >= 0
-  && textOf(guide).indexOf('<<<<<<< ======= >>>>>>>') >= 0
+  && textOf(guide).indexOf('三方合并界面') >= 0
   && textOf(guide).indexOf('git add 标记已解决') >= 0)
 const ti = keys.indexOf('@tracked:title')
 const ni = keys.indexOf('@new:title')
