@@ -290,7 +290,12 @@ const ok = (label, value) => console.log('  ' + (value ? '✓' : '✗') + ' ' + 
  *      页开着时跟着 freshAt 重读、切走再切回不重读。
  *
  * 会话状态用假的 hook props（真环境里是 DSH 注入的 useSession / useSessionStatus，
- * 见 92-chip.js 顶部注释）；bridge 版（props 缺席）安静不启用那条也在覆盖里。 */
+ * 见 92-chip.js 顶部注释）。桩按真契约补演 dsh-client-ui-renderer 的选择器 hook：
+ * hook 收一个选择器、回「选择器(快照)」的结果 —— 2026-10-09 的 chip 消失就是插件
+ * 不传选择器直接调 useSessionStatus()，在真 shell 里渲染期 TypeError 挂掉整个
+ * chip，而这里的桩当时照着插件的错误用法写，测试全绿也看不出来；「不传选择器就
+ * 抛」这条现在由 strictStatusHooks 一组钉住。bridge 版（props 缺席）安静不启用
+ * 那条也在覆盖里。 */
 
 let projectReply = {
   ok: true, repo: '/tmp/ws', insideRepo: true,
@@ -465,7 +470,7 @@ let runningC = false
 const statusC = new Map()
 const hooksC = {
   useSession: function (sel) { return sel({ running: runningC }) },
-  useSessionStatus: function () { return statusC },
+  useSessionStatus: function (sel) { return sel(statusC) },
 }
 const renderChipC = () => renderUntilStable(makeElement(chip, Object.assign({ sessionId: 's-c1' }, hooksC)), 'chip-c1')
 await renderChipC()
@@ -491,7 +496,7 @@ console.log('=== 会话完成刷新：goal 续轮的间隙不算完成 ===')
 let runningD = false
 const hooksD = {
   useSession: function (sel) { return sel({ running: runningD }) },
-  useSessionStatus: function () { return statusC },
+  useSessionStatus: function (sel) { return sel(statusC) },
 }
 const renderChipD = () => renderUntilStable(makeElement(chip, Object.assign({ sessionId: 's-c2' }, hooksD)), 'chip-c2')
 await renderChipD()
@@ -512,7 +517,7 @@ fakeDoc.hidden = true
 let runningE = false
 const hooksE = {
   useSession: function (sel) { return sel({ running: runningE }) },
-  useSessionStatus: function () { return statusC },
+  useSessionStatus: function (sel) { return sel(statusC) },
 }
 const renderChipE = () => renderUntilStable(makeElement(chip, Object.assign({ sessionId: 's-c3' }, hooksE)), 'chip-c3')
 await renderChipE()
@@ -525,6 +530,29 @@ fireTimers(2000)
 await wait(20)
 ok('页面藏着：那一刷不发（回可见时靠既有补读兜底）', callsOf(mark, 'git/flush').filter((c) => c.args.sessionId === 's-c3').length === 0)
 fakeDoc.hidden = false
+
+console.log('')
+console.log('=== 会话状态 hook 的真契约：选择器进、选择器的返回值出 ===')
+/* 桩故意照真 shell 的脾气长牙：不传选择器当场抛（真环境是 useSyncExternalStore-
+   WithSelector 里的 l is not a function）。上面各组已经全部走 sel(...) 形状 —— 这里
+   再用这一对钉一次，谁把 chip 改回无参调用，第一个死的就是这一组，报错原文可读。 */
+const strictStatusHooks = {
+  useSession: function (sel) {
+    if (typeof sel !== 'function') throw new TypeError('useSession 需要一个选择器参数（真 shell 的 hook 契约）')
+    return sel({ running: false })
+  },
+  useSessionStatus: function (sel) {
+    if (typeof sel !== 'function') throw new TypeError('useSessionStatus 需要一个选择器参数（真 shell 的 hook 契约）')
+    return sel(new Map([['s-x', { running: true }], ['s-y', { running: false }]]))
+  },
+}
+try {
+  const strictTree = await renderUntilStable(makeElement(chip, Object.assign({ sessionId: 's-strict' }, strictStatusHooks)), 'chip-strict')
+  ok('chip 传了选择器：渲染不炸，且整页计数把别的会话也算进来', collect(strictTree).some((n) => String(n.props.className || '').indexOf('dsh-git-chip') >= 0))
+} catch (error) {
+  ok('chip 传了选择器：渲染不炸，且整页计数把别的会话也算进来', false)
+  console.log('  ' + String(error && error.message))
+}
 
 console.log('')
 console.log('=== 会话完成刷新：bridge 版（没有 hook props）安静不启用 ===')
@@ -543,7 +571,7 @@ mark = calls.length
 let runningB = false
 const hooksB = {
   useSession: function (sel) { return sel({ running: runningB }) },
-  useSessionStatus: function () { return statusC },
+  useSessionStatus: function (sel) { return sel(statusC) },
 }
 const renderChipB = () => renderUntilStable(makeElement(chip, Object.assign({ sessionId: 's-bell' }, hooksB)), 'chip-bell')
 await renderChipB()
@@ -578,7 +606,7 @@ panelReply = { ok: true, repo: '/tmp/ws', branch: 'main', detached: false, ahead
 let statusMapP = new Map([['s-push', { running: true }], ['s-other', { running: false }]])
 const hooksP = {
   useSession: function (sel) { return sel({ running: statusMapP.get('s-push').running }) },
-  useSessionStatus: function () { return statusMapP },
+  useSessionStatus: function (sel) { return sel(statusMapP) },
 }
 const renderChipP = () => renderUntilStable(makeElement(chip, Object.assign({ sessionId: 's-push' }, hooksP)), 'chip-push')
 await renderChipP()
@@ -598,7 +626,7 @@ console.log('')
 console.log('=== 全部完成推送：不稳定就取消 ===')
 const hooksQ = {
   useSession: function (sel) { return sel({ running: statusMapP.get('s-push2').running }) },
-  useSessionStatus: function () { return statusMapP },
+  useSessionStatus: function (sel) { return sel(statusMapP) },
 }
 const renderChipQ = () => renderUntilStable(makeElement(chip, Object.assign({ sessionId: 's-push2' }, hooksQ)), 'chip-push2')
 statusMapP = new Map([['s-push2', { running: true }], ['s-other', { running: false }]])
@@ -617,7 +645,7 @@ console.log('=== 全部完成推送：不领先 / 有冲突时不推 ===')
 statusMapP = new Map([['s-push2', { running: true }], ['s-other', { running: false }]])
 const hooksP2 = {
   useSession: function (sel) { return sel({ running: statusMapP.get('s-push2').running }) },
-  useSessionStatus: function () { return statusMapP },
+  useSessionStatus: function (sel) { return sel(statusMapP) },
 }
 const renderChipP2 = () => renderUntilStable(makeElement(chip, Object.assign({ sessionId: 's-push2' }, hooksP2)), 'chip-push2b')
 await renderChipP2()
@@ -654,7 +682,7 @@ pushBehavior = function (args) {
 statusMapP = new Map([['s-push3', { running: true }], ['s-other', { running: false }]])
 const hooksP3 = {
   useSession: function (sel) { return sel({ running: statusMapP.get('s-push3').running }) },
-  useSessionStatus: function () { return statusMapP },
+  useSessionStatus: function (sel) { return sel(statusMapP) },
 }
 const renderChipP3 = () => renderUntilStable(makeElement(chip, Object.assign({ sessionId: 's-push3' }, hooksP3)), 'chip-push3')
 await renderChipP3()
