@@ -28,28 +28,43 @@
     const COMPLETE_DEBOUNCE_MS = 2000
     const ALL_IDLE_STABLE_MS = 5000
 
-    /* 这一页还有几个会话在跑。两个来源二选一：useSessionStatus 的 Map（每会话一行
-       {running,...}，含子代理会话），读不到再用 useSessions 的列表快照（.ids 的行
-       在 .byId 里，行里也有 running）。两边都拿不到（bridge 版）返回 null —— null
-       的意思是「不知道」，绝不能当成「都停了」，否则一挂上来就推一次。 */
-    function sessionsRunningOf(statusMap, listState) {
-      if (statusMap != null && typeof statusMap.forEach === 'function') {
+    /* 这一页还有几个会话在跑。hook 的真契约（dsh-client-ui-renderer 的
+       observableHook → useSyncExternalStoreWithSelector）是「选择器进、选择器的
+       返回值出」：hook 不把快照交给调用方，不传选择器当场就是渲染期 TypeError
+       （0.2.0-rc.2 实测如此，官方包全是 useSessions((s) => …) 的用法）。选择器
+       就地数出 running 的个数、回原始类型 —— 快照换新而计数没变时 React 不重渲染，
+       「无关的状态字段翻动不重置稳定窗」由选择器免费拿到。两个来源二选一：
+       useSessionStatus 的快照是 Map（每会话一行 {running,...}，含子代理会话），
+       useSessions 的快照是列表状态（.ids 的行在 .byId 里，行里也有 running）。 */
+    function sessionsRunningCountOf(snapshot) {
+      if (snapshot != null && typeof snapshot.forEach === 'function') {
         let running = 0
-        statusMap.forEach(function (one) {
-          if (one != null && one.running === true) running += 1
+        snapshot.forEach(function (row) {
+          if (row != null && row.running === true) running += 1
         })
         return running
       }
-      if (listState != null && listState.byId != null && typeof listState.byId === 'object') {
+      if (snapshot != null && snapshot.byId != null && typeof snapshot.byId === 'object') {
         let running = 0
-        const ids = Array.isArray(listState.ids) && listState.ids.length > 0 ? listState.ids : Object.keys(listState.byId)
+        const ids = Array.isArray(snapshot.ids) && snapshot.ids.length > 0 ? snapshot.ids : Object.keys(snapshot.byId)
         for (let i = 0; i < ids.length; i += 1) {
-          const row = listState.byId[ids[i]]
+          const row = snapshot.byId[ids[i]]
           if (row != null && row.running === true) running += 1
         }
         return running
       }
-      return null
+      return -1
+    }
+
+    /* hook 回什么算什么：真环境选择器生效，回的是数字；个别环境（旧桩、老版本）
+       忽略选择器把快照原样带回 —— 那就地再数一遍。数不出形状回 null，null 的意思
+       是「不知道」（bridge 版也落到这里），绝不能冒充 0（「都停了」），否则一挂上
+       来就会白推一次。 */
+    function runningTotalOf(value) {
+      if (typeof value === 'number') return isFinite(value) && value >= 0 ? value : null
+      if (value == null) return null
+      const counted = sessionsRunningCountOf(value)
+      return counted >= 0 ? counted : null
     }
 
     /* 从 git/panel 的答复判定能不能自动推：领先远端、且没有未解决的冲突。冲突推
@@ -134,13 +149,19 @@
 
          hook props 是 DSH 注入的固定席位，同一个挂载上在不在是定死的，所以按存在
          与否走两条稳定不变的调用序列是安全的。runningNow 只读本会话；runningTotal
-         读整页（含子代理会话）。 */
+         读整页（含子代理会话）。两个 hook 都按真契约传选择器：不传选择器的
+         useSessionStatus() 在真 shell 里是渲染期 TypeError，chip 整个挂不上 ——
+         这正是 2026-10-09 那次 chip 从 composer 里消失的根因。 */
       const runningNow = typeof props.useSession === 'function'
         ? props.useSession(function (snapshot) { return snapshot != null && snapshot.running === true })
         : false
-      const statusMap = typeof props.useSessionStatus === 'function' ? props.useSessionStatus() : null
-      const listState = statusMap == null && typeof props.useSessions === 'function' ? props.useSessions() : null
-      const runningTotal = sessionsRunningOf(statusMap, listState)
+      const statusTotal = typeof props.useSessionStatus === 'function'
+        ? runningTotalOf(props.useSessionStatus(sessionsRunningCountOf))
+        : null
+      const listTotal = statusTotal == null && typeof props.useSessions === 'function'
+        ? runningTotalOf(props.useSessions(sessionsRunningCountOf))
+        : null
+      const runningTotal = statusTotal != null ? statusTotal : listTotal
 
       const [runEdge] = React.useState(function () { return { armed: false, was: false, timer: null } })
       const [idleEdge] = React.useState(function () { return { armed: false, was: null, timer: null } })
