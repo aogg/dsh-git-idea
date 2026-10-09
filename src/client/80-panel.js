@@ -361,6 +361,10 @@
          end in this one view, which is why it lives here and not in either. */
       const [diffTarget, setDiffTarget] = React.useState(null)
       const [diffAt, setDiffAt] = React.useState(0)
+      /* 三方合并冲突界面（59-merge.js）：与 diffTarget 同一个「占满正文的下钻」
+         形状 —— 从变更页的冲突行进来，回去也是变更页。谁开着以最后点的那行为准，
+         两把状态互斥（打开一个就清另一个），正文永远只有一块屏。 */
+      const [mergeTarget, setMergeTarget] = React.useState(null)
       /* ── 命令页的读数（57-cmdlog.js 只管画）──
 
          null = 还没读过：第一次切到那一页才发起；「重新读取」清回 null 让 effect
@@ -550,6 +554,7 @@
         setSelectedKey(null)
         setDetail(null)
         setDiffTarget(null)
+        setMergeTarget(null)
         /* 多选、下拉、覆盖层都是「对着眼前这份列表」的状态：仓库一换全部作废。 */
         setMultiSel([])
         setMenuOpen(null)
@@ -2100,21 +2105,21 @@
                   : (changesBadge > 0
                     ? String(changesBadge) + ' 个文件有未提交的改动，点开可以逐个看差异'
                     : '未提交的改动'),
-                onClick: function () { setTab('changes'); setDiffTarget(null) } },
+                onClick: function () { setTab('changes'); setDiffTarget(null); setMergeTarget(null) } },
                 '变更',
                 changesBadge > 0 ? h('span', { key: 'n', className: 'dsh-git-tool-badge' }, String(changesBadge)) : null),
               h('button', { type: 'button', className: 'dsh-git-tab' + (tab === 'log' ? ' dsh-git-tab-on' : ''),
-                title: '提交历史', onClick: function () { setTab('log'); setDiffTarget(null) } }, '历史'),
+                title: '提交历史', onClick: function () { setTab('log'); setDiffTarget(null); setMergeTarget(null) } }, '历史'),
               /* 命令页不带数字角标：会话记录里有多少条 git 命令，这个数既不稳定也
                  不指导任何操作，放在页签上只是噪音；数量在读进来之后说在页面里。 */
               h('button', { type: 'button', className: 'dsh-git-tab' + (tab === 'cmdlog' ? ' dsh-git-tab-on' : ''),
                 title: '这个项目执行过的 git 命令（来自 DSH 会话记录）',
-                onClick: function () { setTab('cmdlog'); setDiffTarget(null) } }, '命令'),
+                onClick: function () { setTab('cmdlog'); setDiffTarget(null); setMergeTarget(null) } }, '命令'),
               /* 配置页只关于本项目：会话完成后的刷新/推送、只写 --local 的提交身份、
                  git 自己的两个换行键。设置页管机器与插件，这一页管眼前这个仓库。 */
               h('button', { type: 'button', className: 'dsh-git-tab' + (tab === 'config' ? ' dsh-git-tab-on' : ''),
                 title: '本项目：会话完成后自动刷新/推送、提交身份与换行符（只写这个项目的 .git/config）',
-                onClick: function () { setTab('config'); setDiffTarget(null) } }, '配置')),
+                onClick: function () { setTab('config'); setDiffTarget(null); setMergeTarget(null) } }, '配置')),
         needsSetup ? null : syncGroup,
         needsSetup ? null : branchChip,
         h('span', { key: 'grow', className: 'dsh-git-grow' }),
@@ -2160,6 +2165,25 @@
           },
         }),
         h('div', { key: 'setup-repos', className: 'dsh-git-setup-repos' }, h(RepoSwitcher, repoPropsFor('log'))))
+      } else if (mergeTarget !== null) {
+        /* 三方合并冲突界面占正文（和 diff 同一个下钻形状）。应用成功走既有刷新路：
+           ⟳ 级整树重读（冲突组的消失、提交区警告的撤下都由它带出来），成功条说一句
+           人话 —— 注意顺序：refresh() 自己会清 okNote，所以先刷新再记。 */
+        body = h(MergeView, {
+          key: 'merge',
+          target: mergeTarget,
+          sessionId: sessionId,
+          onBack: function () { setMergeTarget(null) },
+          onApplied: function (reply) {
+            setMergeTarget(null)
+            refresh()
+            setOkNote('已解决 ' + mergeTarget.path + ' 的冲突并标记已解决'
+              + (reply != null && reply.repo != null ? '（' + text(reply.repo) + '）' : ''))
+          },
+          /* ⚙ 的落点：面板自己的「配置」页。DSH 全局设置面板没有受支持的编程打开
+             入口（59-merge.js 顶部说明过），面板内能到的设置类页面就是这一页。 */
+          onSettings: function () { setMergeTarget(null); setTab('config') },
+        })
       } else if (diffTarget !== null) {
         /* The diff takes the body, whichever list opened it, and the way back is
            the arrow in its own header — a drill-down rather than a third pane,
@@ -2245,11 +2269,22 @@
           onStashAt: function (repo, files) { stashPicked(files, repo) },
           onToggleUntrackedAt: function (repo, dir) { toggleUntracked(dir, repo) },
           onOpenDiffAt: function (repo, file) { setDiffTarget(changeDiffTarget(file, repo)) },
+          /* 冲突行：点开的是三方合并界面（59-merge.js），不是 diff —— 双码红色那批
+             行的活儿是「做选择」，普通补丁给不了。仓库跟着行走（多仓库分组里点开的
+             冲突属于它自己那个仓库），单仓库的调用不带仓库 = 生效仓库。 */
+          onOpenConflictAt: function (repo, file) {
+            setMergeTarget({ repo: text(repo), path: text(file.path), code: text(file.workCode) })
+          },
           /* One click on a file row, in either list, is what opens the patch —
              selecting a row in IDEA's commit window and getting its diff on the
              right is the same gesture, and a row that only highlights leaves the
              reader with no way to the text at all. */
           onOpenDiff: function (file) { setDiffTarget(changeDiffTarget(file)) },
+          /* 单仓库那份的冲突行点击（54-changes.js 的 scope 转发）；与 onOpenDiff 的
+             关系同上 —— 这一条只服务「冲突组」的行，别的行不会走到它。 */
+          onOpenConflict: function (file) {
+            setMergeTarget({ repo: '', path: text(file.path), code: text(file.workCode) })
+          },
           untrackedOpen: untrackedOpen,
           untrackedFiles: untrackedFiles,
           onToggleUntracked: toggleUntracked,

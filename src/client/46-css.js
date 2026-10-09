@@ -518,6 +518,48 @@ textarea.dsh-git-input{resize:vertical}
 /* 解析预览：等宽、pre-wrap、不截断 —— 读者确认的就是这一整条命令。 */
 .dsh-git-qc-pre{max-height:180px;overflow:auto;padding:6px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;background:var(--dsw-alias-bg-base);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:16px;white-space:pre-wrap;word-break:break-all}
 .dsh-git-qc-actions{display:flex;align-items:center;gap:8px}
+
+/* ── 三方合并冲突界面（59-merge.js）：三栏只读 + 可编辑结果区 ──
+    色块的口径与 55-diff 的加/删底色同一套做法：主题里没有「淡蓝/淡黄的一块」这
+    种令牌，用固定 rgba（14% 上下在浅色和深色底上都读得出来）。四色各有其职：
+    左（ours）蓝、右（theirs）黄、基线灰、结果区冲突块红 —— 三栏里哪侧改过、
+    结果区里哪块还没解决，扫一眼颜色就能对上。 */
+.dsh-git-mrg{flex:1;display:flex;flex-direction:column;min-height:0;min-width:0}
+.dsh-git-mrg-head{display:flex;align-items:center;gap:6px;flex:none;padding:5px 8px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2)}
+.dsh-git-mrg-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.dsh-git-mrg-grow{flex:1 1 0;min-width:8px}
+.dsh-git-mrg-count{flex:none;font-size:11px;color:var(--dsw-alias-label-secondary);white-space:nowrap}
+.dsh-git-mrg-tools{display:flex;align-items:center;gap:4px;flex-wrap:wrap;flex:none;padding:4px 8px;border-bottom:1px solid var(--dsw-alias-border-l1)}
+.dsh-git-mrg-panes{flex:1 1 50%;min-height:0;display:flex;border-bottom:1px solid var(--dsw-alias-border-l1)}
+.dsh-git-mrg-pane{flex:1 1 0;min-width:0;display:flex;flex-direction:column;border-right:1px solid var(--dsw-alias-border-l1)}
+.dsh-git-mrg-pane:last-child{border-right:0}
+.dsh-git-mrg-panehead{flex:none;padding:3px 8px;font-size:11px;font-weight:600;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-2);border-bottom:1px solid var(--dsw-alias-border-l1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dsh-git-mrg-rows{flex:1;min-height:0;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:18px}
+.dsh-git-mrg-wrap{min-width:100%;width:max-content}
+.dsh-git-mrg-lrow{display:flex;height:18px;white-space:pre}
+.dsh-git-mrg-lno{flex:none;width:40px;padding-right:8px;text-align:right;color:var(--dsw-alias-label-secondary);opacity:.6;-webkit-user-select:none;user-select:none}
+.dsh-git-mrg-ltext{flex:1;padding-right:10px}
+.dsh-git-mrg-m-ours{background:rgba(74,125,207,.16)}
+.dsh-git-mrg-m-theirs{background:rgba(214,160,34,.16)}
+.dsh-git-mrg-m-base{background:rgba(128,128,142,.16)}
+.dsh-git-mrg-emptyp{padding:10px;color:var(--dsw-alias-label-secondary);font-family:inherit;font-size:11px}
+/* 结果区：textarea 是本体（中文输入法、选区、原生行为都归它），色块层垫在底下，
+    按「行号 × 18px 行高 + 4px 内边距」定位、跟随滚动平移 —— 几何是算术，不逐行
+    镜像 DOM。textarea 的 padding 与行高必须和这里完全一致，错 1px 色块就串行。 */
+.dsh-git-mrg-editor{position:relative;flex:1 1 50%;min-height:0;overflow:hidden;background:var(--dsw-alias-bg-base)}
+.dsh-git-mrg-layer{position:absolute;inset:0;overflow:hidden;pointer-events:none}
+.dsh-git-mrg-band{position:absolute;left:0;width:100%}
+.dsh-git-mrg-band-block{background:rgba(214,69,69,.10)}
+.dsh-git-mrg-band-block-on{background:rgba(214,69,69,.24)}
+.dsh-git-mrg-band-left{background:rgba(74,125,207,.10)}
+.dsh-git-mrg-band-left-on{background:rgba(74,125,207,.26)}
+.dsh-git-mrg-band-right{background:rgba(214,160,34,.10)}
+.dsh-git-mrg-band-right-on{background:rgba(214,160,34,.26)}
+.dsh-git-mrg-input{position:absolute;inset:0;box-sizing:border-box;border:0;outline:none;resize:none;background:transparent;color:var(--dsw-alias-label-primary);padding:4px 8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:18px;white-space:pre;overflow:auto}
+.dsh-git-mrg-input::selection{background:rgba(74,125,207,.35)}
+.dsh-git-mrg-foot{flex:none;display:flex;align-items:center;gap:6px;padding:6px 8px;border-top:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2)}
+.dsh-git-mrg-note{flex:none;padding:4px 10px;white-space:pre-wrap;cursor:pointer}
+.dsh-git-mrg-confirm{width:min(460px,100%)}
 `)
     }, 'dsh-git-idea panel styles')
 

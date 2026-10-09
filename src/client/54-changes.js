@@ -173,6 +173,7 @@
             selectedKey: props.selectedKey, collapsed: props.collapsed,
             onSelect: props.onSelect, onToggle: props.onToggle,
             onSetStaged: props.onSetStaged, onOpenDiff: props.onOpenDiff,
+            onOpenConflict: props.onOpenConflict,
             onRevert: props.onRevert, onStash: props.onStash,
             untrackedOpen: props.untrackedOpen, untrackedFiles: props.untrackedFiles,
             onToggleUntracked: props.onToggleUntracked,
@@ -202,6 +203,9 @@
              事 —— 按钮长在哪个仓库的组里，就动哪个仓库。 */
           onSetStaged: function (entries, staged) { props.onSetStagedAt(repo, entries, staged) },
           onOpenDiff: function (entry) { props.onOpenDiffAt(repo, entry) },
+          /* 冲突行点击进三方合并界面：与 onOpenDiffAt 同一条「落回文件自己的仓库」
+             的规矩 —— 多选视图里点 repo-b 的冲突，界面问的就是 repo-b 的三个版本。 */
+          onOpenConflict: function (entry) { props.onOpenConflictAt(repo, entry) },
           onRevert: function (entries) { props.onRevertAt(repo, entries) },
           onStash: function (entries) { props.onStashAt(repo, entries) },
           untrackedOpen: localView(props.untrackedOpen),
@@ -223,17 +227,25 @@
          `UU` 在那里落进黄色 M 桶，和一次普通修改长得一样，读者看不出有活要干。
          这里改画红色加粗的完整双码（git 的 X/Y：UU/AA/DU…），勾选框的措辞也换成
          「标记已解决」—— `git add` 在冲突路径上的含义是「我解决完了」，不是普通
-         的「进索引」，所以框的悬停话不能照抄。 */
+         的「进索引」，所以框的悬停话不能照抄。
+
+         冲突行的点击也不进 diff（59-merge.js 的三方合并界面）：普通 diff 只有
+         「现在长什么样」，冲突要的是「两边各改了什么、我留哪边」。分流点就在这
+         一步——typeof 守卫与 onOpenDiff 同款，宿主没有新回调时不至于把点行点坏。 */
       const fileRow = function (scope, entry, key, depth, flat, label) {
         const conflict = entry.conflict === true
         return h('div', {
           className: rowClass(scope, key),
           key: key,
           title: conflict === true
-            ? text(entry.path) + '（未解决的合并冲突：编辑文件处理 <<<<<<< ======= >>>>>>> 标记，然后勾选＝git add 标记已解决；点开看差异）'
+            ? text(entry.path) + '（未解决的合并冲突：点击打开三方合并界面逐块解决；解决后勾选＝git add 标记已解决）'
             : text(entry.path) + '（点开看差异）',
           onClick: function () {
             scope.onSelect(key)
+            if (conflict === true && typeof scope.onOpenConflict === 'function') {
+              scope.onOpenConflict(entry)
+              return
+            }
             if (typeof scope.onOpenDiff === 'function') scope.onOpenDiff(entry)
           },
         },
@@ -512,7 +524,7 @@
                含义）第一次见的人未必知道。键带 repo —— 多仓库时每组各来一行，别撞。 */
             rows.push(h('div', {
               key: 'guide:' + repo, className: 'dsh-git-trow dsh-git-dim', style: { paddingLeft: '18px' },
-            }, '编辑文件解决 <<<<<<< ======= >>>>>>> 标记后，勾选暂存＝git add 标记已解决；点文件名看差异'))
+            }, '点击冲突文件打开三方合并界面（比对三个版本、逐块解决）；解决后勾选暂存＝git add 标记已解决'))
           }
           /* 工具条只属于默认变更列表那一组（理由见 trackedTools 的注释），且跟着组的
              展开走：折叠时它和文件行一起收起，组头还留着。 */

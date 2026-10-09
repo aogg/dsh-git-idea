@@ -102,6 +102,14 @@ onRpc('git/commit-detail', function (input) { return commitDetailSnapshot(input)
    it is the live text of a file the reader is looking at. */
 onRpc('git/diff', function (input) { return readFileDiff(input) })
 
+/* 三方合并界面（客户端 59-merge.js）的两条：conflict 读 :1:/ :2:/ :3: 三个阶段加
+   两侧标签（68-detail 那条 diff 的邻居，同样只读、不进缓存、不进命令页）；
+   conflict-save 把解决结果写回工作区并 git add 标记已解决 —— 它是变更类动作，
+   走 cmdrecGit（69-conflict.js 里的理由与先后顺序都在那儿）。 */
+onRpc('git/conflict', function (input) { return conflictSnapshot(input) })
+
+onRpc('git/conflict-save', function (input) { return conflictSave(input) })
+
 /* git collapses an untracked directory into a single entry; this is what is
    inside it, asked for only when the reader opens that row. */
 onRpc('git/untracked', function (input) { return readUntrackedTree(input) })
