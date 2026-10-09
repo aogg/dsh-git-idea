@@ -268,17 +268,22 @@ await wait(20)
 ok('补完之后不再重复读', calls.length === 0)
 
 console.log('')
-console.log('== 没有任何变化时，关掉再打开应该是零成本 ==')
+console.log('== 没有任何变化时，关掉再打开：历史照旧零读，只多打开即预读的那一次命令记录 ==')
 await chipClose()
 calls.length = 0
 tree = await openPanel()
 await wait(30)
 console.log('  无变化重开的 RPC:', JSON.stringify(calls.map((c) => c.method + ' @' + c.tree)))
 ok('没有重读历史/分支/作者', heavy().length === 0)
-/* 芯片发两次：先便宜的「哪个仓库哪个分支」，再补工作区状态（走缓存，0ms） */
+/* 芯片发两次：先便宜的「哪个仓库哪个分支」，再补工作区状态（走缓存，0ms）。
+   6aede2c 起「每次打开」算一次刷新时机：重开还多发一次后台 git/command-log 预读
+   （open 即发，不等切页）—— 这一次是规格内的代价，历史/分支/作者照旧一个不发。 */
 const panelCalls = calls.filter((c) => c.method === 'git/panel')
-ok('只有芯片自己那两次状态读（走缓存，0ms）',
-  calls.length === 2 && panelCalls.length === 2 && calls.every((c) => c.tree === 'chip')
+const cmdlogCalls = calls.filter((c) => c.method === 'git/command-log')
+ok('芯片两次状态读（走缓存，0ms）+ 面板打开即发的那一次后台命令预读',
+  calls.length === 3 && panelCalls.length === 2 && cmdlogCalls.length === 1
+  && calls.every((c) => c.tree === 'chip' || c.method === 'git/command-log')
+  && cmdlogCalls.every((c) => c.tree === 'pop')
   && panelCalls.filter((c) => c.args.quick === true).length === 1)
 ok('面板内容还在（标签页没丢）', textOf(tree).indexOf('历史') >= 0)
 
