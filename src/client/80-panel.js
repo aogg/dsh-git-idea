@@ -367,15 +367,19 @@
       const [mergeTarget, setMergeTarget] = React.useState(null)
       /* ── 命令页的读数（57-cmdlog.js 只管画）──
 
-         null = 还没读过：第一次切到那一页才发起；「重新读取」清回 null 让 effect
-         再跑一次。读数里记着它属于哪个会话 —— 组件没重挂而 sessionId 变了的场合
-         （防御；DSH 换会话通常是整块重挂），旧列表不当作「已读」。 */
+         null = 这个会话还没有任何读数：第一次生成发生在弹窗打开那一刻的后台预读里。
+         读数里记着它属于哪个会话 —— 组件没重挂而 sessionId 变了的场合（防御；DSH
+         换会话通常是整块重挂），旧列表不当作「已读」，也不当作「自己人」（合并时
+         sessionId 对不上原样返回，57-cmdlog.js）。 */
       const [cmdLog, setCmdLog] = React.useState(null)
       /* 在飞的那次读取的序号：连续两次「重新读取」时，旧答复不许翻盘（和
-         repoEpoch 是同一个问题，见 10-state.js）。 */
-      const [cmdLogBox] = React.useState(function () { return { seq: 0 } })
-      /* 推送合进列表后的长度上限：两次整读之间命令再多，列表也不无限长 —— 与
-         Host 侧一页的量级（limit 500）比留足了余量，截掉的只是最旧的尾巴。 */
+         repoEpoch 是同一个问题，见 10-state.js）。opens 数面板打开过几次 —— 每次
+         打开都算一次刷新时机，读数里记下自己是在第几次打开时发起的；open 只是
+         「此刻开着吗」的备忘，面板藏起来时放掉，下次再开 opens 才会加一。 */
+      const [cmdLogBox] = React.useState(function () { return { seq: 0, opens: 0, open: false } })
+      /* 合并后的长度上限：两次读之间命令再多，列表也不无限长 —— 与 Host 侧一页的
+         量级（limit 500）比留足了余量，截掉的只是排序后最旧的尾巴。读的答复与
+         liveBus 的推送走同一条合并路（57-cmdlog.js 的 cmdlogMergeRows）。 */
       const CMDLOG_LIVE_MAX = 600
       /* Which collapsed untracked directories are open, and what is inside the
          ones that have been read. Keyed by the directory's path; the read happens
@@ -875,56 +879,116 @@
         return function () { alive = false }
       }, [appliedRepo, repoOk, tab, freshAt, props.ready])
 
-      /* ── 命令页：第一次切到才读，切走再切回不重读 ──
+      /* ── 命令页的读数：弹窗打开就预读，之后所有刷新都走后台异步 + 增量合并 ──
 
-         会话记录要真去扫文件，和其它「切到那页才读」的读一个待遇。与 authors
-         那条 effect 不同，这里**不**因切走页签作废在飞的那次读：扫一遍不该白扫，
-         答复落在 state 里，读者切回来正好用上 —— 「不重新请求」因此连读还没完的
-         那种场合也成立。
+         过去是「第一次切到那页才读，每次重读整表翻新」：读者切过来先看一页
+         「正在读取命令记录…」，答复到了 500 条列表整个重摆一遍。现在生成挪到弹窗
+         打开那一刻（后台、不等切页），之后的每个刷新时机（切到命令页、这页开着时
+         仓库 bump、点「重新读取」）都走同一条后台路：手里已有这个会话的列表就绝不
+         清空、绝不置 loading，读完按行身份增量合并 —— 屏上只多出新的几行、正在跑的
+         行补上退出码。
 
-         读数里记着它是在哪一版数据上读的（at = freshAt）：命令页开着时仓库动过
-         一次（bump），这一页跟着重扫一遍 —— 会话里跑完的 git 命令正排队落进记录，
-         开着的命令页应当自己长出那几行，而不是等读者手点「重新读取」。切走再切
-         回、期间没有 bump 时照旧不重读。 */
-      React.useEffect(function () {
-        if (tab !== 'cmdlog' || props.ready !== true) return undefined
-        if (cmdLog !== null && cmdLog.sessionId === sessionId && cmdLog.at === freshAt) return undefined
+         与其它「切到那页才读」的读一样，这里不因切走页签作废在飞的那次读：扫一遍
+         不该白扫。答复落地全走函数式 setState，基于**最新**的 state 合并 —— 在飞
+         期间 liveBus 插进来的行不会被旧闭包里的旧列表覆盖回去；sessionId 对不上时
+         原样返回（那是换会话前留下的读数，谁也不许动它）。 */
+      const readCmdLog = function (at, opens) {
         cmdLogBox.seq += 1
         const seq = cmdLogBox.seq
-        const at = freshAt
-        setCmdLog({ sessionId: sessionId, loading: true, at: at })
+        setCmdLog(function (previous) {
+          if (previous == null || previous.sessionId !== sessionId) {
+            return { sessionId: sessionId, loading: true, at: at, opens: opens }
+          }
+          /* 同一会话手里已有列表 → 后台刷新：列表原样留着，只挂 refreshing。
+             还没有任何列表（第一次生成）才整页「正在读取命令记录…」。 */
+          if (Array.isArray(previous.commands) === true) {
+            return Object.assign({}, previous, { at: at, opens: opens, refreshing: true })
+          }
+          return { sessionId: sessionId, loading: true, at: at, opens: opens }
+        })
         callHost('git/command-log', { sessionId: sessionId, limit: 500 }).then(function (data) {
           if (seq !== cmdLogBox.seq) return
-          /* ok:false（沙箱拒绝、PATH 上没有 node、超时……）是「读得了答复、读不了
-             记录」：原话在 data.error 里，折成空列表就成了「这个项目没跑过 git」。 */
-          if (data == null || data.ok !== true) {
-            const said = data != null && text(data.error).length > 0 ? text(data.error) : '读不了会话记录'
-            setCmdLog({ sessionId: sessionId, error: said, at: at })
-            return
-          }
-          setCmdLog({
-            sessionId: sessionId,
-            commands: Array.isArray(data.commands) ? data.commands : [],
-            truncated: data.truncated === true,
-            /* 会话扫描那一路读不了（没有 node、被沙箱拒了……）而面板记录给得出来时，
-               Host 把原话放在 warning 里随行 —— 折成空字段就成了没说过。 */
-            warning: text(data.warning),
-            at: at,
+          setCmdLog(function (previous) {
+            if (previous == null || previous.sessionId !== sessionId) return previous
+            /* ok:false（沙箱拒绝、PATH 上没有 node、超时……）是「读得了答复、读不了
+               记录」：原话在 data.error 里，折成空列表就成了「这个项目没跑过 git」。 */
+            if (data == null || data.ok !== true) {
+              const said = data != null && text(data.error).length > 0 ? text(data.error) : '读不了会话记录'
+              /* 手里有列表：错误不顶掉列表 —— 原话记进读数，画的事归 57-cmdlog.js
+                 （挂在列表上方）；只有首读就失败才整页只显错误。 */
+              if (Array.isArray(previous.commands) !== true) {
+                return { sessionId: sessionId, error: said, at: at, opens: opens }
+              }
+              return Object.assign({}, previous, { at: at, opens: opens, refreshing: false, error: said })
+            }
+            return {
+              sessionId: sessionId,
+              /* 增量合并，不是整表翻新：同 key 新答复为准，旧独有的行保留 */
+              commands: cmdlogMergeRows(previous.commands, Array.isArray(data.commands) ? data.commands : [], CMDLOG_LIVE_MAX),
+              truncated: data.truncated === true,
+              /* 会话扫描那一路读不了（没有 node、被沙箱拒了……）而面板记录给得出来时，
+                 Host 把原话放在 warning 里随行 —— 折成空字段就成了没说过。 */
+              warning: text(data.warning),
+              at: at,
+              opens: opens,
+              refreshing: false,
+            }
           })
         }, function (failure) {
           if (seq !== cmdLogBox.seq) return
-          setCmdLog({ sessionId: sessionId, error: failureText(failure), at: at })
+          setCmdLog(function (previous) {
+            if (previous == null || previous.sessionId !== sessionId) return previous
+            const said = failureText(failure)
+            if (Array.isArray(previous.commands) !== true) {
+              return { sessionId: sessionId, error: said, at: at, opens: opens }
+            }
+            return Object.assign({}, previous, { at: at, opens: opens, refreshing: false, error: said })
+          })
         })
+      }
+
+      /* 什么时候该发读：手里那份读数「过期」了才发 —— 过期有三种形状，各有各的
+         时机。换会话（对不上 sessionId）：当作未读，重新生成；新的一次打开（读数
+         是在第几次打开时发起的，比不上当前的次数）：每次打开都算一次刷新时机，预读
+         就从这里发生，不等读者切页 —— 这两条都不看页签，面板默认开在「历史」，预读
+         要照发；打开之后过的期（at 落后于 freshAt，即仓库 bump 过）：只有命令页
+         开着才补读 —— 读者没在看这一页，就让它一直旧着，切过来那一刻自然补上。
+         切走再切回、期间没有 bump 也没有重开：读数既新又是这次打开里发起的，什么
+         都不发。 */
+      React.useEffect(function () {
+        if (props.active !== true || props.ready !== true) {
+          /* 藏着不发读；把「开着」放掉，下次再打开又算一次新的刷新时机。 */
+          cmdLogBox.open = false
+          return undefined
+        }
+        if (cmdLogBox.open !== true) {
+          cmdLogBox.open = true
+          cmdLogBox.opens += 1
+        }
+        if (cmdLog === null || cmdLog.sessionId !== sessionId) {
+          readCmdLog(freshAt, cmdLogBox.opens)
+          return undefined
+        }
+        if (cmdLog.opens !== cmdLogBox.opens) {
+          readCmdLog(freshAt, cmdLogBox.opens)
+          return undefined
+        }
+        if (cmdLog.at !== freshAt && tab === 'cmdlog') {
+          readCmdLog(freshAt, cmdLogBox.opens)
+          return undefined
+        }
         return undefined
-      }, [tab, sessionId, cmdLog, freshAt, props.ready])
+      }, [props.active, props.ready, sessionId, cmdLog, freshAt, tab])
 
       /* ── 命令页的实时推送（真包的 client-pre.js 提供 liveBus；bridge 版没有，
          typeof 守卫让它安静跳过，面板照旧靠整读）──
 
          Host 在面板每次变更命令开始/结束时广播（77-cmdrec.js），这里把消息缝进手里
-         的列表：cmdlog-start 前插一条（只在已读过、且消息属于这个会话时），
-         cmdlog-exit 按 id 就地改退出码。整读（切会话、重新读取）照旧整表覆盖 ——
-         推送只负责两次整读之间的缝，不负责对账。 */
+         的列表：cmdlog-start 走和答复同一条增量合并路（57-cmdlog.js 的
+         cmdlogMergeRows，按行身份去重/原地更新）—— 不再无条件 unshift：刚开的命令
+         多半已经在最近一次答复里了，再前插一次就是两行；合并还会把它摆到 time 降序
+         该在的位置（最新，自然在最前）。cmdlog-exit 按 id 就地改退出码。函数式
+         setState 保证缝合落在最新的列表上，不与在飞的答复互相覆盖。 */
       React.useEffect(function () {
         if (typeof liveBus === 'undefined' || liveBus == null || typeof liveBus.subscribe !== 'function') return undefined
         return liveBus.subscribe(function (message) {
@@ -935,9 +999,8 @@
               const entry = message.entry
               if (entry == null || typeof entry !== 'object' || entry.id == null) return previous
               if (Array.isArray(previous.commands) !== true) return previous
-              const next = [entry].concat(previous.commands)
-              if (next.length > CMDLOG_LIVE_MAX) next.length = CMDLOG_LIVE_MAX
-              return Object.assign({}, previous, { commands: next })
+              return Object.assign({}, previous,
+                { commands: cmdlogMergeRows(previous.commands, [entry], CMDLOG_LIVE_MAX) })
             }
             if (message.kind === 'cmdlog-exit') {
               if (Array.isArray(previous.commands) !== true) return previous
@@ -2290,11 +2353,11 @@
           onToggleUntracked: toggleUntracked,
         })
       } else if (tab === 'cmdlog') {
-        /* 只读页：列表是上面的 effect 攒下的那份快照，「重新读取」清回 null 让它
-           再扫一遍会话文件。 */
+        /* 只读页：列表是上面那条后台路攒下的读数。点「重新读取」也是同一条路：
+           不清列表、不置 loading，读完增量合并 —— 和弹窗打开、bump 一个待遇。 */
         body = h(CommandLogPane, {
           log: cmdLog,
-          onReload: function () { setCmdLog(null) },
+          onReload: function () { readCmdLog(freshAt, cmdLogBox.opens) },
         })
       } else if (tab === 'config') {
         body = h(GitConfigPane, { sessionId: sessionId, sessionAware: props.sessionAware === true })
