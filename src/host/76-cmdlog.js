@@ -13,7 +13,11 @@
  * · 会话记录按工作区分目录（slug = 工作区 cwd 的 '/' 换成 '-' 再前后包 '--'），
  *   所以先按 slug 直接定位；slug 目录不存在时（规则变过、目录被改名）退化为逐目录
  *   读第一条 session 记录的 cwd 比对 —— 只认完全一致的工作区，别的 workspace 的
- *   记录一个字节也不读。 */
+ *   记录一个字节也不读。
+ *
+ * 这一页的数据源不止会话一份：面板自己经 RPC 跑的 git 记在 77-cmdrec.js（内存 +
+ * JSONL 文件），commandLogSnapshot 在出口处把两路合并、按 id 去重、套 limit ——
+ * 详见文件尾那个函数的注释。 */
 
 /* 沙箱拒绝、node 不在、脚本没跑成，各自要一句说得出来的话；绝不能把它们折叠成
  * 「commands: []」—— 那是「这个项目没执行过 git」的答案，而这三种情况是「读不了」。 */
@@ -259,7 +263,11 @@ const CMDLOG_SCRIPT = [
  * 工作区是**会话自己的** cwd（不是当前生效的仓库 —— 读操作按 repo 参数化之后，
  * 面板可能正看着工作区外的路径，而命令记录跟随的是项目本身）。repo/sessionId
  * 照样随 args 走：workdir 与沙箱策略因此与其它 RPC 一致（`argsAt` 的注释说了
- * 丢掉 sessionId 会发生什么）。 */
+ * 丢掉 sessionId 会发生什么）。
+ *
+ * 数据源是三份的合并（77-cmdrec.js）：会话扫描（上面那段脚本）+ 面板记录的持久化
+ * 文件尾部 + 面板记录的内存缓冲。会话扫描失败不再一句 ok:false 定生死 —— 面板这边
+ * 有记录可给时照样给（原话转成 warning 随行），两路都空着才把原话当错误交出去。 */
 async function commandLogSnapshot(input) {
   const workspace = sessionWorkdir(input)
   if (workspace === undefined) return { ok: false, error: '无法确定这个会话的工作区，读不了它的命令记录' }
@@ -272,33 +280,52 @@ async function commandLogSnapshot(input) {
       + 'node -e ' + shq(CMDLOG_SCRIPT) + ' ' + shq(home + '/sessions') + ' ' + shq(workspace)
       + ' ' + shq(cmdlogSlug(workspace)) + ' ' + String(limit) + '\n',
     argsAt(input, repoFrom(input)), null, CMDLOG_TIMEOUT)
+  let scanError = null
+  let scanDenied = false
+  let scanned = []
+  let scanTruncated = false
   if (probe.sandboxDenied === true) {
-    return { ok: false, error: '文件沙箱不允许读取会话记录目录（' + home + '/sessions）', sandboxDenied: true, stderr: probe.stderr.slice(0, 400) }
+    scanError = '文件沙箱不允许读取会话记录目录（' + home + '/sessions）'
+    scanDenied = true
+  } else if (probe.exitCode === 127 && probe.stderr.indexOf(CMDLOG_NO_NODE) >= 0) {
+    scanError = '这台机器的 PATH 上找不到 node，读不了会话记录'
+  } else if (probe.timedOut === true) {
+    scanError = '读会话记录超时了'
+  } else if (probe.exitCode == null) {
+    /* exitCode 为 null 是进程根本没起来 —— 最常见的原因是工作区目录本身已经不存在
+       （invoke 会把它设为 workdir），这句话不能说成「脚本没跑成」。 */
+    scanError = '扫描进程没有启动起来（工作区目录可能已经不存在）'
+  } else if (probe.exitCode !== 0) {
+    scanError = '读会话记录的脚本没跑成'
+  } else if (probe.truncated === true) {
+    scanError = '会话记录的输出太大，被截断了'
+  } else {
+    let parsed = null
+    try {
+      parsed = JSON.parse(probe.stdout)
+    } catch (error) {
+      console.error('dsh-git-idea: could not parse the command log reply', String(error))
+    }
+    if (parsed == null || typeof parsed !== 'object') {
+      scanError = '会话记录脚本没有给出可解析的结果'
+    } else if (parsed.ok !== true) {
+      scanError = isStr(parsed.error) ? parsed.error : '读会话记录失败'
+    } else {
+      scanned = Array.isArray(parsed.commands) ? parsed.commands : []
+      scanTruncated = parsed.truncated === true
+    }
   }
-  if (probe.exitCode === 127 && probe.stderr.indexOf(CMDLOG_NO_NODE) >= 0) {
-    return { ok: false, error: '这台机器的 PATH 上找不到 node，读不了会话记录' }
+  /* 面板这一半：文件尾部 + 内存，按本会话/本工作区归位后参与合并。 */
+  const panel = await cmdrecPanelRows()
+  const panelRows = cmdrecScopeRows(panel.rows, input != null && isStr(input.sessionId) ? input.sessionId : '', workspace)
+  if (scanError !== null && panelRows.length === 0) {
+    return { ok: false, error: scanError, sandboxDenied: scanDenied === true }
   }
-  if (probe.timedOut === true) return { ok: false, error: '读会话记录超时了' }
-  /* exitCode 为 null 是进程根本没起来 —— 最常见的原因是工作区目录本身已经不存在
-     （invoke 会把它设为 workdir），这句话不能说成「脚本没跑成」。 */
-  if (probe.exitCode == null) {
-    return { ok: false, error: '扫描进程没有启动起来（工作区目录可能已经不存在）', stderr: probe.stderr.slice(0, 400) }
+  const merged = cmdrecMerge([scanned, panelRows])
+  return {
+    ok: true,
+    commands: merged.length > limit ? merged.slice(0, limit) : merged,
+    truncated: scanTruncated === true || panel.clipped === true || merged.length > limit,
+    warning: scanError !== null ? scanError : undefined,
   }
-  if (probe.exitCode !== 0) {
-    return { ok: false, error: '读会话记录的脚本没跑成', stderr: probe.stderr.slice(0, 400) }
-  }
-  if (probe.truncated === true) return { ok: false, error: '会话记录的输出太大，被截断了' }
-  let parsed = null
-  try {
-    parsed = JSON.parse(probe.stdout)
-  } catch (error) {
-    console.error('dsh-git-idea: could not parse the command log reply', String(error))
-  }
-  if (parsed == null || typeof parsed !== 'object') {
-    return { ok: false, error: '会话记录脚本没有给出可解析的结果', stderr: probe.stdout.slice(0, 200) }
-  }
-  if (parsed.ok !== true) {
-    return { ok: false, error: isStr(parsed.error) ? parsed.error : '读会话记录失败' }
-  }
-  return { ok: true, commands: Array.isArray(parsed.commands) ? parsed.commands : [], truncated: parsed.truncated === true }
 }

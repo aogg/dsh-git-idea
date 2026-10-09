@@ -48,6 +48,111 @@ window.__ModuleLoader__.load({
       },
     }
 
+    /* ── host→client 的实时通道（liveBus）──
+
+       RPC 是一问一答，host 没法主动找浏览器 —— 面板执行的命令开始/结束就只能在下一轮
+       整读才上屏。这里用浏览器原生 WebSocket 连真包 Host 半挂的 /dsh-git-idea/ws，把
+       推来的消息分发给订阅者。刻意做成一个闭包单例：面板会重挂、会话会切换，连接却
+       只有这一条。指数退避重连（1s 起步、封顶 30s，连上就归零），页面重新可见/网络
+       恢复时若已断开则立刻试一次 —— 宿主睡眠醒来不该等满一个退避周期。
+
+       bridge 版的 client.js 没有 pkg 前奏，也就没有 liveBus —— 面板片段里的 typeof
+       守卫会让它们安静退化成「无推送、照常轮询」，这是预期（bridge 的 Host 半本来
+       就没有 WS 路由）。 */
+    const liveBus = {
+      socket: null,
+      wait: 1000,
+      closed: false,
+      listeners: new Set(),
+      timer: null,
+      url: function () {
+        return (location.protocol === 'https:' ? 'wss' : 'ws') + '//' + location.host + '/dsh-git-idea/ws'
+      },
+      open: function () {
+        if (liveBus.closed === true || liveBus.socket !== null) return
+        if (typeof WebSocket !== 'function') return
+        let ws = null
+        try {
+          ws = new WebSocket(liveBus.url())
+        } catch (error) {
+          console.error('dsh-git-idea: live 连接建不起来（继续用轮询）', String(error))
+          return
+        }
+        liveBus.socket = ws
+        ws.onopen = function () {
+          liveBus.wait = 1000
+        }
+        ws.onmessage = function (event) {
+          let data = null
+          try {
+            data = JSON.parse(event.data)
+          } catch (error) {
+            console.error('dsh-git-idea: live 消息不是 JSON，丢弃', String(error))
+            return
+          }
+          if (data == null || typeof data !== 'object') return
+          liveBus.listeners.forEach(function (listener) {
+            try {
+              listener(data)
+            } catch (error) {
+              /* 一个订阅者的错不该打断其余订阅者 —— 记日志，继续分发。 */
+              console.error('dsh-git-idea: live 订阅者处理消息出错', String(error))
+            }
+          })
+        }
+        ws.onclose = function () {
+          if (liveBus.socket !== ws) return
+          liveBus.socket = null
+          if (liveBus.closed === true) return
+          /* 指数退避重连；同一时刻只排一个定时器，open 的单例判重兜住重复连接。 */
+          if (liveBus.timer !== null) return
+          liveBus.timer = setTimeout(function () {
+            liveBus.timer = null
+            liveBus.open()
+          }, liveBus.wait)
+          liveBus.wait = Math.min(liveBus.wait * 2, 30000)
+        }
+        ws.onerror = function () {
+          /* onerror 之后浏览器必发 onclose，重连交给那边。 */
+        }
+      },
+      /* 页面重新可见 / 网络恢复：断着就立刻试一次，并把退避归零（多半是宿主睡了）。 */
+      wake: function () {
+        if (liveBus.closed === true || liveBus.socket !== null) return
+        liveBus.wait = 1000
+        if (liveBus.timer !== null) {
+          clearTimeout(liveBus.timer)
+          liveBus.timer = null
+        }
+        liveBus.open()
+      },
+      subscribe: function (listener) {
+        liveBus.listeners.add(listener)
+        return function () {
+          liveBus.listeners.delete(listener)
+        }
+      },
+      close: function () {
+        liveBus.closed = true
+        if (liveBus.timer !== null) {
+          clearTimeout(liveBus.timer)
+          liveBus.timer = null
+        }
+        const ws = liveBus.socket
+        liveBus.socket = null
+        if (ws != null && typeof ws.close === 'function') ws.close()
+        liveBus.listeners.clear()
+      },
+    }
+    if (typeof document !== 'undefined' && document != null && typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'visible') liveBus.wake()
+      })
+    }
+    if (typeof window !== 'undefined' && window != null && typeof window.addEventListener === 'function') {
+      window.addEventListener('online', function () { liveBus.wake() })
+    }
+
     /* The dynamic bridge's browser realm also handed the fragments a `styles`
        symbol, and 46-css.js is written against it: one `insert(text)` that
        appends a <style> element and returns the remover that `ctx.effect`
@@ -1842,6 +1947,9 @@ return {
 .dsh-git-st-R{color:var(--dsw-alias-brand-primary)}
 .dsh-git-st-C{color:var(--dsw-alias-brand-primary)}
 .dsh-git-st-U{color:var(--dsw-alias-state-error-primary)}
+/* 未解决的合并冲突（UU/AA/DU…）：红色加粗的双码，和修改的黄色单字母一眼分开。
+   槽位只有 12px（装一个字母的），双码还回 width:auto 才装得下两个字。 */
+.dsh-git-st-CF{color:var(--dsw-alias-state-error-primary);font-weight:700;width:auto}
 .dsh-git-cbox{flex:none;width:14px;font-size:11px;color:var(--dsw-alias-label-secondary);cursor:pointer}
 .dsh-git-cbox-on{color:var(--dsw-alias-brand-primary)}
 .dsh-git-cbox-part{color:var(--dsw-alias-state-warn-primary)}
@@ -2175,7 +2283,7 @@ textarea.dsh-git-input{resize:vertical}
    才是要读的）。 */
 .dsh-git-diffrail-mark{flex:none;margin-left:auto;padding:0 5px;color:var(--dsw-alias-label-secondary);font-size:10px;line-height:15px}
 
-/* ── 命令页（57-cmdlog.js）：会话记录里这个工作区跑过的 git 命令 ── */
+/* ── 命令页（57-cmdlog.js）：会话记录 + 面板执行记录里这个工作区跑过的 git 命令 ── */
 .dsh-git-cmd{flex:1;display:flex;flex-direction:column;min-height:0}
 .dsh-git-cmdbar{flex:none;display:flex;align-items:center;gap:8px;padding:5px 8px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2)}
 .dsh-git-cmdfilter{flex:1 1 auto;min-width:80px;border:1px solid var(--dsw-alias-border-l1);border-radius:5px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:2px 6px;outline:none}
@@ -2191,6 +2299,10 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-cmdesc{flex:0 1 auto;max-width:32%;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-secondary);font-size:11px}
 .dsh-git-cmdfail{flex:none;color:var(--dsh-alias-state-error-primary);font-size:10px;font-weight:600}
 .dsh-git-cmdsrc{flex:none;color:var(--dsw-alias-label-secondary);font-size:10px}
+/* 「面板」徽标：来自面板自己的执行（77-cmdrec.js），不是 AI 会话；给它一点边框，
+   和会话号那种纯文字区分开。运行中标记（…）同色，结束时由推送换成真退出码。 */
+.dsh-git-cmdpanel{padding:0 4px;border:1px solid var(--dsw-alias-border-l1);border-radius:3px}
+.dsh-git-cmdrun{flex:none;color:var(--dsw-alias-label-secondary);font-size:10px;font-weight:600}
 .dsh-git-cmdopen{display:flex;align-items:flex-start;gap:8px;margin:0 8px 4px;padding:6px;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l1);border-left:2px solid var(--dsw-alias-border-l2);border-radius:4px}
 .dsh-git-cmdpre{flex:1;min-width:0;margin:0;white-space:pre-wrap;word-break:break-all;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:16px}
 .dsh-git-cmdnote{flex:none;padding-top:5px;font-size:10px;color:var(--dsw-alias-label-secondary)}
@@ -2969,6 +3081,14 @@ textarea.dsh-git-input{resize:vertical}
        unversioned *directory* still expands it into the files it holds, and those
        files stay in this group too — each with its own ticked box.
 
+       ── 冲突那组 ──
+
+       合并、拣选、stash pop 留下的 unmerged 路径（porcelain v2 的 `u` 行，双码
+       UU/AA/DU…）不进 staged/unstaged，mergeChanges 给它们打了 `conflict` 标。
+       分桶先看这个标再看新增：冲突行的框语义和别组不同 —— 勾＝`git add` 标记
+       **已解决**，不是普通的「进索引」—— 混进别的组，读者就会在错误的理解下勾框。
+       没有冲突时这组整个不出现，树和从前一字不差。
+
        ── two views ──
 
        IDEA's other toggle, next to the changes: a tree of directories, or a flat
@@ -3149,23 +3269,34 @@ textarea.dsh-git-input{resize:vertical}
 
       /* One tracked change: box, status letter, name. In either view the click
          opens the patch (IDEA's commit window previews the selection too); the
-         tree adds the indent the flat list does not have. */
+         tree adds the indent the flat list does not have.
+
+         未解决的冲突（打了 conflict 标的 unmerged 路径）不走 statusClass 的单字母：
+         `UU` 在那里落进黄色 M 桶，和一次普通修改长得一样，读者看不出有活要干。
+         这里改画红色加粗的完整双码（git 的 X/Y：UU/AA/DU…），勾选框的措辞也换成
+         「标记已解决」—— `git add` 在冲突路径上的含义是「我解决完了」，不是普通
+         的「进索引」，所以框的悬停话不能照抄。 */
       const fileRow = function (scope, entry, key, depth, flat, label) {
+        const conflict = entry.conflict === true
         return h('div', {
           className: rowClass(scope, key),
           key: key,
-          title: text(entry.path) + '（点开看差异）',
+          title: conflict === true
+            ? text(entry.path) + '（未解决的合并冲突：编辑文件处理 <<<<<<< ======= >>>>>>> 标记，然后勾选＝git add 标记已解决；点开看差异）'
+            : text(entry.path) + '（点开看差异）',
           onClick: function () {
             scope.onSelect(key)
             if (typeof scope.onOpenDiff === 'function') scope.onOpenDiff(entry)
           },
         },
           stageBox('box', entry.staged === true ? 'all' : 'none',
-            entry.staged === true ? '取消暂存' : '暂存',
+            entry.staged === true ? '取消暂存' : (conflict === true ? '标记已解决（git add）' : '暂存'),
             function () { scope.onSetStaged([entry], entry.staged !== true) }),
           indentPad(depth),
           h('span', { className: 'dsh-git-tw' }),
-          h('span', { className: 'dsh-git-st' + statusClass(entry.displayCode) }, statusLabel(entry.displayCode)),
+          conflict === true
+            ? h('span', { className: 'dsh-git-st dsh-git-st-CF', title: '未解决的冲突（' + text(entry.workCode) + '）' }, text(entry.workCode))
+            : h('span', { className: 'dsh-git-st' + statusClass(entry.displayCode) }, statusLabel(entry.displayCode)),
           nameCell(label, flat))
       }
 
@@ -3288,7 +3419,7 @@ textarea.dsh-git-input{resize:vertical}
          level up: tick it and the whole changelist goes into the index, untick it
          and it comes back out. The untracked group's entries are by definition
          never staged, so its box only ever reads empty. */
-      const groupTitle = function (scope, label, key, hint, entries) {
+      const groupTitle = function (scope, label, key, hint, entries, tickTitle) {
         let staged = 0
         for (let i = 0; i < entries.length; i += 1) if (entries[i].staged === true) staged += 1
         const allStaged = entries.length > 0 && staged === entries.length
@@ -3301,7 +3432,8 @@ textarea.dsh-git-input{resize:vertical}
           onDoubleClick: function () { scope.onToggle(key) },
         },
           stageBox('box', allStaged ? 'all' : (someStaged ? 'some' : 'none'),
-            allStaged ? '把这一组全部撤出索引' : '把这一组全部暂存',
+            /* tickTitle：组自己那句话（冲突组说「标记已解决」），不给就用默认文案。 */
+            allStaged ? '把这一组全部撤出索引' : (tickTitle == null ? '把这一组全部暂存' : tickTitle),
             function () { scope.onSetStaged(entries, !allStaged) }),
           twisty({ collapsed: scope.collapsed[key] === true, onToggle: function () { scope.onToggle(key) } }),
           h('span', { className: 'dsh-git-tname' }, label),
@@ -3395,20 +3527,28 @@ textarea.dsh-git-input{resize:vertical}
           }, '无法读取这个仓库的变更')]
         }
         const changes = mergeChanges(one)
+        /* 冲突桶在最前：先判 conflict 再判 isNewFile —— 冲突行的框是「标记已解决」，
+           和新增/修改的「进索引」不是一个动作，绝不能让一条冲突被别的关系领走。 */
+        const conflicted = []
         const tracked = []
         const fresh = []
         for (let i = 0; i < changes.length; i += 1) {
           const entry = changes[i]
           if (entry.path.length === 0) continue
-          if (isNewFile(entry)) fresh.push(entry)
+          if (entry.conflict === true) conflicted.push(entry)
+          else if (isNewFile(entry)) fresh.push(entry)
           else tracked.push(entry)
         }
         const byPath = function (a, b) { return a.path < b.path ? -1 : (a.path > b.path ? 1 : 0) }
+        conflicted.sort(byPath)
         tracked.sort(byPath)
         fresh.sort(byPath)
 
         const rows = []
+        /* 冲突组排第一（要处理的活顶在最上面），entries 为空时下面的循环直接跳过，
+           所以没有冲突时这组不存在，列表和从前一字不差。 */
         const scopedGroups = [
+          { key: '@conflict', label: '冲突', hint: '合并/拣选/stash pop 留下的未解决冲突，勾上＝git add 标记已解决', tickTitle: '把这一组全部标记已解决（git add）', entries: conflicted },
           { key: '@tracked', label: '默认变更列表', hint: 'git 管着的改动，框勾上就是进了索引', entries: tracked },
           { key: '@new', label: '新增的文件', hint: 'git 还没提交过的文件：勾上就是加入索引，但留在这一组里，直到提交', entries: fresh },
         ]
@@ -3417,8 +3557,15 @@ textarea.dsh-git-input{resize:vertical}
           const group = scopedGroups[g]
           if (group.entries.length === 0) continue
           shown += 1
-          rows.push(groupTitle(scope, group.label, group.key, group.hint, group.entries))
+          rows.push(groupTitle(scope, group.label, group.key, group.hint, group.entries, group.tickTitle))
           if (scope.collapsed[group.key] === true) continue
+          if (group.key === '@conflict') {
+            /* 组头之下一行灰字指引，不占别的组：冲突文件该干什么（找标记、勾选的
+               含义）第一次见的人未必知道。键带 repo —— 多仓库时每组各来一行，别撞。 */
+            rows.push(h('div', {
+              key: 'guide:' + repo, className: 'dsh-git-trow dsh-git-dim', style: { paddingLeft: '18px' },
+            }, '编辑文件解决 <<<<<<< ======= >>>>>>> 标记后，勾选暂存＝git add 标记已解决；点文件名看差异'))
+          }
           /* 工具条只属于默认变更列表那一组（理由见 trackedTools 的注释），且跟着组的
              展开走：折叠时它和文件行一起收起，组头还留着。 */
           if (group.key === '@tracked') rows.push(trackedTools(scope, group.entries))
@@ -3463,6 +3610,11 @@ textarea.dsh-git-input{resize:vertical}
       const stagedEntries = []
       for (let i = 0; i < changes.length; i += 1) if (changes[i].staged === true) stagedEntries.push(changes[i])
       const stagedCount = stagedEntries.length
+      /* 冲突数和上面同源（同一份 mergeChanges(work)）：side 永远属于生效仓库，多选
+         视图里别的仓库不进这个数 —— 提交按钮提交的是生效仓库的索引，警告也只说
+         它的冲突（防的正是「直接提交被 git 拒」那一次白点）。 */
+      let conflictCount = 0
+      for (let i = 0; i < changes.length; i += 1) if (changes[i].conflict === true) conflictCount += 1
       const totalChanges = changes.length
       const allKind = kindOf(changes)
       const canCommit = props.busy !== true && props.message.trim().length > 0 && totalChanges > 0
@@ -3486,6 +3638,13 @@ textarea.dsh-git-input{resize:vertical}
           ? h('div', { key: 'ident', className: 'dsh-git-hint dsh-git-warn' },
             '这台机器还没配 git 提交身份，提交会被 git 拒绝。设置页「dsh-git-idea配置 → 提交身份」里能填，'
             + '或在终端里跑：git config --global user.name "你的名字"、git config --global user.email "你的邮箱"。')
+          : null,
+        /* 同一件事也说在提交前：带未解决冲突的索引 `git commit` 会直接拒（「cannot
+           commit a merge」/ unmerged files），让读者先看见路，而不是先撞一次墙。 */
+        conflictCount > 0
+          ? h('div', { key: 'conflict', className: 'dsh-git-hint dsh-git-warn' },
+            '有 ' + String(conflictCount) + ' 个冲突未解决，直接提交会被 git 拒绝；在变更页编辑文件解决 '
+            + '<<<<<<< ======= >>>>>>> 标记后，勾选暂存（标记已解决）再提交。')
           : null,
         clearable('msg', h('textarea', {
           className: 'dsh-git-input',
@@ -3935,13 +4094,32 @@ textarea.dsh-git-input{resize:vertical}
         editable: false,
         init: false,
       },
+      /* 仓库就在这个路径上，git 却拒读它：目录属主不是运行 dsh 的那个用户，
+         safe.directory 保护挡在前面（fatal: detected dubious ownership）。
+         面板读到时已经自动把路径写进过 global 配置并重试 —— 写成功就根本到不了
+         这一页；写不进去（只读的会话/沙箱）才落到这里。所以这一页不许再说
+         「不是 Git 仓库」：要给读者自己就能执行的完整命令。safe.directory 只认
+         system/global 配置，-c 与仓库内配置 git 一律忽略，所以命令必须是 --global。
+         路径每个仓库不同，hint 在 setupReason 里按当前路径补全。 */
+      'unsafe-owner': {
+        title: 'git 拒绝读取这个仓库（目录属主不同）',
+        editable: false,
+        init: false,
+        hintFor: function (path) {
+          return '目录属主与运行 dsh 的用户不同，git 出于保护拒绝读取；面板自动写入 '
+            + 'safe.directory 没有成功（可能是只读的会话或沙箱）。可以在终端自己执行下面这句，'
+            + '然后点「打开这个目录」重试：git config --global --add safe.directory ' + path
+        },
+      },
       'git-error': { title: 'git 命令执行失败', hint: '目录存在，但 git 没能读取它。下方是 git 的原话。' },
     }
 
-    function setupReason(id) {
+    function setupReason(id, path) {
       const found = SETUP_REASONS[id]
-      if (found !== undefined) return found
-      return { title: '这里还不是 Git 仓库', hint: '' }
+      if (found === undefined) return { title: '这里还不是 Git 仓库', hint: '' }
+      /* 只有 safe.directory 这一页的提示里带着仓库自己的路径，其余页都是静态的。 */
+      if (found.hintFor !== undefined) return Object.assign({}, found, { hint: found.hintFor(path) })
+      return found
     }
 
     function RepoSetup(props) {
@@ -3950,7 +4128,7 @@ textarea.dsh-git-input{resize:vertical}
       const [armed, setArmed] = React.useState(false)
       const [busy, setBusy] = React.useState(false)
       const [problem, setProblem] = React.useState(null)
-      const info = setupReason(props.reason)
+      const info = setupReason(props.reason, props.initial)
       /* 只有「路径还没定」或「这个路径有问题」时才需要人改路径。
          路径本身没错、只是这里没有仓库时，上面那行已经说清是哪个目录了。 */
       const editable = info.editable !== false
@@ -4024,10 +4202,11 @@ textarea.dsh-git-input{resize:vertical}
 
     /* ── 面板「命令」页：这个工作区里执行过的 git 命令 ──
 
-       数据源不是仓库，而是 DSH 自己的会话记录（Host 侧 76-cmdlog.js 扫
-       `$DSH_HOME/sessions/<工作区 slug>/…` 里的 bash 调用），所以这一页是纯只读
-       展示：不碰索引、不碰引用，连一个 git 进程都不起 —— 「重新读取」重读的也是
-       会话文件，不是仓库。
+       数据源是会话记录 + 面板执行记录两路（Host 在出口合成一份，host 侧 76-cmdlog.js
+       与 77-cmdrec.js）：前者扫 `$DSH_HOME/sessions/<工作区 slug>/…` 里的 bash 调用，
+       后者是面板自己经 RPC 跑的 git（source === 'panel'，右侧徽标画成「面板」）。所以
+       这一页是纯只读展示：不碰索引、不碰引用，连一个 git 进程都不起 —— 「重新读取」
+       重读的也是记录，不是仓库。
 
        读数的生死放在 GitPanel（80-panel.js）而不是这里：这一页要「第一次切到才
        读、切走再切回不重读」，列表得比这一页的挂载活得长。这里只管怎么画 ——
@@ -4122,6 +4301,11 @@ textarea.dsh-git-input{resize:vertical}
         const key = 'c' + String(i)
         const exit = one.exitCode
         const sid = text(one.sessionId)
+        /* 面板执行（source === 'panel'）的行：右侧徽标画「面板」，不画会话号 —— 它
+           不是 AI 会话里跑的，会话号反而是噪音。退出码还空着的面板行是正在跑的：给
+           一个会动的省略号当「运行中」，结束时由推送（80-panel.js 的 live 订阅）补上
+           真退出码。 */
+        const fromPanel = one.source === 'panel'
         rows.push(h('div', {
           key: key,
           className: 'dsh-git-cmdline',
@@ -4145,9 +4329,14 @@ textarea.dsh-git-input{resize:vertical}
           typeof exit === 'number' && parseFloat(exit) > 0
             ? h('span', { key: 'e', className: 'dsh-git-cmdfail', title: '退出码 ' + String(parseInt(exit, 10)) }, '✗' + String(parseInt(exit, 10)))
             : null,
-          sid.length > 0
-            ? h('span', { key: 's', className: 'dsh-git-cmdsrc', title: '来自会话 ' + sid }, sid.slice(0, 8))
-            : null))
+          fromPanel === true && exit == null
+            ? h('span', { key: 'r', className: 'dsh-git-cmdrun', title: '执行中' }, '…')
+            : null,
+          fromPanel === true
+            ? h('span', { key: 's', className: 'dsh-git-cmdsrc dsh-git-cmdpanel', title: '来自 git 面板操作' }, '面板')
+            : (sid.length > 0
+              ? h('span', { key: 's', className: 'dsh-git-cmdsrc', title: '来自会话 ' + sid }, sid.slice(0, 8))
+              : null)))
         if (open[key] === true) {
           rows.push(h('div', { key: key + ':open', className: 'dsh-git-cmdopen' },
             /* pre-wrap：会话里一条命令带换行的地方，就是它本来换行的地方 */
@@ -4166,7 +4355,7 @@ textarea.dsh-git-input{resize:vertical}
       const bar = h('div', { key: 'bar', className: 'dsh-git-cmdbar' },
         h('button', {
           key: 'r', type: 'button', className: 'dsh-git-btn', disabled: loading,
-          title: '重新读一遍这个工作区的会话记录（不碰仓库）', onClick: props.onReload,
+          title: '重新读一遍这个工作区的会话记录与面板执行记录（不碰仓库）', onClick: props.onReload,
         }, '重新读取'),
         h('input', {
           key: 'f', className: 'dsh-git-cmdfilter',
@@ -4189,15 +4378,22 @@ textarea.dsh-git-input{resize:vertical}
 
       if (loading) {
         return h('div', { className: 'dsh-git-cmd' }, bar,
-          h('div', { key: 'w', className: 'dsh-git-pane dsh-git-dim' }, '正在读取会话记录…'))
+          h('div', { key: 'w', className: 'dsh-git-pane dsh-git-dim' }, '正在读取命令记录…'))
       }
+      /* 会话扫描那一路读不了、但面板记录给得出来时，Host 给的原话在这里照实说：
+         列表照常能用，但读者得知道少了一路。 */
+      const warning = log != null ? text(log.warning) : ''
+      const warningRow = warning.length > 0
+        ? h('div', { key: 'warn', className: 'dsh-git-pane dsh-git-dim', title: warning, style: { whiteSpace: 'pre-wrap' } },
+            '会话记录读不了：' + warning)
+        : null
       if (log != null && log.error != null) {
         /* ok:false 的原话（沙箱拒绝、没有 node、超时……）必须原样说出来 —— 折成
            空列表就成了「这个项目没跑过 git」，那是另一个问题的答案。 */
         return h('div', { className: 'dsh-git-cmd' }, bar,
           h('div', { key: 'e', className: 'dsh-git-pane dsh-git-error', style: { whiteSpace: 'pre-wrap' } }, log.error))
       }
-      return h('div', { className: 'dsh-git-cmd' }, bar,
+      return h('div', { className: 'dsh-git-cmd' }, bar, warningRow,
         h('div', { key: 'list', className: 'dsh-git-cmdlist' },
           commands.length === 0
             ? h('div', { key: 'empty', className: 'dsh-git-pane dsh-git-dim' }, '还没有执行过 git 命令')
@@ -5852,6 +6048,9 @@ textarea.dsh-git-input{resize:vertical}
       /* 在飞的那次读取的序号：连续两次「重新读取」时，旧答复不许翻盘（和
          repoEpoch 是同一个问题，见 10-state.js）。 */
       const [cmdLogBox] = React.useState(function () { return { seq: 0 } })
+      /* 推送合进列表后的长度上限：两次整读之间命令再多，列表也不无限长 —— 与
+         Host 侧一页的量级（limit 500）比留足了余量，截掉的只是最旧的尾巴。 */
+      const CMDLOG_LIVE_MAX = 600
       /* Which collapsed untracked directories are open, and what is inside the
          ones that have been read. Keyed by the directory's path; the read happens
          on the click that opens one, never for the whole tree up front. */
@@ -6359,6 +6558,9 @@ textarea.dsh-git-input{resize:vertical}
             sessionId: sessionId,
             commands: Array.isArray(data.commands) ? data.commands : [],
             truncated: data.truncated === true,
+            /* 会话扫描那一路读不了（没有 node、被沙箱拒了……）而面板记录给得出来时，
+               Host 把原话放在 warning 里随行 —— 折成空字段就成了没说过。 */
+            warning: text(data.warning),
           })
         }, function (failure) {
           if (seq !== cmdLogBox.seq) return
@@ -6366,6 +6568,42 @@ textarea.dsh-git-input{resize:vertical}
         })
         return undefined
       }, [tab, sessionId, cmdLog, props.ready])
+
+      /* ── 命令页的实时推送（真包的 client-pre.js 提供 liveBus；bridge 版没有，
+         typeof 守卫让它安静跳过，面板照旧靠整读）──
+
+         Host 在面板每次变更命令开始/结束时广播（77-cmdrec.js），这里把消息缝进手里
+         的列表：cmdlog-start 前插一条（只在已读过、且消息属于这个会话时），
+         cmdlog-exit 按 id 就地改退出码。整读（切会话、重新读取）照旧整表覆盖 ——
+         推送只负责两次整读之间的缝，不负责对账。 */
+      React.useEffect(function () {
+        if (typeof liveBus === 'undefined' || liveBus == null || typeof liveBus.subscribe !== 'function') return undefined
+        return liveBus.subscribe(function (message) {
+          if (message == null || typeof message !== 'object') return
+          setCmdLog(function (previous) {
+            if (previous == null || previous.sessionId !== sessionId) return previous
+            if (message.kind === 'cmdlog-start') {
+              const entry = message.entry
+              if (entry == null || typeof entry !== 'object' || entry.id == null) return previous
+              if (Array.isArray(previous.commands) !== true) return previous
+              const next = [entry].concat(previous.commands)
+              if (next.length > CMDLOG_LIVE_MAX) next.length = CMDLOG_LIVE_MAX
+              return Object.assign({}, previous, { commands: next })
+            }
+            if (message.kind === 'cmdlog-exit') {
+              if (Array.isArray(previous.commands) !== true) return previous
+              let moved = false
+              const next = previous.commands.map(function (one) {
+                if (one == null || one.id !== message.id) return one
+                moved = true
+                return Object.assign({}, one, { exitCode: typeof message.exitCode === 'number' ? message.exitCode : null })
+              })
+              return moved === true ? Object.assign({}, previous, { commands: next }) : previous
+            }
+            return previous
+          })
+        })
+      }, [sessionId])
 
       React.useEffect(function () {
         if (props.ready !== true) return undefined
@@ -8357,6 +8595,9 @@ textarea.dsh-git-input{resize:vertical}
       /* 「这个目录不是 Git 仓库」那一页没有路径框（路径不是问题，没什么可填的），
          所以这里也不再承诺「点击选择路径」—— 承诺一个点不到的东西比不承诺更坏。 */
       else if (info.reason === 'not-a-repo') title = where + ' 这个目录不是 Git 仓库 —— 点击查看'
+      /* 属主被 git 拒了：能自动修好的根本不会停在这个状态，标题里就别再说成
+         「不是仓库」—— 仓库明明就在那里。 */
+      else if (info.reason === 'unsafe-owner') title = where + ' 的目录属主不同，git 拒绝读取 —— 点击查看'
       else if (info.reason === '') title = 'Git —— 点击打开面板'
       else title = where + ' 读不动这个目录 —— 点击查看'
 
@@ -8538,6 +8779,16 @@ textarea.dsh-git-input{resize:vertical}
         return slots.register({ name: 'settings.section', id: 'dsh-git-idea', order: 30, label: SETTINGS_NAV_LABEL }, GitSettingsSection)
       })
     }, 'dsh-git-idea settings section')
+
+    /* host→client 的实时通道（真包的 client-pre.js 提供 liveBus）：插件活着连接就活着，
+       插件卸载连接断开。bridge 版没有 liveBus（也没有 WS 路由可连），typeof 守卫让它
+       安静跳过 —— 面板的一切照旧走轮询。 */
+    ctx.effect(function () {
+      if (typeof liveBus !== 'undefined' && liveBus != null && typeof liveBus.open === 'function') liveBus.open()
+      return function () {
+        if (typeof liveBus !== 'undefined' && liveBus != null && typeof liveBus.close === 'function') liveBus.close()
+      }
+    }, 'dsh-git-idea live connection')
   },
 }
     })()

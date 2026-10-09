@@ -33,6 +33,7 @@ export const TARGETS = [
       'src/host/72-gitbin.js',
       'src/host/74-identity.js',
       'src/host/76-cmdlog.js',
+      'src/host/77-cmdrec.js',
       'src/host/78-actions.js',
       'src/host/80-rpc.js',
     ],

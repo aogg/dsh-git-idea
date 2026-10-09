@@ -217,7 +217,11 @@ async function previousBranch(input) {
    the error is reported, because leaving someone's edits in a stash they never
    asked for is worse than the failed switch. A pop that conflicts is not hidden
    either — git keeps the stash entry in that case, and the caller says so. */
-async function switchBranch(input, name) {
+/* desc 是「命令」页（77-cmdrec.js）给这次切换起的中文名，由 RPC 调用点（80-rpc.js）
+   传入。这里不经 panelMutate —— 答复的形状（stashed/dirty/popConflict…）是客户端
+   专门消费的 —— 所以它手里的四次变更 git 调用各自用 cmdrecGit 包上记录；开头那次
+   status 是读，不记。 */
+async function switchBranch(input, name, desc) {
   const args = argsFor(input)
   const requested = repoFrom(input, null)
   const finish = function (result, extra) {
@@ -232,9 +236,12 @@ async function switchBranch(input, name) {
     out.sandboxDenied = result.sandboxDenied === true
     return out
   }
+  const mutate = function (argv) {
+    return cmdrecGit(input, desc, argv, function () { return git(args, argv, null, {}) })
+  }
 
   if (input == null || input.stash !== true) {
-    const moved = await git(args, ['switch', name], null, {})
+    const moved = await mutate(['switch', name])
     return finish(moved, { stashed: false, dirty: 0, popConflict: false })
   }
 
@@ -248,19 +255,19 @@ async function switchBranch(input, name) {
 
   let stashed = false
   if (dirty > 0 && before.exitCode === 0) {
-    const saved = await git(args, ['stash', 'push', '-u', '-m', 'dsh-git-idea: switch to ' + name], null, {})
+    const saved = await mutate(['stash', 'push', '-u', '-m', 'dsh-git-idea: switch to ' + name])
     if (saved.exitCode !== 0) {
       return finish(saved, { stashed: false, dirty: dirty, popConflict: false, error: 'stash-failed' })
     }
     stashed = true
   }
 
-  const moved = await git(args, ['switch', name], null, {})
+  const moved = await mutate(['switch', name])
   if (moved.exitCode !== 0) {
     let restored = false
     let restoreError = ''
     if (stashed) {
-      const back = await git(args, ['stash', 'pop'], null, {})
+      const back = await mutate(['stash', 'pop'])
       restored = back.exitCode === 0
       restoreError = restored ? '' : back.stderr
     }
@@ -274,7 +281,7 @@ async function switchBranch(input, name) {
   let popStdout = ''
   let popStderr = ''
   if (stashed) {
-    const popped = await git(args, ['stash', 'pop'], null, {})
+    const popped = await mutate(['stash', 'pop'])
     popConflict = popped.exitCode !== 0
     /* Which stream git chooses is not stable — a conflicting pop narrates the
        merge on stdout and the failure on stderr — so both travel and the caller

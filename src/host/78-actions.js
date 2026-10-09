@@ -26,7 +26,9 @@
 
 const SQUASH_STDOUT_MAX = 2000
 
-async function squashRun(input) {
+/* desc：这次 RPC 在「命令」页（77-cmdrec.js）里的中文名，由 80-rpc.js 的调用点传入，
+   一路转给内部每次真正的 git 执行（压缩是多步改写，每一步都记，归属同一个名字）。 */
+async function squashRun(input, desc) {
   const base = input != null && isStr(input.base) ? input.base.trim() : ''
   const message = input != null && isStr(input.message) ? input.message.trim() : ''
   const expect = input != null && isStr(input.expect) ? input.expect.trim() : ''
@@ -82,13 +84,13 @@ async function squashRun(input) {
      之后的一切当 pathspec，`reset --soft -- <sha>` 只会得到 fatal: Cannot do soft
      reset with paths（hard 款同理）—— base 是图读给的全十六进制父提交 hash，不是
      路径，本来就没有歧义要防。 */
-  const reset = await panelMutate(input, ['reset', '--soft', base])
+  const reset = await panelMutate(input, ['reset', '--soft', base], { desc: desc })
   if (reset.ok !== true) return reset
-  const commit = await commitMutation(input, ['commit', '-m', message])
+  const commit = await commitMutation(input, ['commit', '-m', message], { desc: desc })
   if (commit.ok === true) return commit
 
   /* 5. commit 没成：把分支 soft reset 回压缩前的 HEAD，成没成都要说清楚。 */
-  const rollback = await panelMutate(input, ['reset', '--soft', preHead])
+  const rollback = await panelMutate(input, ['reset', '--soft', preHead], { desc: desc })
   const said = isStr(commit.stderr) ? commit.stderr.replace(/\s+$/, '').slice(0, 400) : ''
   const story = rollback.ok === true
     ? '压缩里的 commit 这一步失败了，已把分支 soft reset 回压缩前的 ' + preHead.slice(0, 12)
@@ -123,7 +125,7 @@ async function squashRun(input) {
  *   3. hard reset 到 base。成功答复附加 preHead（删除前的 HEAD）：被删的提交在
  *      reflog 里还有约 30 天，`git reset --hard <preHead>` 是唯一的找回通道，必须
  *      随成功一起送到读者眼前。 */
-async function dropRun(input) {
+async function dropRun(input, desc) {
   const base = input != null && isStr(input.base) ? input.base.trim() : ''
   const expect = input != null && isStr(input.expect) ? input.expect.trim() : ''
   if (base.length === 0) return { ok: false, error: 'a base commit is required' }
@@ -167,7 +169,7 @@ async function dropRun(input) {
   /* 3. hard reset：段连提交带改动一起从分支尖端消失。base 前不放 '--'，原因同上：
      git 把 '--' 之后的一切当 pathspec，`reset --hard -- <sha>` 会被 fatal: Cannot
      do hard reset with paths 拒掉；base 是全十六进制的父提交 hash，不是路径。 */
-  const reset = await panelMutate(input, ['reset', '--hard', base])
+  const reset = await panelMutate(input, ['reset', '--hard', base], { desc: desc })
   if (reset.ok !== true) return reset
   return Object.assign({}, reset, { preHead: preHead })
 }
@@ -193,14 +195,19 @@ function quickClip(value) {
   return { text: raw.slice(raw.length - QUICK_CLIP), truncated: true }
 }
 
-async function quickRun(input) {
+async function quickRun(input, desc) {
   const command = input != null && isStr(input.command) ? input.command.trim() : ''
   if (command.length === 0) return { ok: false, error: 'a command is required' }
   if (command.length > QUICK_COMMAND_MAX) {
     return { ok: false, error: 'command-too-long', stderr: '命令太长（' + String(command.length) + ' 字符，上限 ' + String(QUICK_COMMAND_MAX) + '）' }
   }
-  const run = await invoke(command + '\n', argsAt(input, repoFrom(input)), null, QUICK_TIMEOUT)
-  invalidateRepo(repoFrom(input))
+  const requested = repoFrom(input, null)
+  /* 快捷命令不走 panelMutate（它执行的是读者写的整条命令行，不限于 git），但同样是
+     面板发起的变更 —— 记进「命令」页（77-cmdrec.js），展示串就是读者写的那条。 */
+  const record = cmdrecBegin(input, desc, command, requested)
+  const run = await invoke(command + '\n', argsAt(input, requested), null, QUICK_TIMEOUT)
+  cmdrecFinish(record, run.exitCode)
+  invalidateRepo(requested)
   const out = quickClip(run.stdout)
   const err = quickClip(run.stderr)
   return {
@@ -231,16 +238,16 @@ async function quickRun(input) {
  * stash 不破坏任何东西：`push -m <说明> -- <paths>` 只把勾选的路径收进 stash 栈，
  * `git stash pop` 就能拿回来。说明由客户端写好带来（带个数，`git stash list` 里认得出
  * 是哪一次）；缺了就让 git 自己写它的 WIP 句子 —— 这不是一个值得拒绝读者的错误。 */
-async function restoreRun(input) {
+async function restoreRun(input, desc) {
   const paths = panelPaths(input)
   if (paths.length === 0) return { ok: false, error: 'no paths given' }
-  return panelMutate(input, ['restore', '--source=HEAD', '--staged', '--worktree', '--'].concat(paths))
+  return panelMutate(input, ['restore', '--source=HEAD', '--staged', '--worktree', '--'].concat(paths), { desc: desc })
 }
 
-async function stashRun(input) {
+async function stashRun(input, desc) {
   const paths = panelPaths(input)
   if (paths.length === 0) return { ok: false, error: 'no paths given' }
   const message = input != null && isStr(input.message) ? input.message.trim() : ''
   const said = message.length > 0 ? ['-m', message] : []
-  return panelMutate(input, ['stash', 'push'].concat(said, ['--'], paths))
+  return panelMutate(input, ['stash', 'push'].concat(said, ['--'], paths), { desc: desc })
 }

@@ -183,10 +183,25 @@ async function git(args, argv, exec, options) {
   return await shellGit('', args, argv, exec, options)
 }
 
-/* Network commands must never sit waiting for a credential prompt: the panel has
-   no terminal to answer one, so the call would hang until its timeout fires. */
+/* 网络命令必须先回答两个「与仓库无关」的问题，然后才轮到 git：凭据（没有终端可
+   以弹提示，等着只会超时）和主机指纹（known_hosts 里没有的机器，ssh 想问「是否
+   信任」，面板同样没有地方让它问 —— 报出来的是一句 Host key verification failed，
+   说的像是仓库的毛病）。
+
+   指纹这一问有一条不牺牲安全的出路：StrictHostKeyChecking=accept-new 只把「第一次
+   见到的主机」自动收下并写进 known_hosts，已登记主机的 key 变了照样拒绝（那正是
+   中间人攻击的形状，不该被自动放过）。但 ssh 命令是读者自己配得动的东西
+   （GIT_SSH_COMMAND 环境变量、core.sshCommand 配置），人家配了就一个字节都不碰 ——
+   所以这段回退只在两者都空着时才 export。它长在 gitGuard 的 `command -v` 行之后：
+   `git config --get` 得先知道 git 在哪；配置读不出来（输出为空）按「没有配置」算，
+   环境变量也一样 —— 宁可多收一次主机 key，不能把读者自己配的 ssh 命令盖掉。 */
+function sshFallbackLine() {
+  return 'if [ -z "${GIT_SSH_COMMAND:-}" ] && [ -z "$(' + gitCmd() + ' config --get core.sshCommand 2>/dev/null)" ]; then '
+    + 'export GIT_SSH_COMMAND=' + shq('ssh -o StrictHostKeyChecking=accept-new') + '; fi\n'
+}
+
 async function gitNet(args, argv, exec, options) {
-  return await shellGit('GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true ', args, argv, exec, options)
+  return await shellGit(sshFallbackLine() + 'GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true ', args, argv, exec, options)
 }
 
 /* for-each-ref's %(upstream:track) is the one atom git translates. The switcher

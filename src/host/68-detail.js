@@ -243,7 +243,12 @@ async function panelMutate(input, argv, options) {
   const opts = options == null ? {} : options
   const requested = repoFrom(input, null)
   const runner = opts.net === true ? gitNet : git
+  /* 面板的变更执行进「命令」页（77-cmdrec.js）：开始先记一笔（运行中），结束补退出码。
+     展示串与 result.command 同一个式子 —— gitExe 在处理函数跑之前就定好了（见 80-rpc.js
+     的 onRpc），先后一致。 */
+  const record = cmdrecBegin(input, opts.desc, gitExe + ' ' + argv.join(' '), requested)
   const result = await runner(argsFor(input), argv, null, opts.spawn == null ? {} : opts.spawn)
+  cmdrecFinish(record, result.exitCode)
   /* Unconditionally, not only on success: a conflicting cherry-pick, merge or
      revert changes the index and the working tree and then exits non-zero, so
      gating on exitCode === 0 would leave the panel showing the pre-conflict

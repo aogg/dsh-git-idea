@@ -160,7 +160,7 @@ async function writeConfigFile(raw, args) {
   }
 }
 
-async function initSnapshot(input) {
+async function initSnapshot(input, desc) {
   const target = repoFrom(input, null)
   if (target === undefined) return { ok: false, error: 'no-path', stderr: '无法确定要初始化的目录', repo: null }
   const kind = await pathKind(input, target)
@@ -174,9 +174,10 @@ async function initSnapshot(input) {
   /* Through `argsAt`, so the session id survives: `git init` is a write, and a
      request that loses its session runs under the deployment's default sandbox
      policy rather than this reader's — which is a "Permission denied" on a
-     directory the reader can write to perfectly well. */
+     directory the reader can write to perfectly well. desc 是「命令」页（77-cmdrec.js）
+     的中文名，由 RPC 调用点传入。 */
   const args = argsAt(input, target)
-  if (branch.length > 0) return await panelMutate(args, ['init', '-b', branch])
-  return await panelMutate(args, ['init'])
+  if (branch.length > 0) return await panelMutate(args, ['init', '-b', branch], { desc: desc })
+  return await panelMutate(args, ['init'], { desc: desc })
 }
 

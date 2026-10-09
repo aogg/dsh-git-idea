@@ -19,7 +19,7 @@ function onRpc(name, handler) {
 
 onRpc('git/panel', function (input) { return panelSnapshot(input) })
 
-onRpc('git/init', function (input) { return initSnapshot(input) })
+onRpc('git/init', function (input) { return initSnapshot(input, '初始化仓库') })
 
 /* The client's refresh button must be able to force a re-read; without this it
    would only repaint whatever the read cache already held. */
@@ -98,24 +98,27 @@ onRpc('git/diff', function (input) { return readFileDiff(input) })
    inside it, asked for only when the reader opens that row. */
 onRpc('git/untracked', function (input) { return readUntrackedTree(input) })
 
+/* 变更类 RPC 各自带一个中文名（desc），随 panelMutate / quickRun 记进「命令」页
+   （77-cmdrec.js）—— 那一页的描述列说的就是它。读类的 RPC 不带：读不记录，否则
+   watcher 每 3 秒一刷，整页都是噪音。 */
 onRpc('git/stage', function (input) {
   const paths = panelPaths(input)
   if (paths.length === 0) return { ok: false, error: 'no paths given' }
-  return panelMutate(input, ['add', '--'].concat(paths))
+  return panelMutate(input, ['add', '--'].concat(paths), { desc: '暂存' })
 })
 
 onRpc('git/unstage', function (input) {
   const paths = panelPaths(input)
   if (paths.length === 0) return { ok: false, error: 'no paths given' }
-  return panelMutate(input, ['restore', '--staged', '--'].concat(paths))
+  return panelMutate(input, ['restore', '--staged', '--'].concat(paths), { desc: '取消暂存' })
 })
 
 /* 变更页「默认变更列表」工具条的还原与暂存（78-actions.js 的 restoreRun/stashRun）。
     与上面 stage/unstage 同一条 panelMutate 路：读缓存的无条件失效对它们同样是必须的
     —— restore 连工作区一起动了，stash 则把路径连同索引里的那份一起收走。 */
-onRpc('git/restore', function (input) { return restoreRun(input) })
+onRpc('git/restore', function (input) { return restoreRun(input, '还原改动') })
 
-onRpc('git/stash', function (input) { return stashRun(input) })
+onRpc('git/stash', function (input) { return stashRun(input, '收起改动(stash)') })
 
 /* A failed commit is the one mutation whose failure can be about this machine
    instead of about the repository: git will not author a commit until it knows
@@ -138,13 +141,14 @@ async function commitMutation(input, argv, options) {
 onRpc('git/commit', function (input) {
   const message = input != null && isStr(input.message) ? input.message.trim() : ''
   if (message.length === 0) return { ok: false, error: 'a commit message is required' }
+  /* stageAll 的 add -A 与 commit 同属「提交」这一次操作，名字也跟着同一条。 */
   if (input != null && input.stageAll === true) {
-    return panelMutate(input, ['add', '-A']).then(function (staged) {
+    return panelMutate(input, ['add', '-A'], { desc: '提交' }).then(function (staged) {
       if (staged.ok !== true) return staged
-      return commitMutation(input, ['commit', '-m', message])
+      return commitMutation(input, ['commit', '-m', message], { desc: '提交' })
     })
   }
-  return commitMutation(input, ['commit', '-m', message])
+  return commitMutation(input, ['commit', '-m', message], { desc: '提交' })
 })
 
 onRpc('git/checkout', async function (input) {
@@ -158,7 +162,7 @@ onRpc('git/checkout', async function (input) {
     target = await previousBranch(input)
     if (target.length === 0) return { ok: false, error: 'there is no previous branch to switch back to' }
   }
-  return await switchBranch(input, target)
+  return await switchBranch(input, target, '切换分支')
 })
 
 const NET_SPAWN = { timeoutMs: 180000 }
@@ -175,13 +179,13 @@ async function netConfig() {
 
 onRpc('git/fetch', async function (input) {
   const config = await netConfig()
-  return panelMutate(input, config.fetchPrune === true ? ['fetch', '--all', '--prune'] : ['fetch', '--all'], { net: true, spawn: NET_SPAWN })
+  return panelMutate(input, config.fetchPrune === true ? ['fetch', '--all', '--prune'] : ['fetch', '--all'], { net: true, spawn: NET_SPAWN, desc: '取回' })
 })
 
 onRpc('git/pull', async function (input) {
   const config = await netConfig()
   /* A pull that merges writes a commit, so the identity can be what failed. */
-  return commitMutation(input, config.pullRebase === true ? ['pull', '--rebase'] : ['pull'], { net: true, spawn: NET_SPAWN })
+  return commitMutation(input, config.pullRebase === true ? ['pull', '--rebase'] : ['pull'], { net: true, spawn: NET_SPAWN, desc: '拉取' })
 })
 
 onRpc('git/push', function (input) {
@@ -190,9 +194,9 @@ onRpc('git/push', function (input) {
     const branch = input != null && isStr(input.branch) ? input.branch.trim() : ''
     if (remote.length === 0) return { ok: false, error: 'no remote is configured to push to' }
     if (branch.length === 0) return { ok: false, error: 'a branch is required to set an upstream' }
-    return panelMutate(input, ['push', '-u', remote, branch], { net: true, spawn: NET_SPAWN })
+    return panelMutate(input, ['push', '-u', remote, branch], { net: true, spawn: NET_SPAWN, desc: '推送' })
   }
-  return panelMutate(input, ['push'], { net: true, spawn: NET_SPAWN })
+  return panelMutate(input, ['push'], { net: true, spawn: NET_SPAWN, desc: '推送' })
 })
 
 /* cherry-pick, revert and merge share one entry point because they also share
@@ -205,26 +209,29 @@ onRpc('git/sequence', function (input) {
   const action = input != null && isStr(input.action) ? input.action : ''
   const target = input != null && isStr(input.target) ? input.target.trim() : ''
   if (SEQUENCER_OPS.indexOf(op) < 0) return { ok: false, error: 'unknown operation ' + op }
+  /* 拣选 / 还原 / 合并三件事共用一个入口，命令页里也共用一个名字 —— 读者在那一页
+     认操作，不认 argv 的拼写。 */
+  const said = '拣选·还原·合并'
 
   if (op === 'merge') {
     if (action === 'start') {
       if (target.length === 0) return { ok: false, error: 'a branch or commit is required to merge' }
-      return commitMutation(input, ['merge', '--no-edit', target])
+      return commitMutation(input, ['merge', '--no-edit', target], { desc: said })
     }
-    if (action === 'continue') return commitMutation(input, ['commit', '--no-edit'])
-    if (action === 'abort') return panelMutate(input, ['merge', '--abort'])
+    if (action === 'continue') return commitMutation(input, ['commit', '--no-edit'], { desc: said })
+    if (action === 'abort') return panelMutate(input, ['merge', '--abort'], { desc: said })
     return { ok: false, error: 'merge supports start, continue and abort' }
   }
 
   if (action === 'start') {
     if (target.length === 0) return { ok: false, error: 'a commit is required' }
-    if (op === 'revert') return commitMutation(input, ['revert', '--no-edit', target])
-    if (input != null && input.record === true) return commitMutation(input, ['cherry-pick', '-x', target])
-    return commitMutation(input, ['cherry-pick', target])
+    if (op === 'revert') return commitMutation(input, ['revert', '--no-edit', target], { desc: said })
+    if (input != null && input.record === true) return commitMutation(input, ['cherry-pick', '-x', target], { desc: said })
+    return commitMutation(input, ['cherry-pick', target], { desc: said })
   }
-  if (action === 'continue') return commitMutation(input, ['-c', 'core.editor=true', op, '--continue'])
-  if (action === 'abort') return panelMutate(input, [op, '--abort'])
-  if (action === 'skip') return panelMutate(input, [op, '--skip'])
+  if (action === 'continue') return commitMutation(input, ['-c', 'core.editor=true', op, '--continue'], { desc: said })
+  if (action === 'abort') return panelMutate(input, [op, '--abort'], { desc: said })
+  if (action === 'skip') return panelMutate(input, [op, '--skip'], { desc: said })
   return { ok: false, error: op + ' does not support ' + action }
 })
 
@@ -232,34 +239,34 @@ onRpc('git/branch-create', function (input) {
   const name = input != null && isStr(input.name) ? input.name.trim() : ''
   if (name.length === 0) return { ok: false, error: 'a branch name is required' }
   const at = input != null && isStr(input.at) ? input.at.trim() : ''
-  if (at.length > 0) return panelMutate(input, ['switch', '-c', name, at])
-  return panelMutate(input, ['switch', '-c', name])
+  if (at.length > 0) return panelMutate(input, ['switch', '-c', name, at], { desc: '新建分支' })
+  return panelMutate(input, ['switch', '-c', name], { desc: '新建分支' })
 })
 
 onRpc('git/branch-delete', function (input) {
   const name = input != null && isStr(input.name) ? input.name.trim() : ''
   if (name.length === 0) return { ok: false, error: 'a branch name is required' }
   const force = input != null && input.force === true
-  return panelMutate(input, ['branch', force ? '-D' : '-d', name])
+  return panelMutate(input, ['branch', force ? '-D' : '-d', name], { desc: '删除分支' })
 })
 
 onRpc('git/tag', function (input) {
   const name = input != null && isStr(input.name) ? input.name.trim() : ''
   if (name.length === 0) return { ok: false, error: 'a tag name is required' }
   const at = input != null && isStr(input.at) ? input.at.trim() : ''
-  if (at.length > 0) return panelMutate(input, ['tag', name, at])
-  return panelMutate(input, ['tag', name])
+  if (at.length > 0) return panelMutate(input, ['tag', name, at], { desc: '打标签' })
+  return panelMutate(input, ['tag', name], { desc: '打标签' })
 })
 
 /* 压缩、删除与快捷命令（78-actions.js）：压缩是多步改写（身份预检 → 防呆 → 干净
    检查 → soft reset → commit，失败兜底回滚）；删除是它的 hard 款（防呆 → 干净检查
    → hard reset，成功答复带删除前 HEAD 供找回）；快捷命令把读者自定义的命令行原样
    交给会话沙箱里的 shell。 */
-onRpc('git/squash', function (input) { return squashRun(input) })
+onRpc('git/squash', function (input) { return squashRun(input, '压缩提交') })
 
-onRpc('git/drop', function (input) { return dropRun(input) })
+onRpc('git/drop', function (input) { return dropRun(input, '删除提交') })
 
-onRpc('git/quick', function (input) { return quickRun(input) })
+onRpc('git/quick', function (input) { return quickRun(input, '快捷命令') })
 
   },
 }

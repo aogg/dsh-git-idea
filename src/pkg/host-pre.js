@@ -9,6 +9,16 @@
    dynamic bridge loads — one body, two builds — and host-post.js exports the
    plugin object. */
 
+/* node:crypto 只有真包这一半用得上（WebSocket 握手的 Sec-WebSocket-Accept），而
+   import 只能放在拼接后的文件头 —— host-post.js 在文件中部，放 import 是语法错误。 */
+import crypto from 'node:crypto'
+
+/* 面板到浏览器的实时推送（77-cmdrec.js 的 cmdlog-start / cmdlog-exit）汇聚在这个
+   对象上：body 片段只认它。默认是一个 no-op —— bridge 版没有 pkg 层，liveSend 里
+   的 typeof 守卫本来就不会走到这里；upgrade 路由（host-post.js）注册成功后才把它
+   换成真正的广播，卸载时还原。 */
+const liveHub = { sockets: new Set(), send: function () {} }
+
 /* The one route the browser half calls: same origin as the page, so no CORS.
    The same-origin check below is what keeps another page on loopback from
    driving git in this reader's working directory. */

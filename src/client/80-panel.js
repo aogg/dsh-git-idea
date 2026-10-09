@@ -135,6 +135,9 @@
       /* 在飞的那次读取的序号：连续两次「重新读取」时，旧答复不许翻盘（和
          repoEpoch 是同一个问题，见 10-state.js）。 */
       const [cmdLogBox] = React.useState(function () { return { seq: 0 } })
+      /* 推送合进列表后的长度上限：两次整读之间命令再多，列表也不无限长 —— 与
+         Host 侧一页的量级（limit 500）比留足了余量，截掉的只是最旧的尾巴。 */
+      const CMDLOG_LIVE_MAX = 600
       /* Which collapsed untracked directories are open, and what is inside the
          ones that have been read. Keyed by the directory's path; the read happens
          on the click that opens one, never for the whole tree up front. */
@@ -642,6 +645,9 @@
             sessionId: sessionId,
             commands: Array.isArray(data.commands) ? data.commands : [],
             truncated: data.truncated === true,
+            /* 会话扫描那一路读不了（没有 node、被沙箱拒了……）而面板记录给得出来时，
+               Host 把原话放在 warning 里随行 —— 折成空字段就成了没说过。 */
+            warning: text(data.warning),
           })
         }, function (failure) {
           if (seq !== cmdLogBox.seq) return
@@ -649,6 +655,42 @@
         })
         return undefined
       }, [tab, sessionId, cmdLog, props.ready])
+
+      /* ── 命令页的实时推送（真包的 client-pre.js 提供 liveBus；bridge 版没有，
+         typeof 守卫让它安静跳过，面板照旧靠整读）──
+
+         Host 在面板每次变更命令开始/结束时广播（77-cmdrec.js），这里把消息缝进手里
+         的列表：cmdlog-start 前插一条（只在已读过、且消息属于这个会话时），
+         cmdlog-exit 按 id 就地改退出码。整读（切会话、重新读取）照旧整表覆盖 ——
+         推送只负责两次整读之间的缝，不负责对账。 */
+      React.useEffect(function () {
+        if (typeof liveBus === 'undefined' || liveBus == null || typeof liveBus.subscribe !== 'function') return undefined
+        return liveBus.subscribe(function (message) {
+          if (message == null || typeof message !== 'object') return
+          setCmdLog(function (previous) {
+            if (previous == null || previous.sessionId !== sessionId) return previous
+            if (message.kind === 'cmdlog-start') {
+              const entry = message.entry
+              if (entry == null || typeof entry !== 'object' || entry.id == null) return previous
+              if (Array.isArray(previous.commands) !== true) return previous
+              const next = [entry].concat(previous.commands)
+              if (next.length > CMDLOG_LIVE_MAX) next.length = CMDLOG_LIVE_MAX
+              return Object.assign({}, previous, { commands: next })
+            }
+            if (message.kind === 'cmdlog-exit') {
+              if (Array.isArray(previous.commands) !== true) return previous
+              let moved = false
+              const next = previous.commands.map(function (one) {
+                if (one == null || one.id !== message.id) return one
+                moved = true
+                return Object.assign({}, one, { exitCode: typeof message.exitCode === 'number' ? message.exitCode : null })
+              })
+              return moved === true ? Object.assign({}, previous, { commands: next }) : previous
+            }
+            return previous
+          })
+        })
+      }, [sessionId])
 
       React.useEffect(function () {
         if (props.ready !== true) return undefined

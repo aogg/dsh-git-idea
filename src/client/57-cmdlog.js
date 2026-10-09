@@ -1,9 +1,10 @@
     /* ── 面板「命令」页：这个工作区里执行过的 git 命令 ──
 
-       数据源不是仓库，而是 DSH 自己的会话记录（Host 侧 76-cmdlog.js 扫
-       `$DSH_HOME/sessions/<工作区 slug>/…` 里的 bash 调用），所以这一页是纯只读
-       展示：不碰索引、不碰引用，连一个 git 进程都不起 —— 「重新读取」重读的也是
-       会话文件，不是仓库。
+       数据源是会话记录 + 面板执行记录两路（Host 在出口合成一份，host 侧 76-cmdlog.js
+       与 77-cmdrec.js）：前者扫 `$DSH_HOME/sessions/<工作区 slug>/…` 里的 bash 调用，
+       后者是面板自己经 RPC 跑的 git（source === 'panel'，右侧徽标画成「面板」）。所以
+       这一页是纯只读展示：不碰索引、不碰引用，连一个 git 进程都不起 —— 「重新读取」
+       重读的也是记录，不是仓库。
 
        读数的生死放在 GitPanel（80-panel.js）而不是这里：这一页要「第一次切到才
        读、切走再切回不重读」，列表得比这一页的挂载活得长。这里只管怎么画 ——
@@ -98,6 +99,11 @@
         const key = 'c' + String(i)
         const exit = one.exitCode
         const sid = text(one.sessionId)
+        /* 面板执行（source === 'panel'）的行：右侧徽标画「面板」，不画会话号 —— 它
+           不是 AI 会话里跑的，会话号反而是噪音。退出码还空着的面板行是正在跑的：给
+           一个会动的省略号当「运行中」，结束时由推送（80-panel.js 的 live 订阅）补上
+           真退出码。 */
+        const fromPanel = one.source === 'panel'
         rows.push(h('div', {
           key: key,
           className: 'dsh-git-cmdline',
@@ -121,9 +127,14 @@
           typeof exit === 'number' && parseFloat(exit) > 0
             ? h('span', { key: 'e', className: 'dsh-git-cmdfail', title: '退出码 ' + String(parseInt(exit, 10)) }, '✗' + String(parseInt(exit, 10)))
             : null,
-          sid.length > 0
-            ? h('span', { key: 's', className: 'dsh-git-cmdsrc', title: '来自会话 ' + sid }, sid.slice(0, 8))
-            : null))
+          fromPanel === true && exit == null
+            ? h('span', { key: 'r', className: 'dsh-git-cmdrun', title: '执行中' }, '…')
+            : null,
+          fromPanel === true
+            ? h('span', { key: 's', className: 'dsh-git-cmdsrc dsh-git-cmdpanel', title: '来自 git 面板操作' }, '面板')
+            : (sid.length > 0
+              ? h('span', { key: 's', className: 'dsh-git-cmdsrc', title: '来自会话 ' + sid }, sid.slice(0, 8))
+              : null)))
         if (open[key] === true) {
           rows.push(h('div', { key: key + ':open', className: 'dsh-git-cmdopen' },
             /* pre-wrap：会话里一条命令带换行的地方，就是它本来换行的地方 */
@@ -142,7 +153,7 @@
       const bar = h('div', { key: 'bar', className: 'dsh-git-cmdbar' },
         h('button', {
           key: 'r', type: 'button', className: 'dsh-git-btn', disabled: loading,
-          title: '重新读一遍这个工作区的会话记录（不碰仓库）', onClick: props.onReload,
+          title: '重新读一遍这个工作区的会话记录与面板执行记录（不碰仓库）', onClick: props.onReload,
         }, '重新读取'),
         h('input', {
           key: 'f', className: 'dsh-git-cmdfilter',
@@ -165,15 +176,22 @@
 
       if (loading) {
         return h('div', { className: 'dsh-git-cmd' }, bar,
-          h('div', { key: 'w', className: 'dsh-git-pane dsh-git-dim' }, '正在读取会话记录…'))
+          h('div', { key: 'w', className: 'dsh-git-pane dsh-git-dim' }, '正在读取命令记录…'))
       }
+      /* 会话扫描那一路读不了、但面板记录给得出来时，Host 给的原话在这里照实说：
+         列表照常能用，但读者得知道少了一路。 */
+      const warning = log != null ? text(log.warning) : ''
+      const warningRow = warning.length > 0
+        ? h('div', { key: 'warn', className: 'dsh-git-pane dsh-git-dim', title: warning, style: { whiteSpace: 'pre-wrap' } },
+            '会话记录读不了：' + warning)
+        : null
       if (log != null && log.error != null) {
         /* ok:false 的原话（沙箱拒绝、没有 node、超时……）必须原样说出来 —— 折成
            空列表就成了「这个项目没跑过 git」，那是另一个问题的答案。 */
         return h('div', { className: 'dsh-git-cmd' }, bar,
           h('div', { key: 'e', className: 'dsh-git-pane dsh-git-error', style: { whiteSpace: 'pre-wrap' } }, log.error))
       }
-      return h('div', { className: 'dsh-git-cmd' }, bar,
+      return h('div', { className: 'dsh-git-cmd' }, bar, warningRow,
         h('div', { key: 'list', className: 'dsh-git-cmdlist' },
           commands.length === 0
             ? h('div', { key: 'empty', className: 'dsh-git-pane dsh-git-dim' }, '还没有执行过 git 命令')
