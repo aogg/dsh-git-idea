@@ -4413,11 +4413,11 @@ textarea.dsh-git-input{resize:vertical}
     /* ── the diff's right rail: the list this patch came from ──
 
        补丁回答的是一个文件，而点开它的那个列表（一次提交的文件、变更页的改动）
-       几乎从来不止一个文件 —— 退回去再点下一个是两步，右列把它并成一步。提交
-       那一路用 CommitDetail 同一棵树（同一套 buildTree/flattenTree、同一个
-       '@files' 前缀：在详情里折起来的目录，右列里仍然折着）；变更那一路用扁平
-       列表，行尾带上 暂存/未跟踪 的标记（状态字母复用 statusClass/statusLabel，
-       和变更页是同一个读法）。 */
+       几乎从来不止一个文件 —— 退回去再点下一个是两步，右列把它并成一步。两路
+       都走 CommitDetail 同一棵树（同一套 buildTree/flattenTree、同一个
+       '@files' 前缀：在详情里折起来的目录，右列里仍然折着）；变更那一路的叶子
+       行尾仍带上 暂存/未跟踪 的标记（状态字母复用 statusClass/statusLabel，和
+       变更页是同一个读法），git 折叠的未跟踪目录不进树。 */
 
     function DiffFileRail(props) {
       const rail = props.rail
@@ -4470,30 +4470,43 @@ textarea.dsh-git-input{resize:vertical}
             h('span', { className: 'dsh-git-tname' }, node.name)))
         }
       } else {
-        /* 变更那一路：扁平列表，名字在前、目录压暗跟在后面 —— 240px 的列里先铺
-           整条路径的话，行尾裁掉的正好是文件名（54-changes.js 扁平视图同理）。
-           git 折叠成一条的未跟踪目录（路径以 / 结尾）不是文件，点它也没有差异，
-           不给行。 */
+        /* 变更那一路：和提交那一路走同一棵树（同一套 buildTree/flattenTree、
+           同一个 '@files' 前缀），只有叶子行不同 —— 行尾仍带 暂存/未跟踪/未暂存
+           的标记，目录已经画在树上了，行内不再铺目录压暗。git 折叠成一条的未
+           跟踪目录（路径以 / 结尾）不是文件，点它也没有差异，不进树。 */
         title = '变更文件'
+        const entries = []
         const sorted = rail.changes.slice()
         sorted.sort(function (a, b) { return a.path < b.path ? -1 : (a.path > b.path ? 1 : 0) })
         for (let i = 0; i < sorted.length; i += 1) {
           const entry = sorted[i]
           const path = text(entry.path)
           if (path.length === 0 || path.slice(-1) === '/') continue
-          const cut = path.lastIndexOf('/')
+          entries.push({ segments: path.split('/'), data: entry })
+        }
+        const tree = buildTree(entries)
+        const flat = flattenTree(tree, 0, '@files', props.collapsed, [], '@files')
+        for (let i = 0; i < flat.length; i += 1) {
+          const node = flat[i]
+          if (node.kind === 'dir') {
+            rows.push(treeDirRow(node, dirHandle, String(node.count) + ' 个文件'))
+            continue
+          }
+          const entry = node.data || {}
+          const path = text(entry.path)
           const mine = path === current
           const mark = entry.staged === true ? '已暂存' : (entry.untracked === true ? '未跟踪' : '未暂存')
           rows.push(h('div', {
             className: 'dsh-git-trow' + (mine ? ' dsh-git-trow-sel' : ''),
-            key: 'f:' + path,
+            key: node.id,
+            style: { paddingLeft: (6 + node.depth * 12) + 'px' },
             title: path + '（点开看差异）',
             ref: mine === true ? function (node) { rowBox.node = node } : undefined,
             onClick: function () { if (typeof props.onOpenFile === 'function') props.onOpenFile(entry) },
           },
+            h('span', { className: 'dsh-git-tw' }),
             h('span', { className: 'dsh-git-st' + statusClass(entry.displayCode) }, statusLabel(entry.displayCode)),
-            h('span', { className: 'dsh-git-tname' }, cut < 0 ? path : path.slice(cut + 1)),
-            cut > 0 ? h('span', { key: 'd', className: 'dsh-git-tpath' }, path.slice(0, cut + 1)) : null,
+            h('span', { className: 'dsh-git-tname' }, node.name),
             h('span', {
               key: 'm', className: 'dsh-git-diffrail-mark',
               title: entry.staged === true ? '已暂存（改动在索引里）'
