@@ -1837,6 +1837,11 @@ return {
       return out
     }
 
+    /* squeeze 把「自己没有叶子、只有唯一子目录」的目录链一路拼起来，
+       a/b/c/file.txt 就合成一行目录 a/b/c。这是 IDEA 分支树的画法 —— 分支名
+       自带 origin/feat/x 这样的层级，逐层展开会让只有目录没有分支的每一级都
+       白占一行。现在只有 RefTree（50-log.js 的分支分组树）还要它；文件列表
+       一律不用（flattenTree 的 squeezeOn 传 false），目录不许合并。 */
     function squeeze(node) {
       let name = ''
       let target = node
@@ -1849,21 +1854,31 @@ return {
       return { name: name, target: target }
     }
 
-    function flattenTree(node, depth, prefix, collapsed, out, id) {
+    /* squeezeOn === true 时目录链照旧压扁成一行（仅 RefTree 在用）；false 时
+       每一级目录独立成行、独立缩进，name 就是本级那一段。目录行的 path 仍由
+       prefix 逐层拼出，不压扁后同一棵树的键变细（多出中间层的键）：折叠表里
+       旧存档的压扁键（如 @files/a/b/c）恰好等于新树最深那层目录的键，等于旧
+       折叠状态自动落到最深一层，中间层一次性回到展开 —— 不做额外迁移。 */
+    function flattenTree(node, depth, prefix, collapsed, out, id, squeezeOn) {
       const keys = Object.keys(node.children).sort()
       for (let i = 0; i < keys.length; i += 1) {
         const key = keys[i]
-        const squeezed = squeeze(node.children[key])
-        const total = countLeaves(squeezed.target)
+        let target = node.children[key]
+        let name = key
+        if (squeezeOn === true) {
+          const squeezed = squeeze(target)
+          target = squeezed.target
+          if (squeezed.name.length > 0) name = key + '/' + squeezed.name
+        }
+        const total = countLeaves(target)
         if (total === 0) continue
-        const name = squeezed.name.length === 0 ? key : (key + '/' + squeezed.name)
         const path = prefix + '/' + name
         const isCollapsed = collapsed[path] === true
         out.push({
           kind: 'dir', name: name, path: path, depth: depth, collapsed: isCollapsed,
-          count: total, data: squeezed.target, id: id + ':d:' + path,
+          count: total, data: target, id: id + ':d:' + path,
         })
-        if (!isCollapsed) flattenTree(squeezed.target, depth + 1, path, collapsed, out, id)
+        if (!isCollapsed) flattenTree(target, depth + 1, path, collapsed, out, id, squeezeOn)
       }
       for (let i = 0; i < node.leaves.length; i += 1) {
         const leaf = node.leaves[i]
@@ -2770,7 +2785,9 @@ textarea.dsh-git-input{resize:vertical}
           rows.push(groupTitle(title, keyOf(key), needle.length === 0 ? String(entries.length) : String(shown.length)))
           if (collapsed[keyOf(key)] === true) return
           const tree = buildTree(shown)
-          const flat = flattenTree(tree, 2, keyOf(key), collapsed, [], keyOf(key))
+          /* 末位 true：分支树保留压扁 —— 分支名自带层级（origin/feat/x），逐层
+             展开只会让只有目录没有分支的每一级白占一行（见 42-tree.js squeeze）。 */
+          const flat = flattenTree(tree, 2, keyOf(key), collapsed, [], keyOf(key), true)
           for (let i = 0; i < flat.length; i += 1) {
             const node = flat[i]
             if (node.kind === 'dir') {
@@ -2893,7 +2910,8 @@ textarea.dsh-git-input{resize:vertical}
         entries.push({ segments: path.split('/'), data: detail.files[i] })
       }
       const tree = buildTree(entries)
-      const flat = flattenTree(tree, 0, '@files', props.collapsed, [], '@files')
+      /* 末位 false：文件树不压扁，每个目录段独立一行（见 42-tree.js flattenTree）。 */
+      const flat = flattenTree(tree, 0, '@files', props.collapsed, [], '@files', false)
       const fileRows = []
       for (let i = 0; i < flat.length; i += 1) {
         const node = flat[i]
@@ -3906,7 +3924,9 @@ textarea.dsh-git-input{resize:vertical}
         for (let i = 0; i < entries.length; i += 1) treeEntries.push({ segments: entries[i].path.split('/'), data: entries[i] })
         const tree = buildTree(treeEntries)
         annotateStaged(tree)
-        const flat = flattenTree(tree, 0, groupKey, scope.collapsed, [], groupKey)
+        /* 末位 false：文件树不压扁，每个目录段独立一行、独立缩进 —— 深层目录
+           不许被合成一行（见 42-tree.js flattenTree）。 */
+        const flat = flattenTree(tree, 0, groupKey, scope.collapsed, [], groupKey, false)
         const rows = []
         for (let i = 0; i < flat.length; i += 1) {
           const node = flat[i]
@@ -4448,7 +4468,8 @@ textarea.dsh-git-input{resize:vertical}
         }
         title = String(rail.files.length) + ' 个文件'
         const tree = buildTree(entries)
-        const flat = flattenTree(tree, 0, '@files', props.collapsed, [], '@files')
+        /* 末位 false：文件树不压扁，每个目录段独立一行（见 42-tree.js flattenTree）。 */
+        const flat = flattenTree(tree, 0, '@files', props.collapsed, [], '@files', false)
         for (let i = 0; i < flat.length; i += 1) {
           const node = flat[i]
           if (node.kind === 'dir') {
@@ -4485,7 +4506,8 @@ textarea.dsh-git-input{resize:vertical}
           entries.push({ segments: path.split('/'), data: entry })
         }
         const tree = buildTree(entries)
-        const flat = flattenTree(tree, 0, '@files', props.collapsed, [], '@files')
+        /* 末位 false：文件树不压扁，每个目录段独立一行（见 42-tree.js flattenTree）。 */
+        const flat = flattenTree(tree, 0, '@files', props.collapsed, [], '@files', false)
         for (let i = 0; i < flat.length; i += 1) {
           const node = flat[i]
           if (node.kind === 'dir') {
