@@ -324,7 +324,9 @@
         for (let i = 0; i < entries.length; i += 1) treeEntries.push({ segments: entries[i].path.split('/'), data: entries[i] })
         const tree = buildTree(treeEntries)
         annotateStaged(tree)
-        const flat = flattenTree(tree, 0, groupKey, scope.collapsed, [], groupKey)
+        /* 末位 false：文件树不压扁，每个目录段独立一行、独立缩进 —— 深层目录
+           不许被合成一行（见 42-tree.js flattenTree）。 */
+        const flat = flattenTree(tree, 0, groupKey, scope.collapsed, [], groupKey, false)
         const rows = []
         for (let i = 0; i < flat.length; i += 1) {
           const node = flat[i]

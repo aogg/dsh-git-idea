@@ -298,7 +298,9 @@
           rows.push(groupTitle(title, keyOf(key), needle.length === 0 ? String(entries.length) : String(shown.length)))
           if (collapsed[keyOf(key)] === true) return
           const tree = buildTree(shown)
-          const flat = flattenTree(tree, 2, keyOf(key), collapsed, [], keyOf(key))
+          /* 末位 true：分支树保留压扁 —— 分支名自带层级（origin/feat/x），逐层
+             展开只会让只有目录没有分支的每一级白占一行（见 42-tree.js squeeze）。 */
+          const flat = flattenTree(tree, 2, keyOf(key), collapsed, [], keyOf(key), true)
           for (let i = 0; i < flat.length; i += 1) {
             const node = flat[i]
             if (node.kind === 'dir') {

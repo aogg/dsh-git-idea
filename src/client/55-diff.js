@@ -222,7 +222,8 @@
         }
         title = String(rail.files.length) + ' 个文件'
         const tree = buildTree(entries)
-        const flat = flattenTree(tree, 0, '@files', props.collapsed, [], '@files')
+        /* 末位 false：文件树不压扁，每个目录段独立一行（见 42-tree.js flattenTree）。 */
+        const flat = flattenTree(tree, 0, '@files', props.collapsed, [], '@files', false)
         for (let i = 0; i < flat.length; i += 1) {
           const node = flat[i]
           if (node.kind === 'dir') {
@@ -259,7 +260,8 @@
           entries.push({ segments: path.split('/'), data: entry })
         }
         const tree = buildTree(entries)
-        const flat = flattenTree(tree, 0, '@files', props.collapsed, [], '@files')
+        /* 末位 false：文件树不压扁，每个目录段独立一行（见 42-tree.js flattenTree）。 */
+        const flat = flattenTree(tree, 0, '@files', props.collapsed, [], '@files', false)
         for (let i = 0; i < flat.length; i += 1) {
           const node = flat[i]
           if (node.kind === 'dir') {

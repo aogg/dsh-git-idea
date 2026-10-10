@@ -16,7 +16,8 @@
         entries.push({ segments: path.split('/'), data: detail.files[i] })
       }
       const tree = buildTree(entries)
-      const flat = flattenTree(tree, 0, '@files', props.collapsed, [], '@files')
+      /* 末位 false：文件树不压扁，每个目录段独立一行（见 42-tree.js flattenTree）。 */
+      const flat = flattenTree(tree, 0, '@files', props.collapsed, [], '@files', false)
       const fileRows = []
       for (let i = 0; i < flat.length; i += 1) {
         const node = flat[i]
