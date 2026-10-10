@@ -101,7 +101,7 @@ PHPStorm 风格：标题是 `合并 <仓库> 的 <相对路径> 的修订`，从
 |---|---|
 | 提交 | `变更` 页勾选 → 右栏写提交信息 → 「全部暂存并提交（N 项）」或「全部暂存」 |
 | 只提交一部分 | 只勾那几个文件；再点一次勾选框 = 取消暂存 |
-| 看某个文件的改动 | 在变更树或提交详情里点该文件，patch 占满正文，左上角箭头返回 |
+| 看某个文件的改动 | 在变更树或提交详情里点该文件，patch 占满正文，左上角箭头返回；要看整个文件时点头部右上角的「查看文件」，它在 DSH 官方右侧的文件页里打开这个文件 —— 打开的永远是工作区里的当前内容（提交那一路也一样），服务不在（老版 DSH）或路径不在会话工作区内时这个按钮不出现 |
 | 切分支 | 点顶栏分支名（或悬停 chip）→ 选分支 → 检出 |
 | 新建分支 | 切换器底部「新建分支」，可从某个提交或分支起 |
 | 合并 / 拣选 / 还原 | 分支行 `›` → 合并到当前分支；提交详情右上角图标 → 拣选 / 还原 |
@@ -272,7 +272,7 @@ Settings → **dsh-git-idea配置**。
 ```sh
 node build-package.mjs          # 正式包：lib/index.js + client/client.js
 node build.mjs                  # 动态桥：host.js + client.js
-node test/run-all.mjs           # 全部断言（1125 条）
+node test/run-all.mjs           # 全部断言（1144 条）
 node build.mjs --check && node build-package.mjs --check   # 产物是否最新
 node test/bench.mjs             # 基准：200 条提交的历史列表
 node test/bench-branch.mjs      # 基准：300 个分支的切换器

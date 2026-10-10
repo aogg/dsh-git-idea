@@ -2292,6 +2292,11 @@
           key: 'diff',
           target: diffTarget,
           repo: diffRepo,
+          /* 「查看文件」的路径根：diff 有自己的仓库（多仓库分组里点开的）就用它，
+             没有才落生效仓库 —— 后者兜住「还没应用过任何路径、appliedRepo 还是空」
+             的首屏，work.repo 是 Host 解出来的仓库绝对路径。viewFileButton 拿它拼
+             绝对路径再对照会话工作区。 */
+          repoRoot: diffRepo.length > 0 ? diffRepo : effectiveRepo,
           sessionId: sessionId,
           sig: diffSig,
           busy: busy,

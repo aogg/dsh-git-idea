@@ -296,6 +296,64 @@
         h('div', { key: 'l', className: 'dsh-git-diffrail-list' }, rows))
     }
 
+    /* ── 「查看文件」：把这一个文件交给 DSH 官方的右侧文件页 ──
+
+       补丁回答的是「改成了什么样」，有时读者要的是整个文件。DSH 官方的右侧文件页
+       （sidebar-right 包提供的 controller，ctx.reflect 里的 'sidebarRight'）本来就是
+       干这个的 —— 接它的 openResource 即可，这里不再自己画一个阅读器，也不传行号：
+       打开的就是工作区里的当前内容。地址的拼法照官方 sidebar-files 的
+       sessionFileAddress 逐字对齐：反斜杠归一为 /、去掉前导 ./，sessionId 与路径
+       按 / 分段 encodeURIComponent 并把 %3A 还原为 ':'（盘符的冒号保持字面，官方
+       的注释就是这么写的）—— 拼法差一个字符 Host 就会当成另一个资源。
+
+       按钮画不画有三道守卫，任何一道不过就不画，而不是画一个点了必败的按钮：
+       官方服务不在（bridge 版没有 pkg 层；老版 dsh —— engines 声明 >=0.1.5-rc.1
+       那个年代也还没有这个口子）；会话工作区未知（24-repos.js 的 workspaceOf，
+       扫描没落地就答不出「这个文件在不在里面」）；绝对路径越出工作区（官方 Host
+       拒绝读工作区外的路径，点开只会是一个错误页）。多仓库的分组里 diff 属于
+       target.repo 那个仓库，所以路径的根由调用方按 diffRepo/effectiveRepo 传进来
+       （repoRoot），不能拿「屏上生效仓库」凑数。 */
+
+    /* 官方口径的地址段编码：encodeURIComponent 之后把 %3A 还原成 ':'。 */
+    function encodeFileSegment(segment) {
+      return encodeURIComponent(segment).replace(/%3A/gi, ':')
+    }
+
+    /* dsh-resource://file/session/<sessionId>/<路径>。官方实现先归一路径再分段
+       编码，这里同样把两步写在一起，省得调用点各自归一。 */
+    function diffFileAddress(sessionId, path) {
+      const normalized = text(path).replace(/\\/g, '/').replace(/^(?:\.\/)+/, '')
+      return 'dsh-resource://file/session/' + encodeFileSegment(text(sessionId)) + '/'
+        + normalized.split('/').map(encodeFileSegment).join('/')
+    }
+
+    /* 点击的全部动作。openResource 是官方服务自己的路，它抛什么都不是这个面板
+       的错 —— 只把原话送进控制台，界面一个字节不动。 */
+    function openDiffFile(sessionId, path) {
+      try {
+        ctx.get('sidebarRight').openResource(diffFileAddress(sessionId, path))
+      } catch (failure) {
+        console.error('dsh-git-idea:', failure)
+      }
+    }
+
+    /* 三道守卫全过才返回按钮，否则 null。绝对路径在这里拼成，点击时原样用它：
+       守卫审过的地址和真正打开的地址必须是同一个。 */
+    function viewFileButton(target, sessionId, repoRoot) {
+      const side = ctx.get('sidebarRight')
+      if (side == null || typeof side.openResource !== 'function') return null
+      const root = workspaceOf(sessionId).replace(/\\/g, '/').replace(/\/+$/, '')
+      const repo = text(repoRoot).replace(/\\/g, '/').replace(/\/+$/, '')
+      if (root.length === 0 || repo.length === 0) return null
+      const absolute = (repo + '/' + text(target.path)).replace(/\\/g, '/')
+      if (absolute !== root && absolute.indexOf(root + '/') !== 0) return null
+      return h('button', {
+        key: 'viewfile', type: 'button', className: 'dsh-git-btn',
+        title: '在右侧文件页打开完整文件（工作区当前内容；提交那一路打开的也是工作区里的这一版）',
+        onClick: function () { openDiffFile(sessionId, absolute) },
+      }, '查看文件')
+    }
+
     function DiffView(props) {
       const target = props.target
       const requests = diffRequests(target)
@@ -359,6 +417,10 @@
           }, target.staged === true ? '取消暂存' : '暂存')
         : null
 
+      /* 「查看文件」跟着「暂存」走文字按钮那一排，⟳/☰ 之前 —— 三道守卫任何一道
+         不过就是 null，头部比过去短一块，别的地方一字不动。 */
+      const viewFile = viewFileButton(target, props.sessionId, props.repoRoot)
+
       const head = h('div', { key: 'head', className: 'dsh-git-diffhead' },
         diffIconButton('back', h(Icon, { name: 'back', size: 14 }), '返回文件列表', props.onBack),
         h('span', { key: 'p', className: 'dsh-git-diffpath', title: target.path }, target.path),
@@ -369,6 +431,7 @@
           ? h('span', { key: 'c', className: 'dsh-git-diffcount' }, '读取中…')
           : h('span', { key: 'c', className: 'dsh-git-diffcount' }, diffCounts({ added: added, removed: removed })),
         staged,
+        viewFile,
         diffIconButton('again', '⟳', '重新读取这个文件的差异', props.onRefresh),
         /* 有来源列表可列时才给这个开关：没有列表的 diff（详情已不在、快照没到），
            按下去也没有东西会响应。 */

@@ -1504,3 +1504,185 @@ tree = await settle()
 ok('（对照）有身份的仓库里，提交区一个字都不多出来', identityHint(tree) === undefined)
 
 host.call = identSaved
+
+/* ═══ 16. 差异头部的「查看文件」：把这一个文件交给官方右侧文件页 ═══
+   补丁回答「改成了什么样」，有时读者要的是整个文件 —— DSH 官方右侧的文件页
+   （ctx.reflect 的 'sidebarRight' 服务）本来就是干这个的，头部按钮只负责把地址递
+   过去。地址必须与官方 sessionFileAddress 逐字一致（反斜杠归一、去前导 ./，
+   sessionId 与路径按 / 分段 encodeURIComponent、%3A 还原为 ':'），三道守卫（服务
+   在、会话工作区已知、绝对路径在工作区内）任何一道不过就不画按钮；点击时
+   openResource 抛什么都只进控制台，绝不能把面板点崩。 */
+
+console.log('')
+console.log('== 头部的「查看文件」==')
+
+/* ctx.get 是套件与插件共用的那一格：sidebarRight 之外的名字照旧走原来的表，装与
+   拆都换 sideService 这一个变量 —— 「服务不在」随时可以恢复。替身只记录收到的
+   地址，别的什么都不做。 */
+const baseCtxGet = ctx.get
+const openedFiles = []
+let sideService = null
+ctx.get = function (name) {
+  if (name === 'sidebarRight') return sideService
+  return baseCtxGet(name)
+}
+
+/* 从变更页点开 src/app.js 的差异。此刻 ctx 认不得 sidebarRight，git/repos 也从没
+   答出过工作区 —— 正是两道守卫一起缺席的样子。 */
+const openAppDiff = async function () {
+  press(buttons(tree).find(function (b) { return textOf(b).indexOf('变更') >= 0 }), 'onClick')
+  await wait(10)
+  tree = await settle()
+  const row = changeRow(tree, 'app.js')
+  row.props.onClick()
+  await wait(10)
+  tree = await settle()
+}
+await openAppDiff()
+ok('官方服务不在（老版 dsh / bridge）：头部没有「查看文件」按钮',
+  buttons(tree).every(function (b) { return textOf(b) !== '查看文件' }))
+
+/* 会话工作区落地。真实的扫描（ensureWorkspaceRepos）在第一次开面板时就问过了，
+   替身当时照基座的默认答了一份没有 workspace 的 ok —— repoScanAsked 已经把「s-1
+   问过了」记死，重扫不会再发。改走同一扇会落 adoptReposReply 的门：变更页左栏
+   仓库侧栏的「添加目录」，git/repos-save 的答复带着整份清单（含 workspace）——
+   和读者手动登记仓库、答复落地是同一条路。 */
+const viewSavedCall = host.call
+host.call = function (method, args) {
+  if (method === 'git/repos-save') {
+    return Promise.resolve({ ok: true, workspace: '/tmp/ws', repos: ['/tmp/ws'], manual: ['/tmp/ws'], missing: [], truncated: false })
+  }
+  return viewSavedCall(method, args)
+}
+press(buttons(tree).find(function (b) { return textOf(b).indexOf('变更') >= 0 }), 'onClick')
+await wait(10)
+tree = await settle()
+const addRepoRow = collect(tree).filter(function (n) { return n.props.className === 'dsh-git-repo-add' })[0]
+ok('（前情）变更页左栏有「添加目录」那一行（工作区还没落地，扫描失败话也在）',
+  addRepoRow !== undefined && textOf(tree).indexOf('扫描失败') >= 0)
+addRepoRow.props.onClick()
+await wait(10)
+tree = await settle()
+const repoInput = byClass(tree, 'dsh-git-repo-input')[0]
+repoInput.props.onChange({ target: { value: '/tmp/ws' } })
+await wait(10)
+tree = await settle()
+buttons(tree).find(function (b) { return textOf(b) === '添加' }).props.onClick()
+await wait(20)
+tree = await settle()
+host.call = viewSavedCall
+ok('登记落地：扫描失败的话被带 workspace 的清单换掉了（工作区从此已知）',
+  textOf(tree).indexOf('扫描失败') < 0)
+
+/* 服务在但不像话（openResource 不是函数）与「拿不到服务」同罪：按钮都不画。 */
+sideService = { nope: true }
+await openAppDiff()
+ok('服务在但 openResource 不是函数：头部也没有「查看文件」按钮',
+  buttons(tree).every(function (b) { return textOf(b) !== '查看文件' }))
+
+/* 正式替身：记录地址的 openResource。 */
+sideService = { openResource: function (address) { openedFiles.push(address) } }
+await openAppDiff()
+const fileBtn = buttons(tree).find(function (b) { return textOf(b) === '查看文件' })
+ok('服务在、工作区已知：头部有「查看文件」按钮', fileBtn !== undefined)
+ok('按钮是「暂存」同款的文字按钮（同一个 dsh-git-btn）',
+  fileBtn !== undefined && fileBtn.props.className === 'dsh-git-btn')
+ok('title 说出双重语义：完整文件、工作区当前内容（提交那一路打开的也是这一版）',
+  fileBtn !== undefined && String(fileBtn.props.title).indexOf('完整文件') >= 0
+  && String(fileBtn.props.title).indexOf('工作区当前内容') >= 0
+  && String(fileBtn.props.title).indexOf('提交') >= 0)
+const headNode = byClass(tree, 'dsh-git-diffhead')[0]
+const headTexts = headNode.props.children.map(function (c) { return textOf(c) })
+ok('按钮排在「暂存」之后、⟳ 之前（右上角那一排的既有顺序不动）',
+  headTexts.indexOf('查看文件') > headTexts.indexOf('取消暂存')
+  && headTexts.indexOf('查看文件') < headTexts.indexOf('⟳'))
+
+const hostCallsBefore = calls.length
+fileBtn.props.onClick()
+await wait(10)
+ok('点击把官方地址逐字符递给 openResource（绝对路径按 / 分段编码，sessionId 同一口径）',
+  openedFiles.length === 1 && openedFiles[0] === 'dsh-resource://file/session/s-1//tmp/ws/src/app.js')
+ok('打开是纯客户端的事，一个 host 调用都没发', calls.length === hostCallsBefore)
+
+/* openResource 抛了：原话进控制台（带 dsh-git-idea: 前缀），界面一个字节不动。 */
+const realError = console.error
+const consoleErrors = []
+console.error = function () { consoleErrors.push(Array.prototype.slice.call(arguments)) }
+sideService = { openResource: function () { throw new Error('sidebar unavailable') } }
+tree = await settle()
+buttons(tree).find(function (b) { return textOf(b) === '查看文件' }).props.onClick()
+await wait(10)
+console.error = realError
+sideService = { openResource: function (address) { openedFiles.push(address) } }
+ok('openResource 抛错只进控制台，前缀是 dsh-git-idea:',
+  consoleErrors.length === 1 && String(consoleErrors[0][0]).indexOf('dsh-git-idea:') === 0
+  && String(consoleErrors[0][1]).indexOf('sidebar unavailable') >= 0)
+tree = await settle()
+ok('抛错之后差异界面照常在（头部、补丁、右列都没少）',
+  byClass(tree, 'dsh-git-diffview').length === 1
+  && byClass(tree, 'dsh-git-diffpath').length === 1
+  && byClass(tree, 'dsh-git-diffrail').length === 1)
+
+/* 提交那一路：同一个按钮、同一套地址 —— 打开的同样是工作区里的当前内容。 */
+toolByTitle(tree, '返回文件列表').props.onClick()
+await wait(10)
+tree = await settle()
+buttons(tree).find(function (b) { return textOf(b).indexOf('历史') >= 0 }).props.onClick()
+await wait(10)
+tree = await settle()
+byClass(tree, 'dsh-git-crow')[0].props.onClick()
+await wait(10)
+tree = await settle()
+const commitFileRow = changeRow(tree, 'new.txt')
+ok('提交详情里列出了 new.txt', commitFileRow !== undefined)
+commitFileRow.props.onClick()
+await wait(10)
+tree = await settle()
+const commitViewBtn = buttons(tree).find(function (b) { return textOf(b) === '查看文件' })
+ok('提交那一路的头部也有「查看文件」（这一路没有暂存按钮，按钮跟在计数后面）',
+  commitViewBtn !== undefined && commitViewBtn.props.className === 'dsh-git-btn')
+const beforeCommitClick = openedFiles.length
+commitViewBtn.props.onClick()
+await wait(10)
+ok('提交文件的地址同样逐字符正确（工作区根 + 提交里的路径）',
+  openedFiles.length === beforeCommitClick + 1
+  && openedFiles[openedFiles.length - 1] === 'dsh-resource://file/session/s-1//tmp/ws/new.txt')
+
+/* 第三道守卫：绝对路径越出会话工作区（手动登记过工作区外的仓库、生效仓库切过去
+   时会发生）。快读答一个工作区外的仓库，推一下变更页的时钟让 work.repo 换新 ——
+   打开差异后按钮消失；仓库回到工作区内，同一个打开着的差异上按钮回来。守卫审的
+   和点击打开的必须是同一个绝对路径，所以审不过就不画。 */
+press(buttons(tree).find(function (b) { return textOf(b).indexOf('变更') >= 0 }), 'onClick')
+await wait(10)
+tree = await settle()
+const outsideSaved = host.call
+host.call = function (method, args) {
+  if (method === 'git/panel' && args != null && args.quick === true) {
+    return Promise.resolve({ ok: true, repo: '/opt/elsewhere', branch: 'main', detached: false, upstream: '', ahead: 0, behind: 0, sequencer: null })
+  }
+  return outsideSaved(method, args)
+}
+tickAll()
+await wait(10)
+tree = await settle()
+await openAppDiff()
+ok('绝对路径（生效仓库 + 文件路径）越出会话工作区：按钮不画（官方 Host 拒读工作区外的路径）',
+  buttons(tree).every(function (b) { return textOf(b) !== '查看文件' }))
+host.call = outsideSaved
+tickAll()
+await wait(10)
+tree = await settle()
+ok('仓库回到工作区内：还开着的这个差异上按钮回来了',
+  buttons(tree).some(function (b) { return textOf(b) === '查看文件' }))
+
+/* 源码规矩：编码那行必须与官方逐字相同，失败必须落在带前缀的 console.error。 */
+const viewSource = sourceText.slice(sourceText.indexOf('function encodeFileSegment'), sourceText.indexOf('function DiffView'))
+ok('地址段编码与官方一字不差（encodeURIComponent 之后把 %3A 还原为 \':\'）',
+  viewSource.indexOf("encodeURIComponent(segment).replace(/%3A/gi, ':')") >= 0)
+ok('三道守卫先于按钮：服务、工作区、越界检查都在 viewFileButton 里',
+  viewSource.indexOf("typeof side.openResource !== 'function'") >= 0
+  && viewSource.indexOf('workspaceOf(sessionId)') >= 0
+  && viewSource.indexOf("absolute.indexOf(root + '/')") >= 0)
+
+ctx.get = baseCtxGet
+sideService = null
