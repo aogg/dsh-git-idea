@@ -772,6 +772,11 @@ return {
          不同，这一项两边都做归一化：它是读者直接编辑的清单，编辑器保存前要拿「合法
          条目 + 条数」做校验，Host 那份 normalizeConfig 是落盘前的最后一道关卡。 */
       quickCommands: [],
+      /* 提交信息草稿（按生效仓库的根路径分键，80-panel.js 读写 / host 70-config.js
+         归一化）。与 repos 同一条先例：设置页保存的是**整份**配置，客户端的归一化
+         把它丢了的话，读者在设置页改一次 git 路径，各仓库写到一半的提交信息就全
+         没了。原样搬运、不做清洗 —— 清洗是 Host 那边 normalizeDrafts 的职责。 */
+      drafts: {},
     }
     let pluginConfig = Object.assign({}, PLUGIN_CONFIG_DEFAULTS)
     let pluginConfigPath = ''
@@ -802,6 +807,9 @@ return {
       /* repos 见上面 PLUGIN_CONFIG_DEFAULTS 里的说明：原样搬运，Host 那边负责清洗。 */
       out.repos = raw.repos != null && typeof raw.repos === 'object' && !Array.isArray(raw.repos) ? raw.repos : {}
       out.quickCommands = normalizeQuickCommands(raw.quickCommands)
+      /* drafts 同 repos 一条先例：原样搬运，Host 那边负责清洗（见 PLUGIN_CONFIG_DEFAULTS
+         里那一格的说明）。 */
+      out.drafts = raw.drafts != null && typeof raw.drafts === 'object' && !Array.isArray(raw.drafts) ? raw.drafts : {}
       return out
     }
 
@@ -3483,6 +3491,29 @@ textarea.dsh-git-input{resize:vertical}
       return entry.staged === true && addedInIndex(entry.indexCode)
     }
 
+    /* ── the one checkbox, drawn once ──
+
+       列表行、目录行、组头、（55-diff.js 的）差异头部 —— 到处都是同一只框，所以它
+       只能有一份构造：class（dsh-git-cbox，勾上再挂 dsh-git-cbox-on，部分勾选挂
+       dsh-git-cbox-part）、字形（☑ / ▣ / ☐）、悬停话术与「点了不惊动行」的
+       stopPropagation 都住在这里。谁再抄一份回去，两处框迟早长得不一样 —— 就像
+       treeDirRow 当年被抄成两份一样。 */
+
+    /* 挂在模块层而不是 ChangesPane 里的原因只有一个：55-diff.js 在本片段之后拼接、
+       共享同一个作用域，差异头部的勾选框要用的正是这一份（段落的拼接顺序见
+       build.mjs 的 TARGETS）。它只用 h 和自己的参数，不读任何组件状态。 */
+    const stageBox = function (key, state, title, onClick) {
+      return h('span', {
+        key: key,
+        className: 'dsh-git-cbox' + (state === 'all' ? ' dsh-git-cbox-on' : (state === 'some' ? ' dsh-git-cbox-part' : '')),
+        title: title,
+        onClick: function (event) {
+          event.stopPropagation()
+          onClick()
+        },
+      }, state === 'all' ? '☑' : (state === 'some' ? '▣' : '☐'))
+    }
+
     function ChangesPane(props) {
       /* Read before the early returns: a hook cannot be skipped by a branch. */
       const settings = useGitSettings()
@@ -3523,17 +3554,7 @@ textarea.dsh-git-input{resize:vertical}
       const indentPad = function (depth) {
         return h('span', { key: 'pad', className: 'dsh-git-tind', style: { width: (depth * INDENT_W) + 'px' } })
       }
-      const stageBox = function (key, state, title, onClick) {
-        return h('span', {
-          key: key,
-          className: 'dsh-git-cbox' + (state === 'all' ? ' dsh-git-cbox-on' : (state === 'some' ? ' dsh-git-cbox-part' : '')),
-          title: title,
-          onClick: function (event) {
-            event.stopPropagation()
-            onClick()
-          },
-        }, state === 'all' ? '☑' : (state === 'some' ? '▣' : '☐'))
-      }
+      /* stageBox 在模块层（见文件头），列表行、目录行、组头与差异头部共用这一份。 */
 
       /* ── the name first, the folder after it ──
 
@@ -4494,8 +4515,34 @@ textarea.dsh-git-input{resize:vertical}
          不过就是 null，头部比过去短一块，别的地方一字不动。 */
       const viewFile = viewFileButton(target, props.sessionId, props.repoRoot)
 
+      /* ── 头部的勾选框：变更列表那一只，跟到差异视图里来 ──
+
+         变更树的每一行都有勾选框（勾 = 这条路径的改动进了索引，点一下就是
+         setStaged 那条路），单击行打开差异之后那只框就看不见了 —— 而读补丁的
+         时候恰恰经常要顺手决定「这个文件进不进这次提交」。头部画的就是列表那一只：
+         stageBox 同一份构造（54-changes.js，模块层那一个定义，两处调用），class、
+         字形、悬停话术与点击手势一字不差；语义也是列表的语义 —— 框只回答「这条
+         路径的改动现在在不在索引里」，文件暂存之后又改过（staged 与 workCode
+         并存，列表里那只框照样是勾着的）也一样照列表勾。
+
+         两道守卫任何一道不过就返回 null 不画（viewFileButton 的同一条规矩）：
+         提交详情那一路（kind === 'commit'）读的是某一次提交的补丁，「暂存」对它
+         无从谈起，框不画；宿主没接 onStage 时画一只点不动的框比不画更糟。
+         点一下就是 props.onStage(!staged)，80-panel.js 把它接成
+         setStaged([{path}], staged, diffRepo) —— 与列表同一个通道、同一个乐观补丁。
+         头部右侧那个「暂存/取消暂存」文字按钮原样保留：它的历史比框长，守护它的
+         断言（gp42 第 16 节的头部排序）也在，没有理由在这次改动里动它。 */
+      const stageToggle = target.kind !== 'file' || typeof props.onStage !== 'function'
+        ? null
+        : stageBox('stagebox', target.staged === true ? 'all' : 'none',
+          target.staged === true ? '取消暂存' : '暂存',
+          function () { props.onStage(target.staged !== true) })
+
       const head = h('div', { key: 'head', className: 'dsh-git-diffhead' },
         diffIconButton('back', h(Icon, { name: 'back', size: 14 }), '返回文件列表', props.onBack),
+        /* 框在路径之前 —— 和列表行同一个读法：先框，再状态，再名字（54-changes.js
+           的 fileRow 把框放在行首就是为这一眼）。 */
+        stageToggle,
         h('span', { key: 'p', className: 'dsh-git-diffpath', title: target.path }, target.path),
         target.status !== undefined
           ? h('span', { key: 'st', className: 'dsh-git-st' + statusClass(target.status) }, statusLabel(target.status))
@@ -7253,6 +7300,13 @@ textarea.dsh-git-input{resize:vertical}
       const [status, setStatus] = React.useState(remembered === null ? null : remembered.status)
       const [maxCount, setMaxCount] = React.useState(PAGE_COMMITS)
       const [message, setMessage] = React.useState('')
+      /* ── 提交信息草稿的账本（信息本体在 Host 的插件配置里，70-config.js 的 drafts）
+         repo：这只输入框此刻属于哪个仓库（null = 还没有仓库落到它头上）；
+         timer：挂着的防抖保存定时器；value：输入框此刻的内容镜像 —— 草稿读回来
+         时要回答「框是不是空的」，而 that 回答不能靠闭包里的 message（effect 跑的
+         那一刻拍下来的旧值，答复落地时早就过期了）。client 侧没有 useRef，沿 box
+         模式（57-cmdlog.js 的 cmdLogBox、55-diff.js 的 rowBox 同款）。 */
+      const [draftBox] = React.useState(function () { return { repo: null, timer: null, value: '' } })
       const [selected, setSelected] = React.useState(null)
       const [selectedKey, setSelectedKey] = React.useState(null)
       const [activeRef, setActiveRef] = React.useState('')
@@ -7546,6 +7600,95 @@ textarea.dsh-git-input{resize:vertical}
       const changeSel = repoSelection(sessionId, 'changes')
       const logSelKey = logSel.join('\u0000')
       const changeSelKey = changeSel.join('\u0000')
+
+      /* ── 提交信息草稿：按生效仓库存在 Host 的插件配置里 ──
+
+         提交信息过去只活在浏览器的内存里，提交成功那一刻就被清空 —— 换个浏览器、
+         换台机器打开同一个工作区，写到一半的那条信息就没了。现在它按生效仓库的根
+         路径一仓一份存进 Host（git/draft-read / git/draft-save，70-config.js 的
+         drafts），打开面板、切仓库时读回来，输入停手约一秒自动存。两个数与两条
+         纪律：
+
+           · DRAFT_LEN_MAX 与 Host 的上限同款（4000）：Host 是最后一道关卡，但
+             客户端先把超长的截掉，省一次注定被截的往返；
+           · 防抖 900ms（设置页那份整配置保存是 400ms，见 20-prefs.js）：草稿的
+             保存多得多（每一段连续输入一次），再快就要在连续输入时排队写盘；
+           · 保存的 repo 在排程那一刻就闭上：读者打完字立刻切仓库，挂着的保存
+             仍写到**原来那个**仓库名下 —— 内容是它的，不能记到新仓库头上；
+           · 只 console，不上错误条：草稿服务的是「下次还能看见」，存不进去
+             不值得挤掉提示位上真正的错误（error 一次只说一件事的规矩），
+             更不能让提交、暂存这些主流程沾光。 */
+      const DRAFT_LEN_MAX = 4000
+      const DRAFT_SAVE_MS = 900
+
+      const saveDraft = function (repo, value) {
+        if (repo.length === 0) return
+        /* 带上会话：配置文件在任何工作区之外，写它的沙箱策略来自这个会话
+           （70-config.js 写文件那一段的说明），不带就落到部署默认那份、被拒。 */
+        callHost('git/draft-save', { repo: repo, message: value, sessionId: sessionId })
+          .then(null, function (failure) {
+            console.error('dsh-git-idea: 提交信息草稿保存失败:', failureText(failure))
+          })
+      }
+
+      const scheduleDraftSave = function (repo, value) {
+        if (repo.length === 0) return
+        if (draftBox.timer !== null) { draftBox.timer(); draftBox.timer = null }
+        const timer = ctx.get('timer')
+        if (timer === undefined) { saveDraft(repo, value); return }
+        draftBox.timer = timer.timeout(function () {
+          draftBox.timer = null
+          saveDraft(repo, value)
+        }, DRAFT_SAVE_MS)
+      }
+
+      /* 提交这类「马上要用」的时刻不等防抖：挂着的保存立刻落一次。 */
+      const flushDraftSave = function (repo, value) {
+        if (draftBox.timer !== null) { draftBox.timer(); draftBox.timer = null }
+        saveDraft(repo, value)
+      }
+
+      /* 输入框的每一次变化都从这里走：先上屏，再排一次防抖的草稿保存。清空（
+         clearable 的 ×）也走它 —— 「空」同样要记到 Host，否则清掉的草稿会在
+         下次打开时从配置里长回来。镜像跟着记一笔：草稿读回来时判断「框是不是
+         空的」用的就是它（见下面那个 effect）。 */
+      const changeMessage = function (next) {
+        draftBox.value = next
+        setMessage(next)
+        scheduleDraftSave(effectiveRepo, next)
+      }
+
+      /* ── 草稿什么时候读：生效仓库头一次落定、或切到另一个仓库的那一次 ──
+
+         「藏着不发读、重开零成本」是面板自己的规矩（6aede2c），草稿这一份读
+         （Host 的读缓存，毫秒级）也不该例外：仓库已经在框的名下时，重开面板
+         一个字节都不读。换浏览器、换页面是组件新挂，draftBox.repo 还是 null，
+         第一次打开正好落在「仓库头一次落定」这一格 —— 跨浏览器的那一次读
+         就是它。同一仓库重开也不重读：框里这份就是最新的（每次输入都在往
+         Host 存），读回来反而是拿旧答案覆盖新输入。
+
+         填入的规矩：**仅空框才填入** —— 读回来的草稿只填得进一只空框，框里已经
+         有字（上一个仓库留下的、或读者刚敲的）就一个字节不动：读者看得见的那行
+         字，不许被一次网络答复悄悄换掉。答复落地时仓库又切走了（draftBox.repo
+         不再是当时问的那个）：那是别的仓库的草稿，一个字节不填。读失败安静放过：
+         空框照旧，主流程与此无关。 */
+      React.useEffect(function () {
+        if (props.active !== true) return undefined
+        const repo = effectiveRepo
+        if (repo.length === 0) return undefined
+        if (draftBox.repo === repo) return undefined
+        draftBox.repo = repo
+        let alive = true
+        callHost('git/draft-read', { repo: repo }).then(function (reply) {
+          if (alive !== true || draftBox.repo !== repo) return
+          if (draftBox.value.length > 0) return
+          const next = reply != null && typeof reply.message === 'string'
+            ? reply.message.slice(0, DRAFT_LEN_MAX) : ''
+          draftBox.value = next
+          setMessage(next)
+        }, function () {})
+        return function () { alive = false }
+      }, [effectiveRepo, props.active])
 
       React.useEffect(function () {
         if (props.ready !== true) return
@@ -8568,17 +8711,22 @@ textarea.dsh-git-input{resize:vertical}
         const request = base(appliedRepo)
         request.message = message.trim()
         if (stagedCount === 0) request.stageAll = true
-        /* Behind the ticks rather than racing them: this button is no longer
-           disabled while an `git add` is in flight (that disabled state was half
-           the blink), so the queue is what keeps the commit from describing an
-           index the reader has already moved past. */
+        /* 提交用的就是屏上这一条：不等防抖，先把它按生效仓库存进 Host，草稿与
+           这次提交才不会各说各话（同值在 Host 那边不写盘，多这一次往返都没有）。 */
+        flushDraftSave(effectiveRepo, message)
+        /* Behind the ticks rather than racing them: the button is no longer
+           disabled while an `git add` is in flight, so the queue is what keeps
+           the commit from describing an index the reader has already moved
+           past. */
         queueMutation(function () {
           return rpc('git/commit', request, '提交失败').then(function () {
             setBusy(false)
             setError(null)
-            setMessage('')
-            /* 提交动的是索引和引用，屏上那些路径的读（0.3s）就是这次点击的答案：刚才
-               提交掉的那几个文件会立刻从列表里消失。整棵树留给时钟和 ⟳。 */
+            /* 提交成功不再清空信息。清空买不到任何东西：git 已经把这条信息写进
+               提交对象，输入框里那一份只是屏上的草稿；而连续提交（拆几次提交、
+               或紧接着再提一次）恰恰要沿用同一条信息。它已经随 flush 存进 Host
+               按这个仓库记着 —— 真想要空框，clearable 的 × 一下，那也是一条被
+               记下来的「空」。 */
             panelBox.needFull = false
             bump()
           }, function (failure) {
@@ -9215,18 +9363,46 @@ textarea.dsh-git-input{resize:vertical}
            那个**仓库，右列得是那个仓库的变更（全局那份读数，10-state.js 的
            treeRecord），拿屏上生效仓库的列表凑数会把两个仓库的路径混在一列。 */
         let diffRail = null
+        /* railChanges 提升到这一层：下面「打开的差异跟着这一行现在的样子走」要在
+           kind === 'file' 且 diffRepo !== appliedRepo 时去这一份读数里找那行现在的
+           样子，而它只在变更那一路才有值 —— 声明留在 if/else 的哪一半里，这一层就
+           够不着（半个代理的旧稿在这里留过一个 ReferenceError，多仓库分组点开的
+           diff 一渲染就炸）。提交那一路它保持 changes 原值，没人读它。 */
+        let railChanges = changes
         if (diffTarget.kind === 'commit') {
           if (detail != null && detail.ok === true && Array.isArray(detail.files) && detail.files.length > 0) {
             diffRail = { kind: 'commit', files: detail.files }
           }
         } else {
-          let railChanges = changes
           if (diffRepo !== appliedRepo) {
             const record = treeRecord(diffRepo)
             railChanges = record != null && record.status != null && record.status.ok === true
               ? mergeChanges(record.status) : []
           }
           diffRail = { kind: 'changes', changes: railChanges }
+        }
+        /* ── 打开的差异跟着这一行现在的样子走 ──
+
+           diffTarget 记的是点开那一刻那一行的快照；可头部那只勾选框（55-diff.js 的
+           stageToggle）和「暂存」按钮要回答的是「此刻这条路径的改动在不在索引里」，
+           而勾一下、乐观补丁与确认读先后改掉 status 里的这一行 —— 拿点开时的旧
+           快照画，框就勾了不亮、亮了不灭。这里不写 state（渲染途中不许 set）：
+           从同一份变更读数里把这一行现在的样子合出一枚新 target 交给 DiffView，
+           补丁的分节（diffRequests 吃 target.staged）因此也跟着对；diffTarget
+           本身原样留着 —— 右列导航、返回键要的还是「当初点开的那一行」。
+           多选分组里点开的文件属于它自己的仓库，找这一行得去那一仓的读数
+           （railChanges）里找，生效仓库的 changes 里没有它。找不到（未跟踪目录
+           展开后点开的文件、文件已被提交或还原掉）就照旧用旧快照 —— 和今天
+           一字不差。 */
+        let diffTargetNow = diffTarget
+        if (diffTarget.kind === 'file') {
+          const source = diffRepo !== appliedRepo ? railChanges : changes
+          for (let i = 0; i < source.length; i += 1) {
+            if (source[i].path === diffTarget.path) {
+              diffTargetNow = changeDiffTarget(source[i], text(diffTarget.repo))
+              break
+            }
+          }
         }
         /* 右列换文件：提交那一路 ref 不动、只换 path/from/status（和提交详情里
            点开一个文件是同一条路，diffSig 随 shape 变化自动重读补丁）；变更那一
@@ -9246,7 +9422,7 @@ textarea.dsh-git-input{resize:vertical}
         }
         body = h(DiffView, {
           key: 'diff',
-          target: diffTarget,
+          target: diffTargetNow,
           repo: diffRepo,
           /* 「查看文件」的路径根：diff 有自己的仓库（多仓库分组里点开的）就用它，
              没有才落生效仓库 —— 后者兜住「还没应用过任何路径、appliedRepo 还是空」
@@ -9277,7 +9453,9 @@ textarea.dsh-git-input{resize:vertical}
           onSelect: function (key) { setSelectedKey(key) },
           onSetStaged: setStaged,
           onSetStagedAll: setStagedAll,
-          onMessage: setMessage,
+          /* 提交信息的变化都从 changeMessage 走（含 clearable 的清空）：上屏之外
+             还要排一次防抖的草稿保存 —— 见上面草稿那一块。 */
+          onMessage: changeMessage,
           onCommit: commit,
           /* 默认变更列表工具条的还原/暂存：与 onSetStaged 同一套「单仓库不带仓库、多仓库
              带仓库」的接法（见 makeScope 的转发）。 */

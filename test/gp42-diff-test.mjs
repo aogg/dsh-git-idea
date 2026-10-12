@@ -1961,3 +1961,332 @@ ok('三道守卫先于按钮：服务、工作区、越界检查都在 viewFileB
 
 ctx.get = baseCtxGet
 sideService = null
+
+/* ═══ 17. 差异头部的勾选框：变更列表那一只，跟到差异视图里来 ═══
+   变更树的每一行都有勾选框，单击行打开差异之后它就看不见了 —— 而读补丁的时候
+   恰恰要顺手决定「这个文件进不进这次提交」。头部画的是列表那一只：stageBox 同一
+   份构造，class/字形/悬停话术一字不差；语义也是列表的语义 —— 勾上 = 这条路径的
+   改动在索引里（文件暂存之后又改过也照勾），点一下走 onStage（80-panel.js 接成
+   setStaged）。提交那一路（kind === 'commit'）没有暂存这回事，框不画；宿主没接
+   onStage 时也不画。 */
+
+console.log('')
+console.log('== 差异头部的勾选框 ==')
+
+/* 上一节结束时 src/app.js 的差异还开着（staged + 再次修改的那一行）。先钉住
+   「框反映的是现在的状态」：这一路的 status 由本节自己的面板答复说话，git/stage、
+   git/unstage 之后的确认读答的也是点击后的真值 —— 框才不会亮了又灭。 */
+const boxSaved = host.call
+let appStaged = true
+const boxPanel = function () {
+  return {
+    ok: true, repo: '/tmp/ws', branch: 'main', detached: false, upstream: '', ahead: 0, behind: 0,
+    sequencer: null,
+    staged: appStaged === true ? [{ path: 'src/app.js', code: 'M' }] : [],
+    unstaged: [{ path: 'src/app.js', code: 'M' }, { path: 'notes.md', code: 'M' }],
+    untracked: [], unmerged: [],
+  }
+}
+const boxStageCalls = []
+host.call = function (method, args) {
+  if (method === 'git/panel') {
+    calls.push({ method: method, args: args })
+    return Promise.resolve(boxPanel())
+  }
+  if (method === 'git/stage' || method === 'git/unstage') {
+    boxStageCalls.push({ method: method, args: args })
+    appStaged = method === 'git/stage'
+    return Promise.resolve({ ok: true, repo: '/tmp/ws', stdout: '', stderr: '', exitCode: 0 })
+  }
+  return boxSaved(method, args)
+}
+tree = await settle()
+
+const headBoxes = function (t) { return byClass(t, 'dsh-git-cbox') }
+let boxNow = headBoxes(tree)[0]
+ok('差异头部有勾选框，就是列表那一只（同一个 dsh-git-cbox）', boxNow !== undefined)
+ok('已暂存 + 再次修改的文件，框是勾着的（列表的勾选语义原样：勾只看改动在不在索引里）',
+  boxNow !== undefined && String(boxNow.props.className).indexOf('dsh-git-cbox-on') >= 0
+  && textOf(boxNow) === '☑')
+ok('悬停话术与列表同款（勾着说的是「取消暂存」）', boxNow !== undefined && boxNow.props.title === '取消暂存')
+const diffHeadNow = byClass(tree, 'dsh-git-diffhead')[0]
+const headKidTexts = diffHeadNow === undefined ? [] : diffHeadNow.props.children.map(function (c) { return textOf(c) })
+ok('框排在路径之前 —— 和列表行同一个读法：先框，再状态，再名字',
+  headKidTexts.indexOf('☑') >= 0 && headKidTexts.indexOf('☑') < headKidTexts.indexOf('src/app.js'))
+
+/* 点一下：走 setStaged 同一条通道（git/unstage），框就地翻空 —— 不用退回去再进。 */
+const boxCallsBefore = boxStageCalls.length
+boxNow.props.onClick({ stopPropagation: function () {} })
+await wait(10)
+tree = await settle()
+boxNow = headBoxes(tree)[0]
+ok('点勾着的框发的是 git/unstage、路径就是这一个文件',
+  boxStageCalls.length === boxCallsBefore + 1
+  && boxStageCalls[boxStageCalls.length - 1].method === 'git/unstage'
+  && boxStageCalls[boxStageCalls.length - 1].args.paths.length === 1
+  && boxStageCalls[boxStageCalls.length - 1].args.paths[0] === 'src/app.js')
+ok('框就地翻空（点开那一刻的旧快照不许把它按回勾着的样子）',
+  boxNow !== undefined && String(boxNow.props.className).indexOf('dsh-git-cbox-on') < 0
+  && textOf(boxNow) === '☐' && boxNow.props.title === '暂存')
+
+/* 空框点回去：git/stage。 */
+boxNow.props.onClick({ stopPropagation: function () {} })
+await wait(10)
+tree = await settle()
+boxNow = headBoxes(tree)[0]
+ok('再点一下翻回勾着（发 git/stage）',
+  boxStageCalls[boxStageCalls.length - 1].method === 'git/stage'
+  && boxNow !== undefined && textOf(boxNow) === '☑')
+
+/* 没暂存过的文件：框一开始就是空的。 */
+toolByTitle(tree, '返回文件列表').props.onClick()
+await wait(10)
+tree = await settle()
+const notesRow = changeRow(tree, 'notes.md')
+notesRow.props.onClick()
+await wait(10)
+tree = await settle()
+boxNow = headBoxes(tree)[0]
+ok('未暂存的文件，差异头部的框一开始就是空的',
+  boxNow !== undefined && String(boxNow.props.className).indexOf('dsh-git-cbox-on') < 0
+  && textOf(boxNow) === '☐' && boxNow.props.title === '暂存')
+
+/* 提交那一路：读的是某一次提交的补丁，「暂存」对它无从谈起 —— 框不画。 */
+toolByTitle(tree, '返回文件列表').props.onClick()
+await wait(10)
+tree = await settle()
+press(buttons(tree).find(function (b) { return textOf(b).indexOf('历史') >= 0 }), 'onClick')
+await wait(10)
+tree = await settle()
+byClass(tree, 'dsh-git-crow')[0].props.onClick()
+await wait(10)
+tree = await settle()
+changeRow(tree, 'new.txt').props.onClick()
+await wait(10)
+tree = await settle()
+ok('提交那一路（kind === \'commit\'）头部没有勾选框', headBoxes(tree).length === 0)
+
+/* 源码规矩：框只有一份构造、两处调用；两道守卫都在 55-diff.js 里 —— 少一道就
+   会出现点了必败的框，或者提交那一路凭空多出一只框。 */
+const boxSource = sourceText.slice(sourceText.indexOf('const stageBox = function'), sourceText.indexOf('function ChangesPane'))
+/* 切片的终点是 diffhead 那一行（「头部的勾选框」注释在 function DiffView 定义之后，
+   拿它当终点是一段倒着的 slice —— 空串，什么都断言不到；dsh-git-diffhead 的第一
+   次出现在 CSS 里，也要从注释之后找起）。 */
+const diffBoxFrom = sourceText.indexOf('── 头部的勾选框')
+const diffBoxSource = sourceText.slice(diffBoxFrom, sourceText.indexOf('dsh-git-diffhead', diffBoxFrom))
+ok('勾选框只有一份构造（stageBox 定义一次），列表与差异头部都是调用点',
+  (sourceText.match(/const stageBox = function/g) || []).length === 1
+  && boxSource.length > 0 && diffBoxSource.indexOf('stageBox(') >= 0)
+ok('两道守卫都在：kind 不是 file 不画、宿主没接 onStage 不画',
+  diffBoxSource.indexOf("target.kind !== 'file'") >= 0
+  && diffBoxSource.indexOf("typeof props.onStage !== 'function'") >= 0)
+
+host.call = boxSaved
+tree = await settle()
+
+/* ═══ 18. 提交信息草稿：按仓库存进 Host，提交成功不再清空 ═══
+   提交信息过去只活在浏览器的内存里，提交成功那一刻就被清空 —— 换个浏览器、换台
+   机器，写到一半的那条信息就没了。现在它按生效仓库的根路径存进 Host 的插件配置
+   （git/draft-read / git/draft-save，host 70-config.js 的 drafts）：打开面板（组件
+   新挂、仓库头一次落定）读回来，切仓库只问不发填（**仅空框才填入**：框里已经有
+   字，一次网络答复不许把它悄悄换掉），输入停手约一秒防抖保存，提交前立刻落一次，
+   提交成功不再清空。这一节只在这一节里给 popover 传 active:true —— 草稿的读跟着
+   「面板开着」走，别节的渲染不带它，一次都不该发。 */
+
+console.log('')
+console.log('== 提交信息草稿 ==')
+
+/* 全新挂载：换浏览器/换页面就是这个形状 —— draftBox.repo 还是 null，第一次打开
+   正是「仓库头一次落定」。draftMessages 按仓库给草稿；holdRead 把 holdRepo 那个
+   仓库的读扣住（迟到的答复怎么处理，只有扣得住才看得见）。 */
+fibers.clear()
+const draftSaves = []
+const draftReads = []
+let draftMessages = { '/tmp/ws': '草稿：解析器的空指针修复', '/tmp/other': '另一个仓库写到一半的' }
+let holdRead = null
+let holdRepo = ''
+let draftPanelRepo = '/tmp/ws'
+const draftSaved = host.call
+host.call = function (method, args) {
+  if (method === 'git/draft-read') {
+    calls.push({ method: method, args: args })
+    draftReads.push(args.repo)
+    if (holdRead !== null && args.repo === holdRepo) {
+      return new Promise(function (resolve) { holdRead.push(resolve) })
+    }
+    return Promise.resolve({ ok: true, repo: args.repo, message: draftMessages[args.repo] || '' })
+  }
+  if (method === 'git/draft-save') {
+    draftSaves.push(args)
+    return Promise.resolve({ ok: true, repo: args.repo })
+  }
+  if (method === 'git/panel') {
+    calls.push({ method: method, args: args })
+    return Promise.resolve({
+      ok: true, repo: draftPanelRepo, branch: 'main', detached: false, upstream: '', ahead: 0, behind: 0,
+      sequencer: null,
+      staged: [{ path: 'src/app.js', code: 'M' }],
+      unstaged: [{ path: 'notes.md', code: 'M' }],
+      untracked: [], unmerged: [],
+    })
+  }
+  if (method === 'git/commit') return Promise.resolve({ ok: true, repo: draftPanelRepo, stdout: '', stderr: '', exitCode: 0 })
+  return draftSaved(method, args)
+}
+
+/* 这一节的渲染都带着 active:true：读草稿的 effect 只在面板开着时才发。
+   渲染的根 label 固定成 'draft'：harness 的 fiber 按「根 label + 组件名 + key」
+   分账，换一个 label 就是换一整套新 fiber —— 页签、草稿账本整个归零，跨步骤的
+   状态（切仓库、重开面板）就没法测了。label 参数只留给本节自己的日志。
+   会话用全新的 s-18：appliedRepo 记在 sharedRepos 里按会话分格，s-1 已被前面
+   各节的分支/仓库点击钉死成 '/tmp/ws'，切仓库（draftPanelRepo 换成别的）就再也
+   进不了 effectiveRepo —— 新会话没有这份记忆，effectiveRepo 跟着 work.repo 走。 */
+const popOn = function (label) { return renderUntilStable(makeElement(popover, { sessionId: 's-18', active: true }), 'draft') }
+const settleOn = async function (label) {
+  let t = null
+  for (let i = 0; i < 4; i += 1) { t = await popOn(label); await wait(10) }
+  return t
+}
+const draftArea = function (t) { return collect(t).filter(function (n) { return n.type === 'textarea' })[0] }
+/* 真钟里一个 timeout 烧过一次就不再烧；推时钟的这一次也一样 —— 烧过即作废，不然
+   早先那批定时器会在下一次推时钟时原地复活，把「只该响一次」的断言烧成两响。 */
+const fireTimeouts = function () {
+  timers.filter(function (t) { return t.kind === 'timeout' && t.dead !== true }).forEach(function (t) { t.dead = true; t.cb() })
+}
+
+let draftTree = await settleOn('draft-first')
+ok('组件新挂后的第一次打开：按生效仓库问了一次草稿',
+  draftReads.length === 1 && draftReads[0] === '/tmp/ws')
+/* 提交信息的框长在变更页：切过去看草稿有没有填进来（读与填跟页签无关，但框
+   只在这一页上有）。 */
+press(buttons(draftTree).find(function (b) { return textOf(b).indexOf('变更') >= 0 }), 'onClick')
+await wait(10)
+draftTree = await settleOn('draft-changes-first')
+ok('Host 里的草稿填进了输入框',
+  draftArea(draftTree) !== undefined && draftArea(draftTree).props.value === '草稿：解析器的空指针修复')
+
+/* 同一仓库，关掉再打开：藏着不发读、重开零成本的规矩对草稿同样成立 —— 框里这份
+   就是最新的（每次输入都在往 Host 存），读回来反而是拿旧答案覆盖新输入。 */
+const readsAfterFirst = draftReads.length
+draftTree = await renderUntilStable(makeElement(popover, { sessionId: 's-18' }), 'draft')
+await wait(10)
+draftTree = await settleOn('draft-reopen')
+ok('同一仓库关掉再打开：一次草稿读都不发', draftReads.length === readsAfterFirst)
+ok('框里还是那份草稿（既没被重读的旧答案盖掉，也没有消失）',
+  draftArea(draftTree).props.value === '草稿：解析器的空指针修复')
+
+/* 防抖保存：输入没停手一个字都不存；停手之后按生效仓库存一次，带着会话。
+   （先烧一遍时钟：前面各节的提交也走过 flushDraftSave，可能留下挂着但已无意义
+   的防抖定时器，记的是别的节输入的东西 —— 烧掉、清账，从这一步起只看本节的。） */
+fireTimeouts()
+draftSaves.length = 0
+draftArea(draftTree).props.onChange({ target: { value: '新的一条信息' } })
+await wait(5)
+draftTree = await settleOn('draft-typed')
+ok('输入还没停手：草稿一个字都没存（防抖）', draftSaves.length === 0)
+fireTimeouts()
+await wait(5)
+ok('停手之后：按生效仓库存了一次',
+  draftSaves.length === 1 && draftSaves[0].repo === '/tmp/ws' && draftSaves[0].message === '新的一条信息')
+ok('保存带着 sessionId（写 ~/.dsh 要这个会话的沙箱策略，不带会被部署默认策略拒）',
+  typeof draftSaves[0].sessionId === 'string' && draftSaves[0].sessionId.length > 0)
+
+/* 提交：先把挂着的防抖立刻落一次（不等停手），提交成功后信息不清空。
+   （这一节从第一次打开就停在变更页，页签不用再切。） */
+draftTree = await settleOn('draft-precommit')
+draftArea(draftTree).props.onChange({ target: { value: '要提交的那条信息' } })
+await wait(5)
+draftTree = await settleOn('draft-typed2')
+const savesBeforeCommit = draftSaves.length
+press(byClass(draftTree, 'dsh-git-primary')[0], 'onClick')
+await wait(10)
+draftTree = await settleOn('draft-committed')
+ok('提交前把挂着的草稿立刻落一次（提交用的就是这一条，不等防抖）',
+  draftSaves.length === savesBeforeCommit + 1
+  && draftSaves[draftSaves.length - 1].message === '要提交的那条信息')
+ok('提交成功后信息还在输入框里（不再清空 —— 连续提交要沿用同一条）',
+  draftArea(draftTree).props.value === '要提交的那条信息')
+
+/* 切仓库：只问、不抢 —— 框里已经有字（上一仓库留下的那条）就一个字节不动。 */
+draftPanelRepo = '/tmp/other'
+tickAll()
+await wait(10)
+draftTree = await settleOn('draft-switched')
+ok('切到另一个仓库：按新仓库问草稿', draftReads[draftReads.length - 1] === '/tmp/other')
+ok('框里已经有字：新仓库的草稿不抢框（仅空框才填入）',
+  draftArea(draftTree).props.value === '要提交的那条信息')
+
+/* 这条规矩的另一半：清空之后再切仓库，空框才填得进来 —— 清空（× 同一条路）把
+   「空」也记下了，切回 /tmp/ws 填进的就是这个仓库的草稿。 */
+draftMessages['/tmp/ws'] = 'ws 的草稿'
+draftArea(draftTree).props.onChange({ target: { value: '' } })
+await wait(5)
+draftTree = await settleOn('draft-cleared')
+draftPanelRepo = '/tmp/ws'
+tickAll()
+await wait(10)
+draftTree = await settleOn('draft-back')
+ok('清空之后再切回 /tmp/ws：空框填进了这个仓库的草稿',
+  draftReads[draftReads.length - 1] === '/tmp/ws'
+  && draftArea(draftTree).props.value === 'ws 的草稿')
+
+/* 迟到的草稿答复：问的是 /tmp/other，答复落地时仓库已经切走、框也空了 ——
+   仓库那一道守卫先拦下它，空框也不该被别的仓库的草稿填上。 */
+holdRead = []
+holdRepo = '/tmp/other'
+draftPanelRepo = '/tmp/other'
+tickAll()
+await wait(10)
+draftTree = await settleOn('draft-held')
+ok('切到 /tmp/other：读发了，但被扣住（框里还是 ws 的草稿）',
+  draftReads[draftReads.length - 1] === '/tmp/other'
+  && draftArea(draftTree).props.value === 'ws 的草稿')
+draftPanelRepo = '/tmp/ws'
+tickAll()
+await wait(10)
+draftTree = await settleOn('draft-away')
+draftArea(draftTree).props.onChange({ target: { value: '' } })
+await wait(5)
+draftTree = await settleOn('draft-away-clear')
+holdRead.forEach(function (resolve) { resolve({ ok: true, repo: '/tmp/other', message: '另一个仓库写到一半的' }) })
+holdRead = null
+holdRepo = ''
+await wait(10)
+draftTree = await settleOn('draft-late')
+ok('迟到的答复落地：仓库已经不是它问的那一个，空框也没被它填上',
+  draftArea(draftTree).props.value === '')
+
+/* 保存失败：只进控制台（带前缀），错误条不为它亮 —— 提示位留给真正的错误。 */
+const realDraftError = console.error
+const draftErrors = []
+console.error = function () { draftErrors.push(Array.prototype.slice.call(arguments)) }
+const failSaved = host.call
+host.call = function (method, args) {
+  if (method === 'git/draft-save') return Promise.reject(new Error('disk full'))
+  return failSaved(method, args)
+}
+draftArea(draftTree).props.onChange({ target: { value: '存不进去的一条' } })
+await wait(5)
+draftTree = await settleOn('draft-fail')
+fireTimeouts()
+await wait(10)
+draftTree = await settleOn('draft-failed')
+console.error = realDraftError
+host.call = failSaved
+ok('草稿保存失败只进控制台，前缀是 dsh-git-idea:',
+  draftErrors.length === 1 && String(draftErrors[0][0]).indexOf('dsh-git-idea:') === 0
+  && String(draftErrors[0][1]).indexOf('disk full') >= 0)
+ok('错误条没有为草稿亮起来', byClass(draftTree, 'dsh-git-error').length === 0)
+
+/* 源码规矩（客户端这一半）：提交成功不再清空信息 —— 整份 client.js 里不许再有
+   setMessage('')（清空只走 changeMessage('')，那也是一条被记下的「空」）；读回来
+   的草稿只填空框。Host 的 RPC 注册不在这份源码里，它归 gp34d（读的就是 host.js）。 */
+ok('client.js 里不再有 setMessage(\'\'）—— 提交成功不清空是源码级的规矩',
+  sourceText.indexOf("setMessage('')") < 0)
+ok('草稿的填入守卫在客户端：读回来的只填空框（draftBox.value 的镜像判空）',
+  sourceText.indexOf('draftBox.value.length > 0') >= 0)
+ok('客户端整配置归一化原样搬运 drafts（repos 的同一条先例）',
+  sourceText.indexOf('out.drafts = raw.drafts != null') >= 0)
+
+host.call = draftSaved
+draftTree = await settleOn('draft-restore')
