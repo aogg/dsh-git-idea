@@ -43,6 +43,135 @@
     }
     const BranchRowMemo = memo(BranchRow)
 
+    /* ── pull 时为当前分支挑「同名远端分支」──
+
+       git/refs 的答复里 remote 是按远端分组的表（{name, refs:[{segments,data}]}，
+       segments 是去掉远端名后的路径段）。多个远端都有同名时 origin 优先，没有
+       origin 取字母序第一个 —— 面板覆盖层与分支卡两条 pull 入口共用这一条规则。
+       命中返回 {remote, branch}，没有返回 null。 */
+    function upstreamMatchInRefs(refs, current) {
+      if (refs == null || refs.ok !== true || !Array.isArray(refs.remote)) return null
+      if (typeof current !== 'string' || current.length === 0) return null
+      let fallback = null
+      for (let i = 0; i < refs.remote.length; i += 1) {
+        const group = refs.remote[i]
+        if (group == null || typeof group.name !== 'string' || !Array.isArray(group.refs)) continue
+        for (let k = 0; k < group.refs.length; k += 1) {
+          const row = group.refs[k]
+          if (row == null || !Array.isArray(row.segments) || row.segments.length === 0) continue
+          /* 整段同名才算：origin/feature/x 的 segments 是 ['feature','x']，与本地
+             feature/x 对得上；origin/x 遇上本地 feature/x 不算（绑定一个读者没
+             指名的分支比不绑更糟）。 */
+          if (row.segments.join('/') !== current) continue
+          if (group.name === 'origin') return { remote: group.name, branch: current }
+          if (fallback === null || group.name < fallback.remote) fallback = { remote: group.name, branch: current }
+        }
+      }
+      return fallback
+    }
+
+    /* ── 远端分支选择列表（pull 绑定上游的第二步）──
+
+       两处用它：面板的覆盖层（80-panel.js）与分支卡内嵌。数据现读 git/refs ——
+       「选择」这件事要的是现在的远端表，触发它的那件事（pull 说没有 upstream）
+       往往正说明手头那份数据是旧的。按远端分组、可搜索，画法就是分支卡那套
+       （dsh-git-bs-*）；点行 = 选中（onPick 收 {remote, branch}），Esc 退出。
+       busy 时行点不动；读失败把原话说在列表里。 */
+    function RemotePickList(props) {
+      const [data, setData] = React.useState(null)
+      const [query, setQuery] = React.useState('')
+      const [error, setError] = React.useState(null)
+      const [index, setIndex] = React.useState(0)
+      React.useEffect(function () {
+        let alive = true
+        const request = { sessionId: props.sessionId }
+        if (props.repo != null && props.repo.length > 0) request.repo = props.repo
+        rpc('git/refs', request, '读不到远端分支').then(function (result) {
+          if (alive !== true) return
+          setData(result)
+          setIndex(0)
+        }, function (failure) {
+          if (alive !== true) return
+          setError(failureText(failure))
+        })
+        return function () { alive = false }
+      }, [props.repo, props.sessionId])
+      const needle = query.trim().toLowerCase()
+      const groups = []
+      if (data != null && data.ok === true && Array.isArray(data.remote)) {
+        for (let i = 0; i < data.remote.length; i += 1) {
+          const group = data.remote[i]
+          if (group == null || typeof group.name !== 'string' || !Array.isArray(group.refs)) continue
+          const rows = []
+          for (let k = 0; k < group.refs.length; k += 1) {
+            const row = group.refs[k]
+            if (row == null || !Array.isArray(row.segments) || row.segments.length === 0) continue
+            const branch = row.segments.join('/')
+            if (needle.length > 0 && (group.name + '/' + branch).toLowerCase().indexOf(needle) < 0) continue
+            rows.push({ remote: group.name, branch: branch })
+          }
+          if (rows.length > 0) groups.push({ name: group.name, rows: rows })
+        }
+      }
+      const flat = []
+      for (let g = 0; g < groups.length; g += 1) {
+        for (let r = 0; r < groups[g].rows.length; r += 1) flat.push(groups[g].rows[r])
+      }
+      const onKey = function (event) {
+        if (event.key === 'ArrowDown') {
+          event.preventDefault()
+          setIndex(function (n) { return Math.min(n + 1, flat.length - 1) })
+        } else if (event.key === 'ArrowUp') {
+          event.preventDefault()
+          setIndex(function (n) { return Math.max(n - 1, 0) })
+        } else if (event.key === 'Enter') {
+          event.preventDefault()
+          const one = flat[index]
+          if (one != null && props.busy !== true) props.onPick(one)
+        } else if (event.key === 'Escape') {
+          event.preventDefault()
+          props.onClose()
+        }
+      }
+      const items = []
+      let at = 0
+      for (let g = 0; g < groups.length; g += 1) {
+        const group = groups[g]
+        items.push(h('div', { key: 'g:' + group.name, className: 'dsh-git-bs-group' },
+          h('span', { key: 'i', className: 'dsh-git-bs-ico' }, h(BranchIcon, { size: 12 })),
+          h('span', { key: 'l' }, group.name),
+          h('span', { key: 'n', className: 'dsh-git-bs-count' }, String(group.rows.length))))
+        for (let r = 0; r < group.rows.length; r += 1) {
+          const row = group.rows[r]
+          const mine = at
+          at += 1
+          items.push(h('div', {
+            key: 'r:' + group.name + '/' + row.branch,
+            className: 'dsh-git-bs-row' + (mine === index ? ' dsh-git-bs-row-on' : '') + (props.busy === true ? ' dsh-git-bs-busy' : ''),
+            title: '绑定上游 ' + group.name + '/' + row.branch + ' 并拉取',
+            onClick: function () { if (props.busy !== true) props.onPick(row) },
+          },
+            h('span', { key: 'i', className: 'dsh-git-bs-ico' }, h(BranchIcon, { size: 13 })),
+            h('span', { key: 'n', className: 'dsh-git-bs-name' }, row.branch)))
+        }
+      }
+      return h('div', { className: 'dsh-git-picklist' },
+        h('div', { key: 'h', className: 'dsh-git-bs-head' },
+          h('span', { key: 'i', className: 'dsh-git-bs-mag' }, h(Icon, { name: 'search', size: 12 })),
+          h('input', {
+            key: 'q', className: 'dsh-git-bs-search', autoFocus: true,
+            placeholder: '搜索远端分支（回车选高亮，Esc 退出）',
+            value: query,
+            onChange: function (event) { setQuery(event.target.value); setIndex(0) },
+            onKeyDown: onKey,
+          })),
+        h('div', { key: 'l', className: 'dsh-git-bs-list' },
+          items.length > 0 ? items : h('div', { key: 'none', className: 'dsh-git-bs-empty' },
+            error !== null ? '读不到远端分支：' + error
+              : (data == null ? '正在读取远端分支…' : (needle.length > 0 ? '没有匹配的远端分支' : '这个仓库还没有远端分支')))))
+    }
+
+
     function BranchPicker(props) {
       const version = useDataVersion()
       useBranchPrefs()
@@ -66,6 +195,9 @@
       const [fly, setFly] = React.useState(null)
       const [creating, setCreating] = React.useState(null)
       const [armedDelete, setArmedDelete] = React.useState('')
+      /* pull 的「选远端分支」态：false 是正常的分支列表，true 表示当前分支还没有
+         上游、远端又没有同名分支 —— 列表区域整个换成远端分支选择（Esc 退回）。 */
+      const [pick, setPick] = React.useState(false)
 
       /* Where the flyout hangs: the row's own offset inside the scrolling list,
          translated into the card's coordinates. Rows are offset from the list
@@ -206,6 +338,55 @@
         })
       }
 
+      /* ── 拉取（这张卡里的 ↓）──
+
+         已有 upstream 照旧直接 pull，一字不变。没有时先问一次 refs：远端有同名
+         分支就带 setUpstream 一次跑完（绑定 + 拉取，set-upstream-to 的 argv 在
+         Host 那半）；没有同名就把列表区域换成远端分支选择（pick），点行绑定并
+         拉取。refs 读不动就按老路裸 pull —— git 的拒绝原话照旧上屏。 */
+      const pullBound = function (match) {
+        if (busy === true) return
+        setBusy(true)
+        setError(null)
+        setNote('正在绑定上游 ' + match.remote + '/' + match.branch + ' 并拉取…')
+        rpc('git/pull', request({ setUpstream: match }), '拉取失败').then(function () {
+          setBusy(false)
+          bumpData()
+          setPick(false)
+          setNote('已绑定上游 ' + match.remote + '/' + match.branch + ' 并拉取')
+        }, function (failure) {
+          setBusy(false)
+          bumpData()
+          const said = failureText(failure)
+          /* 远端分支其实不在（refs 数据过期，git 说 "does not exist"）：不裸报错，
+             落到选择层让读者挑一个真的在的。 */
+          if (said.indexOf('does not exist') >= 0) {
+            setError('上游 ' + match.remote + '/' + match.branch + ' 在远端已经不存在（列表过期），请在下面重新选择：')
+            setPick(true)
+            return
+          }
+          setError(said)
+        })
+      }
+      const pullAction = function () {
+        if (busy === true) return
+        const row = all.find(function (one) { return one.current === true })
+        /* 没有当前行：detached（没有名字）或还没出生（unborn，这张卡列表不收它）
+           —— set-upstream 无从谈起，照旧直接 pull。 */
+        if (row == null) { act('git/pull', {}, 'pull'); return }
+        const current = text(row.name)
+        setBusy(true)
+        rpc('git/refs', request(null), '读不到分支列表').then(function (refsData) {
+          setBusy(false)
+          const match = upstreamMatchInRefs(refsData, current)
+          if (match != null) { pullBound(match); return }
+          setPick(true)
+        }, function () {
+          setBusy(false)
+          act('git/pull', {}, 'pull')
+        })
+      }
+
       const submitNew = function (draft) {
         const name = (draft != null && typeof draft.value === 'string' ? draft.value : '').trim()
         const at = draft != null && typeof draft.at === 'string' ? draft.at.trim() : ''
@@ -309,7 +490,7 @@
          另画一套 SVG。一个动作一种画法，两个地方看起来才是同一套。 */
       const actionDefs = [
         { id: 'fetch', glyph: '⇣', short: '获取', label: '获取远端最新（fetch）', run: function () { act('git/fetch', {}, 'fetch') } },
-        { id: 'pull', glyph: '↓', short: '拉取', badge: behindNow > 0 ? (behindNow > 99 ? '99+' : String(behindNow)) : undefined, label: '拉取当前分支（pull）', run: function () { act('git/pull', {}, 'pull') } },
+        { id: 'pull', glyph: '↓', short: '拉取', badge: behindNow > 0 ? (behindNow > 99 ? '99+' : String(behindNow)) : undefined, label: '拉取当前分支（pull）', run: function () { pullAction() } },
         { id: 'push', glyph: '↑', short: '推送', badge: aheadNow > 0 ? (aheadNow > 99 ? '99+' : String(aheadNow)) : undefined, label: '推送当前分支（push）', run: function () { act('git/push', {}, 'push') } },
       ]
       actionDefs.push({ id: 'new', glyph: '+', short: '新建分支', label: '新建分支…', run: function () { setCreating({ at: '', value: '' }) } })
@@ -631,9 +812,27 @@
           setBranchSort(branchSort === 'name' ? 'recent' : 'name')
         } else if (event.key === 'Escape') {
           event.preventDefault()
-          if (creating !== null) setCreating(null)
+          if (pick === true) setPick(false)
+          else if (creating !== null) setCreating(null)
           else props.onClose()
         }
+      }
+
+      /* 选择态：搜索行与列表区域整个换成远端分支选择 —— 卡里其余的东西（动作、
+         收藏、flyout、脚注）都是「对着分支列表」的，这时候没有意义。Esc 退回
+         （键盘那一段），点行绑定并拉取。 */
+      if (pick === true) {
+        return h('div', { className: 'dsh-git-bs' },
+          h('div', { key: 'cap', className: 'dsh-git-hint', style: { padding: '6px 10px 0' } },
+            '当前分支还没有上游 —— 选择要跟的远端分支（选中后绑定并拉取）'),
+          h(RemotePickList, {
+            key: 'pick', sessionId: props.sessionId, repo: props.repo,
+            busy: busy === true,
+            onPick: pullBound,
+            onClose: function () { setPick(false) },
+          }),
+          note !== null ? h('div', { key: 'n', className: 'dsh-git-hint dsh-git-warn' }, note) : null,
+          error !== null ? h('div', { key: 'e', className: 'dsh-git-hint dsh-git-error' }, error) : null)
       }
 
       return h('div', { className: 'dsh-git-bs' },

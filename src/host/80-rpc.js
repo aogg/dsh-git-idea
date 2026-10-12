@@ -192,6 +192,19 @@ onRpc('git/checkout', async function (input) {
 
 const NET_SPAWN = { timeoutMs: 180000 }
 
+/* 「绑定上游再拉取」的两个名字各占 ref 的一半（--set-upstream-to=<remote>/<branch>）。
+   argv 是数组、不过 shell，切不开命令；要挡的是 git 自己会误读的形状 —— 前导 - 与
+   控制字符（cleanIdentValue 同一套规矩，74-identity.js），上限放宽到 ref 名该有的
+   长度。空串与非法都算「没给对」。 */
+function cleanRefHalf(value) {
+  const raw = isStr(value) ? value : ''
+  const trimmed = raw.trim().slice(0, 300)
+  if (trimmed.length === 0) return ''
+  if (/[\u0000-\u001f\u007f]/.test(trimmed)) return null
+  if (trimmed.charAt(0) === '-') return null
+  return trimmed
+}
+
 /* The three arguments this plugin chooses about the network, each read from the
    plugin config at the moment it is used: `fetch --all` prunes only if asked,
    `pull` merges unless the reader prefers rebase, and a push to a branch with no
@@ -209,8 +222,31 @@ onRpc('git/fetch', async function (input) {
 
 onRpc('git/pull', async function (input) {
   const config = await netConfig()
-  /* A pull that merges writes a commit, so the identity can be what failed. */
-  return commitMutation(input, config.pullRebase === true ? ['pull', '--rebase'] : ['pull'], { net: true, spawn: NET_SPAWN, desc: '拉取' })
+  const argv = config.pullRebase === true ? ['pull', '--rebase'] : ['pull']
+  const setup = input != null && input.setUpstream != null && typeof input.setUpstream === 'object' && !Array.isArray(input.setUpstream) ? input.setUpstream : null
+  if (setup == null) {
+    /* A pull that merges writes a commit, so the identity can be what failed. */
+    return commitMutation(input, argv, { net: true, spawn: NET_SPAWN, desc: '拉取' })
+  }
+  /* 客户端在点 pull 时发现这个分支还没有 upstream，替读者挑好了要跟的远端分支：
+     先把当前分支的上游绑到 <remote>/<branch>（不给尾参 —— git 默认作用于当前分支，
+     detached 时它自己会拒绝），成功后再跑原来的 pull。绑定失败 pull 不跑 —— 远端
+     分支其实不存在（refs 数据过期）就是这一类，客户端拿答复里的原话回落到选择层；
+     绑定成功而 pull 失败（冲突等）时 upstream 留着，那一步已经完成了。两步各自进
+     「命令」页（desc 区分「绑定上游」与「拉取」），答复带 upstreamSet / pulled 与
+     每步自己的 exitCode / stderr。 */
+  const remote = cleanRefHalf(setup.remote)
+  const branch = cleanRefHalf(setup.branch)
+  if (remote === null || branch === null || remote.length === 0 || branch.length === 0) {
+    return { ok: false, error: 'bad-value', upstreamSet: false, pulled: false, stderr: '绑定上游需要合法的远端名与远端分支名：不能为空、不能以 - 开头、不能含控制字符' }
+  }
+  const bound = await panelMutate(input, ['branch', '--set-upstream-to=' + remote + '/' + branch], { desc: '绑定上游' })
+  const upstream = { remote: remote, branch: branch, exitCode: bound.exitCode, stderr: bound.stderr }
+  if (bound.ok !== true) {
+    return Object.assign(bound, { error: 'set-upstream-failed', upstreamSet: false, pulled: false, setUpstream: upstream })
+  }
+  const pulled = await commitMutation(input, argv, { net: true, spawn: NET_SPAWN, desc: '拉取' })
+  return Object.assign(pulled, { upstreamSet: true, pulled: true, setUpstream: upstream })
 })
 
 onRpc('git/push', function (input) {

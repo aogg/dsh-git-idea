@@ -407,6 +407,10 @@
       const [moreBox] = React.useState(function () { return { node: null } })
       const [quickBox] = React.useState(function () { return { node: null } })
       const [needsUpstream, setNeedsUpstream] = React.useState(false)
+      /* pull 的上游选择层：null 是关着，非 null（{}）是开着 —— 开着时正文上面盖一层
+         远端分支选择（RemotePickList，70-branchpicker.js）。点行 = runOp('git/pull',
+         {setUpstream})，成功后 runOp 自己关掉它并写成功条。 */
+      const [pullPick, setPullPick] = React.useState(null)
       /* The file whose patch is on screen, and a counter the refresh button
          bumps. Null means the list the reader came from is on screen — the two
          lists that can open a diff (the changes tree, a commit's file list) both
@@ -617,6 +621,7 @@
         setCtxMenu(null)
         setQcConfirm(null)
         setQcEditor(null)
+        setPullPick(null)
         setOkNote('')
         setUntrackedOpen({})
         setUntrackedFiles({})
@@ -832,7 +837,14 @@
          onOk（可选）只在成功后跑一次：压缩/删除用它清空多选 —— 失败时选择要留着好
          重试；host 那份 ok:true 的答复作为参数传给它，删除要从里面读 preHead 给出
          找回通道。 */
-      const runOp = function (method, payload, onOk) {
+      /* ── pull 的上游兜底 ──
+
+         这个分支还没有 upstream 时，pull 本来只会以 git 的「no tracking
+         information」收场。这里替它把这一步做完：refs 里查得到同名远端分支 →
+         带 setUpstream 直接跑（Host 先 set-upstream-to 再 pull）；查不到 → 打开
+         选择层（pullPick），一条 pull 都不发。其余情况 —— 已有 upstream、
+         detached、分支未出生、refs 读不动 —— 照旧原样发 pull，行为一字不变。 */
+      const runOpApply = function (method, payload, onOk) {
         if (busy) return
         setBusy(true)
         setArmed('')
@@ -844,10 +856,24 @@
         if (payload != null) Object.assign(request, payload)
         rpc(method, request).then(function (reply) {
           setBusy(false)
+          if (method === 'git/pull' && reply != null && reply.upstreamSet === true && reply.setUpstream != null) {
+            /* 绑定+拉取这一次成功（两个入口共用 runOp）：成功条写明绑到了哪。 */
+            setOkNote('已绑定上游 ' + text(reply.setUpstream.remote) + '/' + text(reply.setUpstream.branch) + ' 并拉取')
+            setPullPick(null)
+          }
           if (typeof onOk === 'function') onOk(reply)
           bump()
         }, function (failure) {
           setBusy(false)
+          if (method === 'git/pull' && payload != null && payload.setUpstream != null) {
+            const said = failureText(failure)
+            /* 绑定这一步发现远端分支其实不在（refs 数据过期，git 的原话是
+               "the requested upstream branch 'x/y' does not exist"）：回落到选择层
+               让读者挑一个真的在的，不把这句裸着甩出来。其余失败（绑定成功而 pull
+               撞上冲突等）把层关掉 —— upstream 已经留着，错误条要看得见。 */
+            if (said.indexOf('does not exist') >= 0) { setPullPick({}); bump(); return }
+            setPullPick(null)
+          }
           setError(failureText(failure))
           if (method === 'git/push' && failureText(failure).indexOf('upstream') >= 0) {
             /* 「这个分支还没有上游」是一次可以自己走完的失败：设置里开了这一条时，
@@ -863,6 +889,56 @@
           }
           bump()
         })
+      }
+
+      /* 判断本身只吃一份 refs 答复：refs 还没读到过（首帧、刚换仓库、上次读失败）
+         时由 runOp 先补一次读再进来，别因为缓存未到就弹层。 */
+      const decidePull = function (refsData, payload, onOk) {
+        const current = refsData != null && refsData.ok === true && Array.isArray(refsData.current) && refsData.current.length > 0
+          ? text(refsData.current[0]) : ''
+        /* detached：refs.current 空、work.detached 是 true —— 两道都挡。 */
+        if (work == null || work.ok !== true || work.detached === true || current.length === 0) {
+          runOpApply('git/pull', payload, onOk)
+          return
+        }
+        /* 未出生分支（unborn）：refs.current 说得出名字，但 refs/heads 里没有它 ——
+           set-upstream 无从谈起，照旧。 */
+        const local = Array.isArray(refsData.local) ? refsData.local : []
+        let born = false
+        for (let i = 0; i < local.length; i += 1) {
+          if (text(local[i].data) === current) { born = true; break }
+        }
+        if (born !== true) { runOpApply('git/pull', payload, onOk); return }
+        const match = upstreamMatchInRefs(refsData, current)
+        if (match != null) {
+          runOpApply('git/pull', Object.assign({}, payload == null ? {} : payload, { setUpstream: match }), onOk)
+          return
+        }
+        setPullPick({})
+      }
+
+      const runOp = function (method, payload, onOk) {
+        if (method !== 'git/pull' || (payload != null && payload.setUpstream != null)) {
+          runOpApply(method, payload, onOk)
+          return
+        }
+        /* work 还没读到（面板首帧）：上游未知，照旧直接 pull —— 别在旧数据上猜。 */
+        if (work == null || work.ok !== true || text(work.upstream).length > 0) {
+          runOpApply(method, payload, onOk)
+          return
+        }
+        /* refs 还没读到过（或上次读失败）：先读一次再判断（别弹空窗）；读不动就按
+           老路直接 pull，git 的拒绝原话照旧上屏。 */
+        if (refs == null || refs.ok !== true) {
+          callHost('git/refs', base(appliedRepo)).then(function (data) {
+            setRefs(data)
+            decidePull(data, payload, onOk)
+          }, function () {
+            runOpApply(method, payload, onOk)
+          })
+          return
+        }
+        decidePull(refs, payload, onOk)
       }
 
       const startDrag = function (axis) {
@@ -2830,6 +2906,25 @@
                 key: qcEditor, initial: qcEditor,
                 onClose: function () { setQcEditor(null) },
               }))
+          : null,
+        /* pull 的上游选择层（点 ↓ 时这个分支还没有 upstream、远端也没有同名分支）：
+           同一个覆盖层形状，点外（点在底板上）与 Esc 都关；点行走 runOp 的
+           setUpstream 路 —— 成功后 runOp 关层并写成功条，远端分支其实不在的失败
+           （refs 过期）层照旧开着重挑。 */
+        pullPick !== null
+          ? h('div', {
+              key: 'pullpick', className: 'dsh-git-qc-overlay',
+              onClick: function (event) { if (event != null && event.target === event.currentTarget) setPullPick(null) },
+            },
+              h('div', { key: 'box', className: 'dsh-git-qc-box' },
+                h('div', { key: 'h', className: 'dsh-git-qc-head' },
+                  '「' + (currentName.length > 0 ? currentName : 'HEAD') + '」还没有上游 —— 选择要跟的远端分支（选中后绑定并拉取）'),
+                h(RemotePickList, {
+                  key: 'pick', sessionId: sessionId, repo: appliedRepo,
+                  busy: busy === true,
+                  onPick: function (match) { runOp('git/pull', { setUpstream: match }) },
+                  onClose: function () { setPullPick(null) },
+                })))
           : null,
         /* 右键菜单：光标锚的浮层（position:fixed）。挂在面板根部 —— 与 ⋯/⚡ 的下拉
             不同它不属于任何一格，开关只随 ctxMenu。 */

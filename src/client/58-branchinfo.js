@@ -33,6 +33,16 @@
            同一类误诊（"这台机器上没有 git" 曾经也这样盖掉过真正的答案）。 */
         return last.length > 0 ? why + '\n' + last : why
       }
+      /* pull 在没有 upstream 的分支上的拒绝（"There is no tracking information for
+          the current branch" / "no upstream configured for branch"）。正常情况下面板
+          点 pull 时已经先把这一步做完（同名远端分支自动绑定、没有就弹选择层），这句
+          只在 refs 数据过期之类的缝隙里漏出来 —— 说人话并指出路，git 的原话照旧留下。
+          与上面沙箱那条同一类：先接住结果，再判一次可修复的失败，最后才是原样转述。 */
+      if (/no tracking information|no upstream configured/.test(err + '\n' + text(result.stdout))) {
+        const why = '这个分支还没有上游：pull 不知道要跟哪个远端分支比较。'
+          + '面板点「拉取」时会先尝试绑定同名远端分支；也可以在分支卡（点分支名出来的卡片）里点 ↓ 选一个远端分支来绑定。'
+        return detail.length > 0 ? why + '\n' + detail : why
+      }
       /* git says "Unable to create ... .git/index.lock: Permission denied", which
          reads as a broken repository. It is the file sandbox refusing the write,
          and the reader can act on that (widen the session's file policy, or move

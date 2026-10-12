@@ -524,6 +524,13 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-qc-pre{max-height:180px;overflow:auto;padding:6px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;background:var(--dsw-alias-bg-base);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:16px;white-space:pre-wrap;word-break:break-all}
 .dsh-git-qc-actions{display:flex;align-items:center;gap:8px}
 
+/* ── pull 的上游选择层（80-panel.js 覆盖层里挂 RemotePickList）──
+    列表复用分支卡那套 dsh-git-bs-*；自身的 330px 上限在盒子里让位给 qc-box 的
+    max-height —— 列表在盒内自己收缩。 */
+.dsh-git-picklist{display:flex;flex-direction:column;min-height:0}
+.dsh-git-qc-box .dsh-git-picklist{flex:0 1 auto}
+.dsh-git-qc-box .dsh-git-picklist .dsh-git-bs-list{max-height:none;flex:0 1 auto;min-height:0}
+
 /* ── 三方合并冲突界面（59-merge.js）：三栏只读 + 可编辑结果区 ──
     色块的口径与 55-diff 的加/删底色同一套做法：主题里没有「淡蓝/淡黄的一块」这
     种令牌，用固定 rgba（14% 上下在浅色和深色底上都读得出来）。四色各有其职：
