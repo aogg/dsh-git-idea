@@ -98,18 +98,15 @@ console.log('=== 不带 setUpstream：行为一字不变 ===')
   check('答复上没有 upstreamSet / pulled 这些新键（不带的调用一字不多）',
     reply.upstreamSet === undefined && reply.pulled === undefined)
   check('@{u} 仍然为空', (await sh('git rev-parse --abbrev-ref --symbolic-full-name @{u}', R)).code !== 0)
-  const seen2 = []
-  const b = makeBody({ HOME: HOME, GIT_CONFIG_GLOBAL: GLOBAL }, seen2)
-  await b.H('git/config-save')({ config: { pullRebase: true } })
-  await b.H('git/pull')({ repo: R })
-  check('pullRebase 开了照旧带 --rebase（原路径原样保留）',
-    seen2.some((c) => c.indexOf("git 'pull' '--rebase'") >= 0 && c.indexOf('set-upstream-to') < 0))
 }
 
 console.log('')
 console.log('=== 带 setUpstream：先绑定再拉取，@{u} 指对 ===')
 {
   const seen = []
+  /* 每节先把配置文件清掉：上一节可能存过 pullRebase 之类的键，配置是落在
+     HOME/.dsh 里的，跨 makeBody 存活。 */
+  await sh('rm -f ' + HOME + '/.dsh/dsh-git-idea.json', '/tmp')
   const a = makeBody({ HOME: HOME, GIT_CONFIG_GLOBAL: GLOBAL }, seen)
   await sh('git checkout -q side', R)
   const reply = await a.H('git/pull')({ repo: R, setUpstream: { remote: 'origin', branch: 'side' } })
@@ -131,6 +128,7 @@ console.log('')
 console.log('=== 参数校验：非法一律 bad-value，一个字节不跑 ===')
 {
   const seen = []
+  await sh('rm -f ' + HOME + '/.dsh/dsh-git-idea.json', '/tmp')
   const a = makeBody({ HOME: HOME, GIT_CONFIG_GLOBAL: GLOBAL }, seen)
   const cases = [
     ['remote 为空', { remote: '  ', branch: 'side' }],
@@ -157,6 +155,7 @@ console.log('')
 console.log('=== 远端分支其实不存在（refs 过期）：报错可回落，pull 不跑 ===')
 {
   const seen = []
+  await sh('rm -f ' + HOME + '/.dsh/dsh-git-idea.json', '/tmp')
   const a = makeBody({ HOME: HOME, GIT_CONFIG_GLOBAL: GLOBAL }, seen)
   await sh('git checkout -q lonely', R)
   const reply = await a.H('git/pull')({ repo: R, setUpstream: { remote: 'origin', branch: 'ghost' } })
@@ -167,8 +166,10 @@ console.log('=== 远端分支其实不存在（refs 过期）：报错可回落�
   check('setUpstream 带着这一步自己的退出码与非 0 的 exitCode',
     reply.setUpstream != null && reply.setUpstream.branch === 'ghost' && reply.setUpstream.exitCode !== 0
     && reply.exitCode !== 0)
-  check('pull 没有跑（spy 里只有绑定那一条）',
-    seen.length === 1 && seen[0].indexOf('set-upstream-to=origin/ghost') >= 0)
+  /* 配置探测（printf/cat）也进 spy；git 命令里只有绑定那一条，pull 一次没跑。 */
+  check('pull 没有跑（git 命令里只有绑定那一条）',
+    seen.every((c) => c.indexOf("'pull'") < 0)
+    && seen.filter((c) => c.indexOf('set-upstream-to=origin/ghost') >= 0).length === 1)
   check('@{u} 原样为空', (await sh('git rev-parse --abbrev-ref --symbolic-full-name @{u}', R)).code !== 0)
 }
 
@@ -176,6 +177,7 @@ console.log('')
 console.log('=== 绑定成功而 pull 失败（冲突）：upstream 保留 ===')
 {
   const seen = []
+  await sh('rm -f ' + HOME + '/.dsh/dsh-git-idea.json', '/tmp')
   const a = makeBody({ HOME: HOME, GIT_CONFIG_GLOBAL: GLOBAL }, seen)
   await sh(`cd ${R} && git checkout -q -b conf main
 echo base > c.txt && git add -A && git commit -qm conf-base && git push -q origin conf
@@ -189,7 +191,28 @@ cd ${R} && git checkout -q conf && echo ours > c.txt && git add -A && git commit
     (await sh('git rev-parse --abbrev-ref --symbolic-full-name @{u}', R)).out.trim() === 'origin/conf')
   check('两条命令都在（绑定 + 拉取）',
     seen.some((c) => c.indexOf('set-upstream-to=origin/conf') >= 0) && seen.some((c) => c.indexOf("git 'pull'") >= 0))
-  await sh('git merge --abort', R)
+  await sh('cd ' + R + ' && git merge --abort 2>/dev/null; git rebase --abort 2>/dev/null; true', '/tmp')
+}
+
+console.log('')
+console.log('=== pullRebase：原路径原样，setUpstream 叠加也照旧带 --rebase ===')
+{
+  const seen = []
+  const a = makeBody({ HOME: HOME, GIT_CONFIG_GLOBAL: GLOBAL }, seen)
+  await a.H('git/config-save')({ config: { pullRebase: true } })
+  await sh('cd ' + R + ' && git checkout -q side', '/tmp')
+  await a.H('git/pull')({ repo: R })
+  check('不带 setUpstream：pullRebase 开了照旧带 --rebase（原路径原样保留）',
+    seen.some((c) => c.indexOf("git 'pull' '--rebase'") >= 0 && c.indexOf('set-upstream-to') < 0))
+  const seen2 = []
+  const b = makeBody({ HOME: HOME, GIT_CONFIG_GLOBAL: GLOBAL }, seen2)
+  await sh('cd ' + R + ' && git checkout -q main', '/tmp')
+  const reply = await b.H('git/pull')({ repo: R, setUpstream: { remote: 'origin', branch: 'main' } })
+  const at = seen2.findIndex((c) => c.indexOf('set-upstream-to=origin/main') >= 0)
+  const pull = seen2.findIndex((c) => c.indexOf("git 'pull' '--rebase'") >= 0)
+  check('带 setUpstream：先绑定再 pull --rebase，@{u} = origin/main',
+    reply.ok === true && reply.upstreamSet === true && at >= 0 && pull > at
+    && (await sh('git rev-parse --abbrev-ref --symbolic-full-name @{u}', R)).out.trim() === 'origin/main')
 }
 
 if (failed > 0) {
