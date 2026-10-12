@@ -92,6 +92,11 @@
          不同，这一项两边都做归一化：它是读者直接编辑的清单，编辑器保存前要拿「合法
          条目 + 条数」做校验，Host 那份 normalizeConfig 是落盘前的最后一道关卡。 */
       quickCommands: [],
+      /* 提交信息草稿（按生效仓库的根路径分键，80-panel.js 读写 / host 70-config.js
+         归一化）。与 repos 同一条先例：设置页保存的是**整份**配置，客户端的归一化
+         把它丢了的话，读者在设置页改一次 git 路径，各仓库写到一半的提交信息就全
+         没了。原样搬运、不做清洗 —— 清洗是 Host 那边 normalizeDrafts 的职责。 */
+      drafts: {},
     }
     let pluginConfig = Object.assign({}, PLUGIN_CONFIG_DEFAULTS)
     let pluginConfigPath = ''
@@ -122,6 +127,9 @@
       /* repos 见上面 PLUGIN_CONFIG_DEFAULTS 里的说明：原样搬运，Host 那边负责清洗。 */
       out.repos = raw.repos != null && typeof raw.repos === 'object' && !Array.isArray(raw.repos) ? raw.repos : {}
       out.quickCommands = normalizeQuickCommands(raw.quickCommands)
+      /* drafts 同 repos 一条先例：原样搬运，Host 那边负责清洗（见 PLUGIN_CONFIG_DEFAULTS
+         里那一格的说明）。 */
+      out.drafts = raw.drafts != null && typeof raw.drafts === 'object' && !Array.isArray(raw.drafts) ? raw.drafts : {}
       return out
     }
 

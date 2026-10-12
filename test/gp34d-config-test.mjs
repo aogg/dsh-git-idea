@@ -187,6 +187,111 @@ check('配好身份之后提交成功，作者就是刚写进去的那个名字'
 check('而且这次答复里没有身份这个标志', committed.needsIdentity === undefined)
 
 console.log('')
+console.log('== 提交信息草稿：按生效仓库存进这份配置 ==')
+
+/* 两条 RPC 先钉在源码上（body 就是 host.js 的全文），行为断言在后面。 */
+check('git/draft-read 与 git/draft-save 都在 Host 的 RPC 表里',
+  body.indexOf("onRpc('git/draft-read'") >= 0 && body.indexOf("onRpc('git/draft-save'") >= 0)
+
+/* drafts 与 repos、quickCommands 同住这份 json（70-config.js）。归一化从 git/config-save
+   那扇门走：它是整份配置的最后一道关卡，设置页整份保存带进来的、别的版本写进来的
+   drafts，都要在这里过一遍筛。 */
+check('归一化：非对象的 drafts 清成空表（配置里这个键永远在）',
+  (await H('git/config-save')({ config: { drafts: '不是表' } })).ok === true
+  && Object.keys((await H('git/config')({})).config.drafts).length === 0)
+check('归一化：数组也不收（草稿按仓库路径分键，数组没有键）',
+  Object.keys((await H('git/config-save')({ config: { drafts: ['a'] } })).config.drafts).length === 0)
+
+const dirty = await H('git/config-save')({
+  config: {
+    initBranch: 'develop',
+    repos: { '/tmp/gp34d-ws': ['/tmp/gp34d-ident'] },
+    drafts: {
+      '/tmp/gp34d-ident': '写到一半的那条',
+      'relative/path': '不是绝对路径',
+      '/tmp/gp34d-ident2': 42,
+      '/tmp/gp34d-empty': '   ',
+      '/tmp/gp34d-long': 'x'.repeat(5000),
+    },
+  },
+})
+check('归一化：非法键（相对路径、非字符串值）与只剩空白的条目丢掉，合法的留着',
+  dirty.ok === true && Object.keys(dirty.config.drafts).length === 2
+  && dirty.config.drafts['/tmp/gp34d-ident'] === '写到一半的那条')
+check('归一化：超长的截到 4000（同一个键原样保留）',
+  dirty.config.drafts['/tmp/gp34d-long'] === 'x'.repeat(4000))
+
+check('draft-read 把存进去的那条原样读回来',
+  (await H('git/draft-read')({ repo: '/tmp/gp34d-ident' })).message === '写到一半的那条')
+check('没有草稿的仓库答 ok 与空串（空 = 无草稿，不是错误）',
+  (await H('git/draft-read')({ repo: '/tmp/gp34d-nowhere' })).ok === true
+  && (await H('git/draft-read')({ repo: '/tmp/gp34d-nowhere' })).message === '')
+check('路径不像话的读也安静：ok 与空串，绝不报错',
+  (await H('git/draft-read')({ repo: 'relative/path' })).ok === true
+  && (await H('git/draft-read')({ repo: '' })).message === ''
+  && (await H('git/draft-read')({ repo: 42 })).message === ''
+  && (await H('git/draft-read')(null)).message === '')
+
+const saved3 = await H('git/draft-save')({ repo: '/tmp/gp34d-ident3', message: '新的一条' })
+const afterSave = await H('git/config')({})
+check('draft-save 存进一个新仓库：答复 ok，配置里几仓几份互不干扰',
+  saved3.ok === true
+  && afterSave.config.drafts['/tmp/gp34d-ident'] === '写到一半的那条'
+  && afterSave.config.drafts['/tmp/gp34d-long'].length === 4000
+  && afterSave.config.drafts['/tmp/gp34d-ident3'] === '新的一条')
+check('draft-save 只动 drafts：initBranch 与 repos 原样跟着写回（磁盘上也是）',
+  afterSave.config.initBranch === 'develop'
+  && JSON.stringify(afterSave.config.repos) === JSON.stringify({ '/tmp/gp34d-ws': ['/tmp/gp34d-ident'] })
+  && JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')).initBranch === 'develop')
+
+const bytesBefore = fs.readFileSync(CONFIG_FILE, 'utf8')
+const same = await H('git/draft-save')({ repo: '/tmp/gp34d-ident3', message: '新的一条' })
+check('同值再存一次：答复 unchanged，盘上一个字节没动（防抖的重复保存不写盘）',
+  same.ok === true && same.unchanged === true
+  && fs.readFileSync(CONFIG_FILE, 'utf8') === bytesBefore)
+check('存一条只剩空白的信息 = 删掉这份草稿（「空」也是一条信息）',
+  (await H('git/draft-save')({ repo: '/tmp/gp34d-ident3', message: '   ' })).ok === true
+  && (await H('git/config')({})).config.drafts['/tmp/gp34d-ident3'] === undefined)
+check('repo 不像话的存被拒（相对路径、空串都不行，宁可拒绝也不猜）',
+  (await H('git/draft-save')({ repo: 'relative/path', message: 'x' })).ok === false
+  && (await H('git/draft-save')({ repo: '', message: 'x' })).ok === false)
+
+const many = {}
+for (let i = 0; i < 70; i += 1) many['/tmp/gp34d-d' + i] = '第' + i + '条'
+const capped = await H('git/config-save')({ config: { drafts: many } })
+check('草稿按仓库封顶：70 个只留 64 个（键序在前面的留下）',
+  capped.ok === true && Object.keys(capped.config.drafts).length === 64)
+check('封顶之后新仓库的草稿存不进（直说，而不是悄悄挤掉谁）',
+  (await H('git/draft-save')({ repo: '/tmp/gp34d-new', message: '挤不进来的' })).ok === false)
+check('封顶之内更新已有的那一份照常',
+  (await H('git/draft-save')({ repo: '/tmp/gp34d-d0', message: '更新的第0条' })).ok === true
+  && (await H('git/draft-read')({ repo: '/tmp/gp34d-d0' })).message === '更新的第0条')
+
+/* 回到小份配置，下面的并发与写盘失败都在它身上试。 */
+await H('git/config-save')({ config: { drafts: { '/tmp/gp34d-ident': '并发前的那条' } } })
+const both = await Promise.all([
+  H('git/draft-save')({ repo: '/tmp/gp34d-ident', message: '并发甲' }),
+  H('git/draft-save')({ repo: '/tmp/gp34d-ident2', message: '并发乙' }),
+])
+check('并发两次保存：两次都答复 ok，谁也没把谁撞炸',
+  both[0].ok === true && both[1].ok === true)
+check('并发之后这份文件仍是合法 JSON，Host 照常答草稿',
+  JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')).drafts !== undefined
+  && (await H('git/draft-read')({ repo: '/tmp/gp34d-ident' })).ok === true)
+
+/* 写盘失败：把配置目录顶成一个同名文件，mkdir -p 那一步就会失败 —— 答复要说得出
+   为什么，进程要活着，目录恢复之后同一条路要照常工作。 */
+await sh('rm -rf ' + IDENT_DIR + ' && touch ' + IDENT_DIR)
+const broken = await H('git/draft-save')({ repo: '/tmp/gp34d-ident', message: '写不进去的一条' })
+check('写盘失败：答复 ok:false 带一句原因，而不是把异常抛到天上',
+  broken.ok === false && typeof broken.error === 'string' && broken.error.length > 0)
+await sh('rm -f ' + IDENT_DIR + ' && mkdir -p ' + IDENT_DIR)
+const healed = await H('git/draft-save')({ repo: '/tmp/gp34d-ident', message: '恢复之后的一条' })
+check('目录恢复之后同一条路照常工作（进程没被那次失败带坏）',
+  healed.ok === true
+  && (await H('git/draft-read')({ repo: '/tmp/gp34d-ident' })).message === '恢复之后的一条')
+
+console.log('')
 if (guards.length > 0) {
   console.log('✗ ' + guards.length + ' 条不符合预期')
   process.exit(1)

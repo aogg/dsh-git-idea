@@ -56,6 +56,29 @@
       return entry.staged === true && addedInIndex(entry.indexCode)
     }
 
+    /* ── the one checkbox, drawn once ──
+
+       列表行、目录行、组头、（55-diff.js 的）差异头部 —— 到处都是同一只框，所以它
+       只能有一份构造：class（dsh-git-cbox，勾上再挂 dsh-git-cbox-on，部分勾选挂
+       dsh-git-cbox-part）、字形（☑ / ▣ / ☐）、悬停话术与「点了不惊动行」的
+       stopPropagation 都住在这里。谁再抄一份回去，两处框迟早长得不一样 —— 就像
+       treeDirRow 当年被抄成两份一样。 */
+
+    /* 挂在模块层而不是 ChangesPane 里的原因只有一个：55-diff.js 在本片段之后拼接、
+       共享同一个作用域，差异头部的勾选框要用的正是这一份（段落的拼接顺序见
+       build.mjs 的 TARGETS）。它只用 h 和自己的参数，不读任何组件状态。 */
+    const stageBox = function (key, state, title, onClick) {
+      return h('span', {
+        key: key,
+        className: 'dsh-git-cbox' + (state === 'all' ? ' dsh-git-cbox-on' : (state === 'some' ? ' dsh-git-cbox-part' : '')),
+        title: title,
+        onClick: function (event) {
+          event.stopPropagation()
+          onClick()
+        },
+      }, state === 'all' ? '☑' : (state === 'some' ? '▣' : '☐'))
+    }
+
     function ChangesPane(props) {
       /* Read before the early returns: a hook cannot be skipped by a branch. */
       const settings = useGitSettings()
@@ -96,17 +119,7 @@
       const indentPad = function (depth) {
         return h('span', { key: 'pad', className: 'dsh-git-tind', style: { width: (depth * INDENT_W) + 'px' } })
       }
-      const stageBox = function (key, state, title, onClick) {
-        return h('span', {
-          key: key,
-          className: 'dsh-git-cbox' + (state === 'all' ? ' dsh-git-cbox-on' : (state === 'some' ? ' dsh-git-cbox-part' : '')),
-          title: title,
-          onClick: function (event) {
-            event.stopPropagation()
-            onClick()
-          },
-        }, state === 'all' ? '☑' : (state === 'some' ? '▣' : '☐'))
-      }
+      /* stageBox 在模块层（见文件头），列表行、目录行、组头与差异头部共用这一份。 */
 
       /* ── the name first, the folder after it ──
 

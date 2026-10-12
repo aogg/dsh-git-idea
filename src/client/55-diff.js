@@ -421,8 +421,34 @@
          不过就是 null，头部比过去短一块，别的地方一字不动。 */
       const viewFile = viewFileButton(target, props.sessionId, props.repoRoot)
 
+      /* ── 头部的勾选框：变更列表那一只，跟到差异视图里来 ──
+
+         变更树的每一行都有勾选框（勾 = 这条路径的改动进了索引，点一下就是
+         setStaged 那条路），单击行打开差异之后那只框就看不见了 —— 而读补丁的
+         时候恰恰经常要顺手决定「这个文件进不进这次提交」。头部画的就是列表那一只：
+         stageBox 同一份构造（54-changes.js，模块层那一个定义，两处调用），class、
+         字形、悬停话术与点击手势一字不差；语义也是列表的语义 —— 框只回答「这条
+         路径的改动现在在不在索引里」，文件暂存之后又改过（staged 与 workCode
+         并存，列表里那只框照样是勾着的）也一样照列表勾。
+
+         两道守卫任何一道不过就返回 null 不画（viewFileButton 的同一条规矩）：
+         提交详情那一路（kind === 'commit'）读的是某一次提交的补丁，「暂存」对它
+         无从谈起，框不画；宿主没接 onStage 时画一只点不动的框比不画更糟。
+         点一下就是 props.onStage(!staged)，80-panel.js 把它接成
+         setStaged([{path}], staged, diffRepo) —— 与列表同一个通道、同一个乐观补丁。
+         头部右侧那个「暂存/取消暂存」文字按钮原样保留：它的历史比框长，守护它的
+         断言（gp42 第 16 节的头部排序）也在，没有理由在这次改动里动它。 */
+      const stageToggle = target.kind !== 'file' || typeof props.onStage !== 'function'
+        ? null
+        : stageBox('stagebox', target.staged === true ? 'all' : 'none',
+          target.staged === true ? '取消暂存' : '暂存',
+          function () { props.onStage(target.staged !== true) })
+
       const head = h('div', { key: 'head', className: 'dsh-git-diffhead' },
         diffIconButton('back', h(Icon, { name: 'back', size: 14 }), '返回文件列表', props.onBack),
+        /* 框在路径之前 —— 和列表行同一个读法：先框，再状态，再名字（54-changes.js
+           的 fileRow 把框放在行首就是为这一眼）。 */
+        stageToggle,
         h('span', { key: 'p', className: 'dsh-git-diffpath', title: target.path }, target.path),
         target.status !== undefined
           ? h('span', { key: 'st', className: 'dsh-git-st' + statusClass(target.status) }, statusLabel(target.status))

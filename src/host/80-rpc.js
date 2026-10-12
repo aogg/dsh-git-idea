@@ -43,6 +43,15 @@ onRpc('git/config-save', function (input) {
   return writeConfigFile(input != null ? input.config : null, argsAt(input, null))
 })
 
+/* 提交信息草稿（70-config.js 的 drafts）：按生效仓库的根路径一仓一份，读改写都
+   在 Host —— 客户端只递「哪个仓库、这条信息」，不拿整份配置来回倒（config-save
+   是整份换掉的写法，防抖的草稿保存每次整体写回，会把读与写之间落进的别的键抹掉，
+   理由全在 70-config.js 那一段）。保存失败不是任何主流程的失败 —— 客户端只把它
+   送进控制台。 */
+onRpc('git/draft-read', function (input) { return draftRead(input) })
+
+onRpc('git/draft-save', function (input) { return draftSave(input) })
+
 /* The two machine-level questions the settings page asks: which git, and who
    commits. Both are reads of the world outside the repository and neither is
    cached — the reader opening this page is asking "now", not "a moment ago". */
