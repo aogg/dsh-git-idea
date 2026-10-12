@@ -1799,7 +1799,7 @@ return {
 .dsh-git-lf:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dsh-git-lf-on{color:var(--dsw-alias-brand-primary)}
 .dsh-git-lf-k{flex:none;color:inherit;opacity:.85}
-.dsh-git-lf-select{appearance:none;-webkit-appearance:none;-moz-appearance:none;border:0;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:11px;font-family:inherit;padding:0;flex:0 1 auto;min-width:0;overflow:hidden;cursor:pointer;outline:none}
+.dsh-git-lf-select{appearance:none;-webkit-appearance:none;-moz-appearance:none;border:0;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:11px;font-family:inherit;padding:0;flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;cursor:pointer;outline:none}
 .dsh-git-lf-select option{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}
 .dsh-git-lf-caret{display:inline-flex;flex:none;color:var(--dsw-alias-label-secondary);pointer-events:none}
 .dsh-git-lf-input{flex:0 1 auto;min-width:0;border:0;background:transparent;outline:none;font:inherit;font-size:11px;font-family:inherit;color:var(--dsw-alias-label-primary);padding:0}
@@ -1865,10 +1865,10 @@ return {
 .dsh-git-cgroup{margin-top:4px}
 .dsh-git-cgroup .dsh-git-tname{font-weight:600}
 /* ── 默认变更列表的工具条（54-changes.js）：添加 / 还原 / 暂存 ──
-    类名刻意不用 dsh-git-tool / dsh-git-tool-ico：那两个类说的是「作用于选中提交的
-    那四个工具」，测试也按个数认它们（78-actions.js 开头说明了原因）——这一排是对
-    一组勾选做事，名字分开对两边都诚实。左边 20px 让按钮避开勾选框那一列，和组里
-    的行对得上。 */
+    类名刻意不用 dsh-git-tool：那个类说的是「作用于选中提交的工具」（拣选/还原/标签/
+    分支——现在住在提交行的右键菜单里，同步组 ⟳⇣↓↑ 也还在用），测试也按个数认它
+    （78-actions.js 开头说明了原因）——这一排是对一组勾选做事，名字分开对两边都诚实。
+    左边 20px 让按钮避开勾选框那一列，和组里的行对得上。 */
 .dsh-git-ctools{display:flex;align-items:center;gap:4px;flex:none;padding:1px 6px 3px 20px}
 .dsh-git-ctool{display:inline-flex;align-items:center;border:1px solid var(--dsw-alias-border-l1);background:transparent;color:var(--dsw-alias-label-primary);border-radius:4px;padding:1px 8px;font-size:11px;font-family:inherit;line-height:16px;cursor:pointer;flex:none}
 .dsh-git-ctool:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
@@ -1923,15 +1923,20 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-danger{color:var(--dsw-alias-state-error-primary)}
 .dsh-git-tools{position:relative;flex:none;display:flex;align-items:center;gap:3px;flex-wrap:nowrap;padding:5px 52px 5px 7px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2)}
 /* Every part of this strip is fixed-width except the search box and the filters,
-   and the four commit actions at the end are the last thing that should ever
-   move: when a branch name makes the row too long, the things that can give way
-   do — the search shrinks and the filter chips clip — rather than the actions
+   and the two menu buttons at the end are the last thing that should ever move:
+   when a branch name makes the row too long, the things that can give way do —
+   the search shrinks and the filter chips clip — rather than the buttons
    dropping onto a second line under the filters they belong beside. */
 .dsh-git-logsearch{flex:0 1 170px}
+/* 「作用于选中提交」的拣选/还原/标签/分支四个键已经搬进提交行的右键菜单，这条
+   工具条上不再有它们；.dsh-git-tool 现在的面孔是面板头部的同步组（⟳⇣↓↑）、
+   序列器横幅上的 继续/跳过/中止，以及差异头部那三个图标键（见 -ico 一行）。 */
 .dsh-git-tool{display:inline-flex;align-items:center;gap:4px;border:1px solid transparent;background:0 0;color:var(--dsw-alias-label-primary);border-radius:5px;padding:3px 7px;font-size:11px;font-family:inherit;cursor:pointer;flex:none;line-height:16px}
 .dsh-git-tool:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
 .dsh-git-tool:disabled{opacity:.4;cursor:default}
 .dsh-git-tool-on{background:var(--dsw-alias-interactive-bg-hover);border-color:var(--dsw-alias-border-l1)}
+/* 图标键（55-diff.js 的 diffIconButton：返回/⟳/☰）只在这个家族里：26px 的方块
+   命中区、图标居中——没有文字，padding 不再撑它。 */
 .dsh-git-tool-ico{justify-content:center;width:26px;height:26px;padding:0}
 .dsh-git-tool-badge{display:inline-grid;place-items:center;min-width:14px;height:14px;padding:0 3px;border-radius:999px;background:var(--dsw-alias-brand-primary);color:#fff;font-size:9px;line-height:1}
 .dsh-git-grow{flex:0 1 auto;min-width:0}
@@ -2208,9 +2213,9 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-cmdnote{flex:none;padding-top:5px;font-size:10px;color:var(--dsw-alias-label-secondary)}
 .dsh-git-cmdtrunc{flex:none;font-size:10px;color:var(--dsw-alias-state-warn-primary)}
 
-/* ── ⋯ / ⚡：branch 右边那两个下拉按钮与它们的浮层（78-actions.js）──
-    按钮的样子照 .dsh-git-tool / .dsh-git-tool-ico 画（同尺寸、同圆角、同悬停），类名
-    刻意分开：那两个类说的是「作用于选中提交的四个工具」，这两个是「打开一个菜单」。 */
+/* ── ⋯ / ⚡：提交历史工具条右端那两个下拉按钮与它们的浮层（78-actions.js）──
+    按钮的样子照 .dsh-git-tool 画（同尺寸、同圆角、同悬停），类名刻意分开：那个类
+    说的是「作用于选中提交的工具」，这两个是「打开一个菜单」。 */
 .dsh-git-acts{position:relative;display:inline-flex;gap:3px;flex:none}
 .dsh-git-acts-btn{display:inline-flex;align-items:center;justify-content:center;gap:3px;width:26px;height:26px;padding:0;border:1px solid transparent;border-radius:5px;background:0 0;color:var(--dsw-alias-label-primary);font-family:inherit;font-size:12px;line-height:16px;cursor:pointer;flex:none}
 .dsh-git-acts-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
@@ -2409,6 +2414,13 @@ textarea.dsh-git-input{resize:vertical}
         /* 事件一起回给面板：Ctrl/Cmd+点击是「挑进/移出多选」，普通点击照旧单选 ——
            区分只在这一层做，行自己不解读修饰键。 */
         onClick: function (event) { props.onPick(commit.hash, event) },
+        /* 右键：拦掉浏览器自己的菜单，把这条提交交给面板 —— 面板先按左键单选的同
+           一条路选中它，再在光标处打开上下文菜单（拣选/还原/打标签/新建分支）。 */
+        onContextMenu: function (event) {
+          event.preventDefault()
+          event.stopPropagation()
+          props.onContext(commit.hash, event)
+        },
       },
         h('span', { className: 'dsh-git-subject' }, commit.subject),
         chips.length > 0 ? h('span', { className: 'dsh-git-refs' }, chips) : null,
@@ -2457,6 +2469,7 @@ textarea.dsh-git-input{resize:vertical}
           selected: props.selected === commits[i].hash,
           multi: multiSet[commits[i].hash] === true,
           onPick: props.onPick,
+          onContext: props.onContext,
         }))
       }
 
@@ -2604,6 +2617,13 @@ textarea.dsh-git-input{resize:vertical}
                 title: headTip.join('\n'),
                 onClick: function () { props.onSelect(selOf(name)) },
                 onDoubleClick: function () { props.onSelect(selOf(name)); props.onPickBranch(opts.repo, name) },
+                /* 右键：分支行的上下文菜单（复制分支名称 / 删除分支）。HEAD 组的行
+                   也是分支行 —— 它就是当前分支，菜单里的删除项由面板按名字置灰。 */
+                onContextMenu: function (event) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  props.onBranchContext(name, 'head', opts.repo, event)
+                },
               },
                 h('span', { className: 'dsh-git-tw' }, '★'),
                 h('span', { className: 'dsh-git-tname' }, name),
@@ -2619,6 +2639,9 @@ textarea.dsh-git-input{resize:vertical}
           const shown = matching(entries)
           rows.push(groupTitle(title, keyOf(key), needle.length === 0 ? String(entries.length) : String(shown.length)))
           if (collapsed[keyOf(key)] === true) return
+          /* 右键菜单的菜单项跟着这一组走：远程的分支只给「复制分支名称」（远端分支
+             的删除不在这一棵树的手势里），本地的才有删除。 */
+          const branchKind = key.indexOf('@remote:') === 0 ? 'remote' : 'local'
           const tree = buildTree(shown)
           /* 末位 true：分支树保留压扁 —— 分支名自带层级（origin/feat/x），逐层
              展开只会让只有目录没有分支的每一级白占一行（见 42-tree.js squeeze）。 */
@@ -2658,6 +2681,13 @@ textarea.dsh-git-input{resize:vertical}
                 title: tip.join('\n'),
                 onClick: function () { props.onSelect(selOf(branchName)) },
                 onDoubleClick: function () { props.onSelect(selOf(branchName)); props.onPickBranch(opts.repo, branchName) },
+                /* 右键：与 HEAD 组的行同一个约定（50-log.js 顶部那一处），菜单项按
+                   这一组是本地还是远程收放。 */
+                onContextMenu: function (event) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  props.onBranchContext(branchName, branchKind, opts.repo, event)
+                },
               },
                 h('span', { className: 'dsh-git-tw' }),
                 h('span', { className: 'dsh-git-tname' }, node.name),
@@ -5649,17 +5679,8 @@ textarea.dsh-git-input{resize:vertical}
       down: ['M3.8 6.4 L8 10.6 L12.2 6.4'],
       plus: ['M8 3.4 V12.6', 'M3.4 8 H12.6'],
       pull: ['M8 3.2 V9.8', 'M5.2 7 L8 9.8 L10.8 7', 'M3.6 11.8 V12.6 H12.4 V11.8'],
-      /* cherry-pick copies a commit onto the current branch, so it borrows the
-         copy glyph rather than an arrow: fetch and pull already own the arrows. */
-      /* A cherry, the way IDEA draws cherry-pick: two fruit and a stem. The copy
-         glyph read as "duplicate", which this is not — it lands a commit on the
-         branch you are on. */
-      pick: ['M4.1 9.6 A2.1 2.1 0 1 0 4.1 13.8 A2.1 2.1 0 1 0 4.1 9.6',
-        'M8.9 9 A2.1 2.1 0 1 0 8.9 13.2 A2.1 2.1 0 1 0 8.9 9',
-        'M4.2 9.6 C 4.5 6.6, 6 4.8, 9.4 4.2',
-        'M9.4 4.2 C 11.6 4.5, 12.4 6, 11.2 7'],
-      revert: ['M6.4 3.8 L3.2 7 L6.4 10.2', 'M3.2 7 H9.6 A3.4 3.4 0 0 1 9.6 13.8 H7.8'],
-      tag: ['M3 3.4 H7.4 L13 9 L9 13 L3.4 7.4 Z', 'M5.6 5 A0.9 0.9 0 1 0 5.6 6.8 A0.9 0.9 0 1 0 5.6 5'],
+      /* 拣选/还原/标签的三个形状随那四个工具条图标键一起退役了：这些动作现在住在
+         提交行的右键菜单里，菜单项是带字的按钮，不再画图标。 */
       /* An untracked directory git collapsed into one entry: the row has to say
          "directory" on its own, because there is no listing behind it until it is
          opened. */
@@ -6444,13 +6465,15 @@ textarea.dsh-git-input{resize:vertical}
 
     /* ── 「更多操作（⋯）」与「快捷命令（⚡）」：两个下拉、执行确认框、编辑器 ──
 
-       工具栏里 branch 按钮右边那两个图标按钮的下拉内容都在这里（按钮本体在 80-panel.js
-       的 toolbar 里）。快捷命令的编辑器是同一个组件的两处使用：面板里的覆盖层，和设置页
-       （90-settings.js）里的管理组 —— 片段共享作用域，直接引用，不需要再开一条通道。
+        提交操作（拣选/还原/标签/分支）搬进提交行的右键菜单之后，提交历史的工具条上
+        只剩这两个开菜单的按钮（按钮本体在 80-panel.js 的 toolbar 里）。快捷命令的编
+        辑器是同一个组件的两处使用：面板里的覆盖层，和设置页（90-settings.js）里的
+        管理组 —— 片段共享作用域，直接引用，不需要再开一条通道。
 
-       按钮的类名刻意不用 dsh-git-tool / dsh-git-tool-ico：样式照着它画（见 46-css.js），
-       但那两个类是「作用于选中提交的那四个工具」的语义，测试套件也按个数认它们 —— 新
-       按钮是「打开一个菜单」，不是「对选中项做事」，名字分开对两边都诚实。 */
+        按钮的类名刻意不用 dsh-git-tool：样式照着它画（见 46-css.js），但那个类是
+        「作用于选中提交的工具」（拣选/还原/标签/分支——它们现在住在提交行的右键
+        菜单里，同步组 ⟳⇣↓↑ 还在用）、测试套件也按个数认它 —— 新按钮是「打开一个
+        菜单」，不是「对选中项做事」，名字分开对两边都诚实。 */
 
     /* ── 变量代值 ──
 
@@ -6565,12 +6588,48 @@ textarea.dsh-git-input{resize:vertical}
       return name.trim().slice(0, 40) + '-' + String(Date.now()) + '-' + String(quickCommandSeq)
     }
 
+    /* ── 写剪贴板 ──
+
+       navigator.clipboard 优先（要 https 或 localhost 的安全上下文）；不满足或被拒
+       时退化到「隐藏 textarea + execCommand('copy')」的老路。两条路都不通（非安全
+       上下文、iframe 不许、浏览器太老）时回调 onFailed —— 调用方把分支名原话亮进
+       提示条，人还能手动选一下复制。 */
+    function copyByExecCommand(value, onCopied, onFailed) {
+      try {
+        const doc = typeof document === 'undefined' ? null : document
+        if (doc == null || typeof doc.createElement !== 'function' || typeof doc.execCommand !== 'function' || doc.body == null) {
+          onFailed()
+          return
+        }
+        const area = doc.createElement('textarea')
+        area.value = value
+        area.setAttribute('readonly', '')
+        area.style.position = 'fixed'
+        area.style.left = '-9999px'
+        doc.body.appendChild(area)
+        area.select()
+        const done = doc.execCommand('copy') === true
+        doc.body.removeChild(area)
+        if (done === true) onCopied()
+        else onFailed()
+      } catch (error) { onFailed() }
+    }
+    function copyTextToClipboard(value, onCopied, onFailed) {
+      const nav = typeof navigator === 'undefined' ? null : navigator
+      if (nav != null && nav.clipboard != null && typeof nav.clipboard.writeText === 'function') {
+        nav.clipboard.writeText(value).then(onCopied, function () { copyByExecCommand(value, onCopied, onFailed) })
+        return
+      }
+      copyByExecCommand(value, onCopied, onFailed)
+    }
+
     /* ── 下拉的开合：点外面 / Esc 关掉 ──
 
        面板在 panelNode 的 document 上收捕获阶段的 pointerdown 与 Escape。boxes 是视为
        「里面」的节点盒（菜单自己 + 触发按钮）：按钮必须算里面，否则点它会先被这里关掉、
        随后的 click 又把它打开，菜单就永远关不上了。effect 只随 open 重挂，所以 onClose
-       里只允许调用稳定的 setState。 */
+       里只允许调用稳定的 setState。Escape 有一个例外：焦点在**这份菜单自己的**文本框
+       里时，Escape 先归文本框（「新建分支」的输入行用它收起自己），这里不抢。 */
     function useOutsideDismiss(open, onClose, boxes) {
       React.useEffect(function () {
         if (open !== true) return undefined
@@ -6585,7 +6644,18 @@ textarea.dsh-git-input{resize:vertical}
           return false
         }
         const onDown = function (event) { if (inside(event.target) !== true) onClose() }
-        const onKey = function (event) { if (event.key === 'Escape') onClose() }
+        const onKey = function (event) {
+          if (event.key !== 'Escape') return
+          const target = event.target
+          const tag = target != null && typeof target.tagName === 'string' ? target.tagName : ''
+          if (tag === 'INPUT' || tag === 'TEXTAREA') {
+            for (let i = 0; i < boxes.length; i += 1) {
+              const node = boxes[i] != null ? boxes[i].node : null
+              if (node != null && typeof node.contains === 'function' && node.contains(target)) return
+            }
+          }
+          onClose()
+        }
         doc.addEventListener('pointerdown', onDown, true)
         doc.addEventListener('keydown', onKey, true)
         return function () {
@@ -6607,6 +6677,12 @@ textarea.dsh-git-input{resize:vertical}
       /* -d 被拒后为那个分支给出的「强制删除（-D）」通道；别的时候不出现。 */
       const [delForce, setDelForce] = React.useState('')
       const [delBusy, setDelBusy] = React.useState(false)
+      /* 复制分支名称的子菜单，与它的两个空态共用 locals（删除分支那份同一个来源）。 */
+      const [copyOpen, setCopyOpen] = React.useState(false)
+      /* 新建分支：子菜单里的输入行，回车提交；在飞的那一次不许重复提交。 */
+      const [newOpen, setNewOpen] = React.useState(false)
+      const [newName, setNewName] = React.useState('')
+      const [newBusy, setNewBusy] = React.useState(false)
       useOutsideDismiss(props.open, props.onClose, [box, props.trigger])
       if (props.open !== true) return null
 
@@ -6689,6 +6765,62 @@ textarea.dsh-git-input{resize:vertical}
         }
       }
 
+      /* ── 复制分支名称的子菜单：与删除分支同一份列表的画法，但每行都可点 ──
+         当前分支排最前（它才是最常要复制的那个名字）并带「当前分支」的灰字；点击只
+         写剪贴板。列表读不到时的空态照抄删除分支那两句。 */
+      const copyRows = []
+      if (locals == null) {
+        copyRows.push(h('div', { key: 'c:none', className: 'dsh-git-menu-dim dsh-git-menu-pad' }, '无法读取分支'))
+      } else if (locals.length === 0) {
+        copyRows.push(h('div', { key: 'c:none', className: 'dsh-git-menu-dim dsh-git-menu-pad' }, '这个仓库还没有本地分支'))
+      } else {
+        const orderedLocals = []
+        for (let i = 0; i < locals.length; i += 1) {
+          if (text(locals[i].data) === props.current) orderedLocals.unshift(locals[i])
+          else orderedLocals.push(locals[i])
+        }
+        for (let i = 0; i < orderedLocals.length; i += 1) {
+          const name = text(orderedLocals[i].data)
+          const isCurrent = name === props.current
+          copyRows.push(h('button', {
+            key: 'c:' + name, type: 'button', className: 'dsh-git-menu-item dsh-git-menu-branch',
+            title: '把 ' + name + ' 写进剪贴板',
+            onClick: function (event) {
+              stopEvent(event)
+              /* 关菜单在两条路里都要做：复制成了要收，复制不成也要收 —— 名字已经
+                  亮在提示条里，菜单再开着就挡住了它。 */
+              copyTextToClipboard(name, function () {
+                props.onNote('已复制分支名 ' + name)
+                props.onClose()
+              }, function () {
+                props.onNote('无法写入剪贴板，请手动复制分支名：' + name)
+                props.onClose()
+              })
+            },
+          }, name, isCurrent ? h('span', { key: 'c', className: 'dsh-git-menu-dim' }, '当前分支') : null))
+        }
+      }
+
+      /* 新建分支：不传 at，Host 从 HEAD 新建并切过去（branchpicker 的 submitNew
+         同一条 rpc）。成功的话这个名字已经是当前分支，菜单收掉、提示条说一声。 */
+      const createBranch = function () {
+        const name = newName.trim()
+        if (name.length === 0 || newBusy === true) return
+        setNewBusy(true)
+        rpc('git/branch-create', Object.assign({}, props.reqBase, { name: name }), '新建分支失败')
+          .then(function () {
+            setNewBusy(false)
+            bumpData()
+            props.onNote('已新建并切换到分支 ' + name)
+            props.onClose()
+          }, function (failure) {
+            const detail = failureText(failure)
+            setNewBusy(false)
+            bumpData()
+            props.onError(detail)
+          })
+      }
+
       return h('div', { className: 'dsh-git-menu', ref: function (node) { box.node = node } },
         h('button', {
           key: 'squash', type: 'button', className: 'dsh-git-menu-item',
@@ -6711,6 +6843,39 @@ textarea.dsh-git-input{resize:vertical}
         }, '删除提交' + (props.dropCount >= 1 ? '（已选 ' + String(props.dropCount) + ' 个）' : '')),
         h('div', { key: 's1', className: 'dsh-git-menu-sep' }),
         h('button', {
+          key: 'copyh', type: 'button', className: 'dsh-git-menu-item',
+          title: '把某个本地分支的名字写进剪贴板',
+          onClick: function (event) {
+            stopEvent(event)
+            setCopyOpen(copyOpen !== true)
+            setDelOpen(false)
+            setNewOpen(false)
+          },
+        }, '复制分支名称' + (copyOpen ? ' ▴' : ' ▾')),
+        copyOpen === true ? h('div', { key: 'copy', className: 'dsh-git-menu-sub' }, copyRows) : null,
+        h('button', {
+          key: 'newh', type: 'button', className: 'dsh-git-menu-item',
+          title: '从 HEAD 新建一个分支并切过去',
+          onClick: function (event) {
+            stopEvent(event)
+            setNewOpen(newOpen !== true)
+            setNewName('')
+            setCopyOpen(false)
+            setDelOpen(false)
+          },
+        }, '新建分支' + (newOpen ? ' ▴' : ' ▾')),
+        newOpen === true ? h('div', { key: 'new', className: 'dsh-git-menu-sub' },
+          h('input', {
+            key: 'ni', className: 'dsh-git-input', autoFocus: true,
+            placeholder: '新分支名，例如 feature/login',
+            value: newName, disabled: newBusy === true,
+            onChange: function (event) { setNewName(event.target.value) },
+            onKeyDown: function (event) {
+              if (event.key === 'Enter') { event.preventDefault(); createBranch() }
+              if (event.key === 'Escape') { event.preventDefault(); setNewOpen(false) }
+            },
+          })) : null,
+        h('button', {
           key: 'delh', type: 'button', className: 'dsh-git-menu-item',
           title: '删除这个仓库的本地分支（当前分支除外）',
           onClick: function (event) {
@@ -6718,6 +6883,8 @@ textarea.dsh-git-input{resize:vertical}
             setDelOpen(delOpen !== true)
             setDelArm('')
             setDelForce('')
+            setCopyOpen(false)
+            setNewOpen(false)
           },
         }, '删除分支' + (delOpen ? ' ▴' : ' ▾')),
         delOpen === true ? h('div', { key: 'del', className: 'dsh-git-menu-sub' }, branchRows) : null,
@@ -7044,6 +7211,42 @@ textarea.dsh-git-input{resize:vertical}
        git 自己管换行符的两个键（core.autocrlf / core.eol）是同一性质，三个分组都在
        这一页里；样式复用设置页那套 dsh-git-set-*。 */
 
+    /* ── 右键菜单（ContextMenu）：提交行与分支行共用的一块浮层 ──
+
+       与 ⋯/⚡ 两个下拉不同，它锚的是**光标**而不是触发按钮，所以没有「触发按钮也算
+       里面」这回事：点在菜单外（document 捕获阶段的 pointerdown）、Escape、滚动、
+       resize 都关。开合走 78-actions.js 的 useOutsideDismiss（它管前两样）；滚动与
+       resize 在这里补 —— 菜单自己内部（长分支列表的子菜单）的滚动不算滚走，否则
+       子菜单根本没法用滚轮读。 */
+    function ContextMenu(props) {
+      const [box] = React.useState(function () { return { node: null } })
+      useOutsideDismiss(props.open, props.onClose, [box])
+      React.useEffect(function () {
+        if (props.open !== true) return undefined
+        const doc = panelNode != null ? panelNode.ownerDocument : null
+        if (doc == null || typeof doc.addEventListener !== 'function') return undefined
+        const gone = function (event) {
+          const target = event != null && event.target != null ? event.target : null
+          const self = box.node
+          if (self != null && typeof self.contains === 'function' && target != null
+            && typeof target.nodeType === 'number' && self.contains(target) === true) return
+          props.onClose()
+        }
+        doc.addEventListener('scroll', gone, true)
+        const view = doc.defaultView
+        if (view != null && typeof view.addEventListener === 'function') view.addEventListener('resize', gone)
+        return function () {
+          doc.removeEventListener('scroll', gone, true)
+          if (view != null && typeof view.removeEventListener === 'function') view.removeEventListener('resize', gone)
+        }
+      }, [props.open])
+      if (props.open !== true) return null
+      return h('div', {
+        className: 'dsh-git-menu', ref: function (node) { box.node = node },
+        style: { position: 'fixed', left: String(props.x) + 'px', top: String(props.y) + 'px', right: 'auto' },
+      }, props.children)
+    }
+
     function GitConfigPane(props) {
       const sessionId = props.sessionId
       const plugin = usePluginConfig()
@@ -7353,6 +7556,15 @@ textarea.dsh-git-input{resize:vertical}
       const [multiSel, setMultiSel] = React.useState([])
       /* ⋯（更多操作）/ ⚡（快捷命令）两个下拉的开合：null = 都关着。 */
       const [menuOpen, setMenuOpen] = React.useState(null)
+      /* ── 右键菜单（提交行 / 分支行共用）──
+
+         ctxMenu 存 {kind, x, y, …}：kind='commit' 带 hash（动作目标就是右键那一条，
+         与 Ctrl 多选无关）；kind='branch' 带名字、是否远程、属于哪个仓库。arm/force
+         是分支删除的两段式确认（语义照 ⋯ 菜单的删除分支），busy 是它在飞的那一下。 */
+      const [ctxMenu, setCtxMenu] = React.useState(null)
+      const [ctxArm, setCtxArm] = React.useState('')
+      const [ctxForce, setCtxForce] = React.useState('')
+      const [ctxBusy, setCtxBusy] = React.useState(false)
       /* 快捷命令的统一执行确认框（拿着哪条定义）与编辑器覆盖层（'new' 直接进编辑态、
          'list' 进列表态）。 */
       const [qcConfirm, setQcConfirm] = React.useState(null)
@@ -7572,6 +7784,7 @@ textarea.dsh-git-input{resize:vertical}
         /* 多选、下拉、覆盖层都是「对着眼前这份列表」的状态：仓库一换全部作废。 */
         setMultiSel([])
         setMenuOpen(null)
+        setCtxMenu(null)
         setQcConfirm(null)
         setQcEditor(null)
         setOkNote('')
@@ -8367,6 +8580,61 @@ textarea.dsh-git-input{resize:vertical}
         openCommit(hash)
       }, [openCommit])
 
+      /* ── 右键菜单的两个人口 ──
+
+         提交行：右键 = 先按左键单选的同一条路选中（openCommit），再在光标处开菜单；
+         Ctrl 多选不动，菜单里的动作只对右键那一条。分支行：带这一组的种类（本地/
+         远程/HEAD）与所属仓库（多选分组里的分支删除要落在它自己的仓库上）。开新菜单
+         时把上一次的两段式确认作废。传给 memo 化提交行的回调必须稳定，否则行级记忆
+         全被打破 —— 所以 openCommitMenu 是 useCallback。 */
+      const openCommitMenu = useCallback(function (hash, event) {
+        openCommit(hash)
+        setCtxMenu({
+          kind: 'commit', hash: hash,
+          x: event != null && typeof event.clientX === 'number' ? event.clientX : 0,
+          y: event != null && typeof event.clientY === 'number' ? event.clientY : 0,
+        })
+      }, [openCommit])
+
+      const openBranchMenu = function (name, kind, repo, event) {
+        setCtxArm('')
+        setCtxForce('')
+        setCtxMenu({
+          kind: 'branch', name: name, remote: kind === 'remote', repo: text(repo),
+          x: event != null && typeof event.clientX === 'number' ? event.clientX : 0,
+          y: event != null && typeof event.clientY === 'number' ? event.clientY : 0,
+        })
+      }
+
+      /* 分支行的删除：两段式确认的语义与 ⋯ 菜单的 remove() 逐字对齐 —— -d 被拒
+         （提交没合并到别处）才给出 -D，-D 也要再确认一次。成功后关菜单、提示条说
+         一声；失败菜单留着（强制删除那一项要在这里出现）。 */
+      const ctxBranchRemove = function (name, force) {
+        if (ctxBusy === true || busy === true) return
+        setCtxBusy(true)
+        const scope = ctxMenu != null && text(ctxMenu.repo).length > 0 ? base(ctxMenu.repo) : base(appliedRepo)
+        rpc('git/branch-delete', Object.assign({}, scope, { name: name, force: force === true }), '删除分支失败')
+          .then(function () {
+            setCtxBusy(false)
+            bump()
+            setCtxArm('')
+            setCtxForce('')
+            setOkNote('已删除分支 ' + name + (force === true ? '（强制 -D，未合并的提交已随分支丢弃）' : ''))
+            setCtxMenu(null)
+          }, function (failure) {
+            const detail = failureText(failure)
+            setCtxBusy(false)
+            bump()
+            if (force !== true && detail.indexOf('not fully merged') >= 0) {
+              setCtxForce(name)
+              setCtxArm('')
+              setError('git 拒绝安全删除 ' + name + '：它的提交还没有合并到别处。')
+              return
+            }
+            setError(detail)
+          })
+      }
+
       /* ── 多选的清空与修剪 ──
 
          多选是「对着眼前这份列表」选出来的：分支范围、筛选、搜索一变，所选的那段就
@@ -8837,8 +9105,8 @@ textarea.dsh-git-input{resize:vertical}
         const classes = ['dsh-git-tool']
         if (opts.danger === true) classes.push('dsh-git-danger')
         if (opts.on === true) classes.push('dsh-git-tool-on')
-        /* An icon-only tool: same hit area as the labelled ones, no text. */
-        if (opts.ico === true) classes.push('dsh-git-tool-ico')
+        /* 图标键的 -ico 变体不再由这里出：拣选/还原/标签/分支搬进右键菜单后，这条
+           工具条上只剩带字（或带字符图形）的键 —— 26px 方块的画法只属于差异头部。 */
         const parts = [label]
         if (typeof opts.badge === 'number' && opts.badge > 0) {
           parts.push(h('span', { key: 'b', className: 'dsh-git-tool-badge' }, String(opts.badge)))
@@ -8907,15 +9175,18 @@ textarea.dsh-git-input{resize:vertical}
       /* A native select is as wide as its WIDEST option, not the value it is
          showing: with the arrow suppressed that left "作者：mays" floating in a
          112px box with the caret and the × parked at the far end. Sizing the
-         control to the label it currently displays keeps the three together. */
-      const labelWidth = function (label) {
+         control to the label it currently displays keeps the three together.
+         cap 是每条控件自己的上限：作者/时间还是 132；分支范围单独放宽到 300 ——
+         分支名动辄二十几个字符，132px 只装得下一个省略号，而原生下拉弹层的宽度
+         跟着 select 走，弹层里一样读不全。 */
+      const labelWidth = function (label, cap) {
         let w = 0
         for (let i = 0; i < label.length; i += 1) w += label.charCodeAt(i) > 0x2e80 ? 11.5 : 6.3
         /* +6 of slack: a select that is a hair too narrow clips its own text, and
            a clipped branch name is worse than six spare pixels. */
-        return Math.min(132, Math.max(16, Math.round(w) + 6))
+        return Math.min(cap != null ? cap : 132, Math.max(16, Math.round(w) + 6))
       }
-      const lfWidth = function (label) { return { width: String(labelWidth(label)) + 'px' } }
+      const lfWidth = function (label, cap) { return { width: String(labelWidth(label, cap)) + 'px' } }
       const lfClear = function (key, name, onClear) {
         return h('button', {
           key: key, type: 'button', className: 'dsh-git-lf-x', title: '清除' + name + '筛选',
@@ -8950,8 +9221,13 @@ textarea.dsh-git-input{resize:vertical}
         }, '×') : null)
 
       let branchLabel = branchOptions[0].label
+      let branchFull = branchOptions[0].title
       for (let i = 0; i < branchOptions.length; i += 1) {
-        if (branchOptions[i].value === branchValue) { branchLabel = branchOptions[i].label; break }
+        if (branchOptions[i].value === branchValue) {
+          branchLabel = branchOptions[i].label
+          branchFull = branchOptions[i].title
+          break
+        }
       }
       const branchScoped = allRefs || activeRef.length > 0
       const branchFilter = h('label', {
@@ -8959,7 +9235,11 @@ textarea.dsh-git-input{resize:vertical}
       },
         h('span', { key: 'k', className: 'dsh-git-lf-k' }, '分支：'),
         h('select', {
-          key: 's', className: 'dsh-git-lf-select', style: lfWidth(branchLabel), value: branchValue,
+          key: 's', className: 'dsh-git-lf-select',
+          /* 分支范围单独放宽（见 labelWidth 的 cap）：作者/时间仍是 132。关着时长名
+             以省略号收尾（CSS 的 text-overflow:ellipsis），悬停这里能看到完整名。 */
+          style: lfWidth(branchLabel, 300), value: branchValue,
+          title: branchFull != null && branchFull.length > 0 ? branchFull : '当前分支',
           onChange: function (event) {
             const next = event.target.value
             setSelectedKey(null)
@@ -9053,31 +9333,15 @@ textarea.dsh-git-input{resize:vertical}
         }, '全部清除') : null,
         h('span', { key: 'grow', className: 'dsh-git-grow' }),
         h('span', { key: 'sep', className: 'dsh-git-tsep' }),
-        tool('pick', h(Icon, { name: 'pick', size: 15 }), '拣选：cherry-pick，把这个提交应用到当前分支',
-          function () {
-            runOp('git/sequence', {
-              op: 'cherry-pick', action: 'start', target: selectedCommit,
-              record: plugin.cherryPickRecord === true,
-            })
-          },
-          { disabled: !canAct, ico: true }),
-        tool('revert', h(Icon, { name: 'revert', size: 15 }), '还原：revert，生成一个反向提交来撤销它',
-          function () { runOp('git/sequence', { op: 'revert', action: 'start', target: selectedCommit }) },
-          { disabled: !canAct, ico: true }),
-        tool('tag', h(Icon, { name: 'tag', size: 15 }), '标签：在这个提交上打标签',
-          function () { setArmed(''); setPrompt({ kind: 'tag', value: '' }) },
-          { disabled: !canAct, ico: true }),
-        tool('branch', h(BranchIcon, { size: 15 }), '分支：从这个提交新建分支并切过去',
-          function () { setArmed(''); setPrompt({ kind: 'branch', value: '' }) },
-          { disabled: !canAct, ico: true }),
-        /* branch 右边那两个图标按钮：⋯（更多操作，带 Ctrl 多选数的角标）与 ⚡（快捷
-           命令）。样式照 dsh-git-tool-ico 画但类名分开 —— 见 78-actions.js 开头的说明；
-           下拉浮层挂在同一格（position:relative），跟着按钮走。 */
+        /* 拣选/还原/标签/分支那四个「作用于选中提交」的图标键不在这里了：它们搬进了
+           提交行的右键菜单（对右键那条生效，见 ContextMenu），工具条只留过滤器和
+           右边那两个开菜单的按钮。title 同步这一句 —— 不说「删除分支」一项它自己，
+           说了四项里的三样，读者才知道每一项去哪找。 */
         h('span', { key: 'acts', className: 'dsh-git-acts' },
           h('button', {
             key: 'more', type: 'button',
             className: 'dsh-git-acts-btn' + (menuOpen === 'more' ? ' dsh-git-acts-btn-on' : ''),
-            title: '更多操作：压缩提交（Ctrl+点击多选）、删除提交、删除分支',
+            title: '更多操作：压缩提交（Ctrl+点击多选）、删除提交、复制/新建/删除分支',
             disabled: !repoOk,
             ref: function (node) { moreBox.node = node },
             onClick: function (event) {
@@ -9522,6 +9786,7 @@ textarea.dsh-git-input{resize:vertical}
               }) : null,
               onRepoSingle: function (path) { repoSingle('log', path) },
               onPickBranch: pickBranch,
+              onBranchContext: openBranchMenu,
             })),
           h('div', { className: 'dsh-git-main' },
             toolbar,
@@ -9532,6 +9797,7 @@ textarea.dsh-git-input{resize:vertical}
               selected: selected,
               multi: multiSel,
               onPick: pickCommit,
+              onContext: openCommitMenu,
               /* Functional, not `maxCount + PAGE_COMMITS`: two clicks before the
                  next render would otherwise both read the same old value and lose
                  a page. */
@@ -9587,6 +9853,122 @@ textarea.dsh-git-input{resize:vertical}
         popProps.style = Object.assign({}, popProps.style, { height: panelH + 'px' })
       }
 
+      /* ── 右键菜单的两份内容与它的坐标 ──
+
+         坐标：position:fixed 写的是视口坐标，但面板根节点在宽度记忆过时带着
+         translateX(-50%) 的 transform —— 带 transform 的祖先会成了 fixed 后代的
+         包含块，那时坐标得换成「相对面板」的那一套，否则菜单错位一个面板左上角。
+         量得到（getComputedStyle 在）就换，量不到（测试、无布局环境）原样用视口
+         坐标。内容：提交菜单四项的禁用条件与原四个图标键一致（!canAct 置灰），动作
+         目标是右键那一条（ctxMenu.hash，与单选此时恰好是同一个）；分支菜单按远程/
+         本地收放，删除走两段式确认（ctxArm/ctxForce，见 ctxBranchRemove）。 */
+      const ctxMenuPos = function () {
+        const x = ctxMenu.x
+        const y = ctxMenu.y
+        const node = panelNode
+        if (node == null || typeof node.getBoundingClientRect !== 'function') return { left: x, top: y }
+        let shifted = false
+        try {
+          const doc = node.ownerDocument
+          const view = doc != null ? doc.defaultView : null
+          if (view != null && typeof view.getComputedStyle === 'function') {
+            shifted = view.getComputedStyle(node).transform !== 'none'
+          }
+        } catch (error) { shifted = false }
+        if (shifted !== true) return { left: x, top: y }
+        const rect = node.getBoundingClientRect()
+        return { left: x - rect.left, top: y - rect.top }
+      }
+      const ctxCommitItems = ctxMenu === null ? [] : ctxMenu.kind === 'commit' ? [
+        h('button', {
+          key: 'pick', type: 'button', className: 'dsh-git-menu-item', disabled: !canAct,
+          title: '拣选：cherry-pick，把这个提交应用到当前分支',
+          onClick: function (event) {
+            stopEvent(event)
+            setCtxMenu(null)
+            runOp('git/sequence', {
+              op: 'cherry-pick', action: 'start', target: ctxMenu.hash,
+              record: plugin.cherryPickRecord === true,
+            })
+          },
+        }, '拣选'),
+        h('button', {
+          key: 'revert', type: 'button', className: 'dsh-git-menu-item', disabled: !canAct,
+          title: '还原：revert，生成一个反向提交来撤销它',
+          onClick: function (event) {
+            stopEvent(event)
+            setCtxMenu(null)
+            runOp('git/sequence', { op: 'revert', action: 'start', target: ctxMenu.hash })
+          },
+        }, '还原'),
+        h('button', {
+          key: 'tag', type: 'button', className: 'dsh-git-menu-item', disabled: !canAct,
+          title: '标签：在这个提交上打标签',
+          onClick: function (event) {
+            stopEvent(event)
+            setCtxMenu(null)
+            setArmed('')
+            setPrompt({ kind: 'tag', value: '' })
+          },
+        }, '打标签…'),
+        h('button', {
+          key: 'branch', type: 'button', className: 'dsh-git-menu-item', disabled: !canAct,
+          title: '分支：从这个提交新建分支并切过去',
+          onClick: function (event) {
+            stopEvent(event)
+            setCtxMenu(null)
+            setArmed('')
+            setPrompt({ kind: 'branch', value: '' })
+          },
+        }, '从这个提交新建分支…'),
+      ] : [
+        h('button', {
+          key: 'copy', type: 'button', className: 'dsh-git-menu-item',
+          title: '把 ' + ctxMenu.name + ' 写进剪贴板',
+          onClick: function (event) {
+            stopEvent(event)
+            setCtxMenu(null)
+            copyTextToClipboard(ctxMenu.name, function () {
+              setOkNote('已复制分支名 ' + ctxMenu.name)
+            }, function () {
+              setOkNote('无法写入剪贴板，请手动复制分支名：' + ctxMenu.name)
+            })
+          },
+        }, '复制分支名称'),
+        ctxMenu.remote === true ? null : h('div', { key: 'sep', className: 'dsh-git-menu-sep' }),
+        ctxMenu.remote === true ? null
+          : ctxForce === ctxMenu.name
+            ? h('button', {
+                key: 'force', type: 'button',
+                className: 'dsh-git-menu-item dsh-git-menu-danger',
+                title: ctxArm === 'force:' + ctxMenu.name
+                  ? 'git branch -D ' + ctxMenu.name + ' —— 没合并的提交会随分支丢弃'
+                  : 'git branch -d 被拒：这些提交还没有合并到别处，只有 -D 能删',
+                disabled: ctxBusy === true || busy === true,
+                onClick: function (event) {
+                  stopEvent(event)
+                  if (ctxArm === 'force:' + ctxMenu.name) ctxBranchRemove(ctxMenu.name, true)
+                  else setCtxArm('force:' + ctxMenu.name)
+                },
+              }, ctxArm === 'force:' + ctxMenu.name ? '确认强制删除 ' + ctxMenu.name : '强制删除（-D）')
+            : ctxArm === ctxMenu.name
+              ? h('button', {
+                  key: 'del', type: 'button', className: 'dsh-git-menu-item dsh-git-menu-danger',
+                  title: 'git branch -d ' + ctxMenu.name,
+                  disabled: ctxBusy === true || busy === true,
+                  onClick: function (event) { stopEvent(event); ctxBranchRemove(ctxMenu.name, false) },
+                }, '确认删除 ' + ctxMenu.name)
+              : h('button', {
+                  key: 'del', type: 'button', className: 'dsh-git-menu-item',
+                  title: ctxMenu.name === currentName
+                    ? '当前所在的分支，git 不删除自己'
+                    : 'git branch -d ' + ctxMenu.name + '（再点一次确认）',
+                  disabled: ctxMenu.name === currentName || ctxBusy === true || busy === true,
+                  onClick: function (event) { stopEvent(event); setCtxArm(ctxMenu.name); setCtxForce('') },
+                }, '删除分支'),
+      ]
+      const ctxPos = ctxMenu === null ? { left: 0, top: 0 } : ctxMenuPos()
+
       return h('div', popProps,
         h('div', { key: 'gn', className: 'dsh-git-grip dsh-git-grip-n', title: '拖动调整高度', onPointerDown: startDrag('n') }),
         h('div', { key: 'gw', className: 'dsh-git-grip dsh-git-grip-w', title: '拖动调整宽度', onPointerDown: startDrag('w') }),
@@ -9618,6 +10000,14 @@ textarea.dsh-git-input{resize:vertical}
                 key: qcEditor, initial: qcEditor,
                 onClose: function () { setQcEditor(null) },
               }))
+          : null,
+        /* 右键菜单：光标锚的浮层（position:fixed）。挂在面板根部 —— 与 ⋯/⚡ 的下拉
+            不同它不属于任何一格，开关只随 ctxMenu。 */
+        ctxMenu !== null
+          ? h(ContextMenu, {
+              key: 'ctx', open: true, x: ctxPos.left, y: ctxPos.top,
+              onClose: function () { setCtxMenu(null) },
+            }, ctxCommitItems)
           : null)
     }
 
