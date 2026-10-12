@@ -28,6 +28,7 @@ export const SUITES = [
   ['gp47-body.mjs', 'gp47-conflict-test.mjs'],
   ['gp49-body.mjs', 'gp49-config-test.mjs'],
   ['gp50-body.mjs', 'gp50-client-test.mjs'],
+  ['gp51-body.mjs', 'gp51-client-test.mjs'],
   ['bench-body.mjs', 'bench.mjs'],
   ['bench-branch-body.mjs', 'bench-branch.mjs'],
 ]
