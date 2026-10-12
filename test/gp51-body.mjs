@@ -30,10 +30,13 @@ let branchListReply = {
   branches: [{ name: 'main', current: true, committedAt: Math.floor(Date.now() / 1000), upstream: '', track: '', ahead: 0, behind: 0, head: 'aaa', subject: 'tip' }],
   remotes: [{ name: 'remote-only', remote: 'origin', ref: 'origin/remote-only', committedAt: Math.floor(Date.now() / 1000), head: 'bbb', subject: 'r' }],
 }
-let pullReply = () => ({
+let pullReply = (args) => ({
   ok: true, repo: '/tmp/ws', stdout: '', stderr: '', exitCode: 0, command: 'git pull',
   sandboxDenied: false, noGit: false, upstreamSet: true, pulled: true,
-  setUpstream: { remote: 'origin', branch: 'main', exitCode: 0, stderr: '' },
+  /* 答复跟着请求走：Host 回的是这一步真实绑定的远端分支，成功条取的是它。 */
+  setUpstream: args != null && args.setUpstream != null
+    ? { remote: args.setUpstream.remote, branch: args.setUpstream.branch, exitCode: 0, stderr: '' }
+    : { remote: 'origin', branch: 'main', exitCode: 0, stderr: '' },
 })
 const pullCalls = []
 const realCall = host.call
@@ -41,7 +44,7 @@ host.call = function (method, args) {
   if (method === 'git/panel') { calls.push({ method, args }); return Promise.resolve(panelReply) }
   if (method === 'git/refs') { calls.push({ method, args }); return Promise.resolve(refsReply) }
   if (method === 'git/branches') { calls.push({ method, args }); return Promise.resolve(branchListReply) }
-  if (method === 'git/pull') { calls.push({ method, args }); pullCalls.push(args); return Promise.resolve(pullReply()) }
+  if (method === 'git/pull') { calls.push({ method, args }); pullCalls.push(args); return Promise.resolve(pullReply(args)) }
   if (method === 'git/repos') { calls.push({ method, args }); return Promise.resolve({ ok: true, workspace: '/tmp/ws', repos: [], manual: [], missing: [] }) }
   if (method === 'git/authors') { calls.push({ method, args }); return Promise.resolve({ ok: true, repo: '/tmp/ws', authors: [] }) }
   return realCall(method, args)
@@ -104,7 +107,8 @@ ok('按远端分组列出全部分支：origin 与 zeta 两组（BranchPicker �
   && textOf(pick).indexOf('origin') >= 0 && textOf(pick).indexOf('zeta') >= 0
   && pickRows(tree).length === 2)
 ok('搜索过滤：键入 topic 后只剩 origin/topic 一行',
-  pickRows(await type(pickInput(tree), 'topic')).length === 1
+  (tree = await type(pickInput(tree), 'topic')) != null
+  && pickRows(tree).length === 1
   && textOf(byClass(tree, 'dsh-git-picklist')[0]).indexOf('zeta') < 0)
 mark = pullCalls.length
 pickRows(tree)[0].props.onClick()
