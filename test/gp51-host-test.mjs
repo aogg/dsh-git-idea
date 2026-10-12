@@ -186,7 +186,10 @@ cd ${R} && git checkout -q conf && echo ours > c.txt && git add -A && git commit
   const reply = await a.H('git/pull')({ repo: R, setUpstream: { remote: 'origin', branch: 'conf' } })
   check('答复 upstreamSet:true（绑定这步成功了）但 ok:false、pulled:true、退出码非 0',
     reply.upstreamSet === true && reply.pulled === true && reply.ok !== true && reply.exitCode !== 0)
-  check('stderr 说的是合并冲突', /CONFLICT|Automatic merge failed/i.test(reply.stderr || ''))
+  /* git merge 的冲突叙述走 stdout（Auto-merging / CONFLICT / Automatic merge
+     failed），stderr 常常是空的 —— 两股合起来验。 */
+  check('答复里说的是合并冲突（stdout 或 stderr）',
+    /CONFLICT|Automatic merge failed/i.test((reply.stderr || '') + '\n' + (reply.stdout || '')))
   check('upstream 保留：@{u} 已经指向 origin/conf —— 冲突解决后照常 pull',
     (await sh('git rev-parse --abbrev-ref --symbolic-full-name @{u}', R)).out.trim() === 'origin/conf')
   check('两条命令都在（绑定 + 拉取）',
