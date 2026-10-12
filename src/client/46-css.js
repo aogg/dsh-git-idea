@@ -42,7 +42,7 @@
 .dsh-git-lf:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dsh-git-lf-on{color:var(--dsw-alias-brand-primary)}
 .dsh-git-lf-k{flex:none;color:inherit;opacity:.85}
-.dsh-git-lf-select{appearance:none;-webkit-appearance:none;-moz-appearance:none;border:0;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:11px;font-family:inherit;padding:0;flex:0 1 auto;min-width:0;overflow:hidden;cursor:pointer;outline:none}
+.dsh-git-lf-select{appearance:none;-webkit-appearance:none;-moz-appearance:none;border:0;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:11px;font-family:inherit;padding:0;flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;cursor:pointer;outline:none}
 .dsh-git-lf-select option{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}
 .dsh-git-lf-caret{display:inline-flex;flex:none;color:var(--dsw-alias-label-secondary);pointer-events:none}
 .dsh-git-lf-input{flex:0 1 auto;min-width:0;border:0;background:transparent;outline:none;font:inherit;font-size:11px;font-family:inherit;color:var(--dsw-alias-label-primary);padding:0}
@@ -108,10 +108,10 @@
 .dsh-git-cgroup{margin-top:4px}
 .dsh-git-cgroup .dsh-git-tname{font-weight:600}
 /* ── 默认变更列表的工具条（54-changes.js）：添加 / 还原 / 暂存 ──
-    类名刻意不用 dsh-git-tool / dsh-git-tool-ico：那两个类说的是「作用于选中提交的
-    那四个工具」，测试也按个数认它们（78-actions.js 开头说明了原因）——这一排是对
-    一组勾选做事，名字分开对两边都诚实。左边 20px 让按钮避开勾选框那一列，和组里
-    的行对得上。 */
+    类名刻意不用 dsh-git-tool：那个类说的是「作用于选中提交的工具」（拣选/还原/标签/
+    分支——现在住在提交行的右键菜单里，同步组 ⟳⇣↓↑ 也还在用），测试也按个数认它
+    （78-actions.js 开头说明了原因）——这一排是对一组勾选做事，名字分开对两边都诚实。
+    左边 20px 让按钮避开勾选框那一列，和组里的行对得上。 */
 .dsh-git-ctools{display:flex;align-items:center;gap:4px;flex:none;padding:1px 6px 3px 20px}
 .dsh-git-ctool{display:inline-flex;align-items:center;border:1px solid var(--dsw-alias-border-l1);background:transparent;color:var(--dsw-alias-label-primary);border-radius:4px;padding:1px 8px;font-size:11px;font-family:inherit;line-height:16px;cursor:pointer;flex:none}
 .dsh-git-ctool:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
@@ -166,15 +166,20 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-danger{color:var(--dsw-alias-state-error-primary)}
 .dsh-git-tools{position:relative;flex:none;display:flex;align-items:center;gap:3px;flex-wrap:nowrap;padding:5px 52px 5px 7px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2)}
 /* Every part of this strip is fixed-width except the search box and the filters,
-   and the four commit actions at the end are the last thing that should ever
-   move: when a branch name makes the row too long, the things that can give way
-   do — the search shrinks and the filter chips clip — rather than the actions
+   and the two menu buttons at the end are the last thing that should ever move:
+   when a branch name makes the row too long, the things that can give way do —
+   the search shrinks and the filter chips clip — rather than the buttons
    dropping onto a second line under the filters they belong beside. */
 .dsh-git-logsearch{flex:0 1 170px}
+/* 「作用于选中提交」的拣选/还原/标签/分支四个键已经搬进提交行的右键菜单，这条
+   工具条上不再有它们；.dsh-git-tool 现在的面孔是面板头部的同步组（⟳⇣↓↑）、
+   序列器横幅上的 继续/跳过/中止，以及差异头部那三个图标键（见 -ico 一行）。 */
 .dsh-git-tool{display:inline-flex;align-items:center;gap:4px;border:1px solid transparent;background:0 0;color:var(--dsw-alias-label-primary);border-radius:5px;padding:3px 7px;font-size:11px;font-family:inherit;cursor:pointer;flex:none;line-height:16px}
 .dsh-git-tool:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
 .dsh-git-tool:disabled{opacity:.4;cursor:default}
 .dsh-git-tool-on{background:var(--dsw-alias-interactive-bg-hover);border-color:var(--dsw-alias-border-l1)}
+/* 图标键（55-diff.js 的 diffIconButton：返回/⟳/☰）只在这个家族里：26px 的方块
+   命中区、图标居中——没有文字，padding 不再撑它。 */
 .dsh-git-tool-ico{justify-content:center;width:26px;height:26px;padding:0}
 .dsh-git-tool-badge{display:inline-grid;place-items:center;min-width:14px;height:14px;padding:0 3px;border-radius:999px;background:var(--dsw-alias-brand-primary);color:#fff;font-size:9px;line-height:1}
 .dsh-git-grow{flex:0 1 auto;min-width:0}
@@ -451,9 +456,9 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-cmdnote{flex:none;padding-top:5px;font-size:10px;color:var(--dsw-alias-label-secondary)}
 .dsh-git-cmdtrunc{flex:none;font-size:10px;color:var(--dsw-alias-state-warn-primary)}
 
-/* ── ⋯ / ⚡：branch 右边那两个下拉按钮与它们的浮层（78-actions.js）──
-    按钮的样子照 .dsh-git-tool / .dsh-git-tool-ico 画（同尺寸、同圆角、同悬停），类名
-    刻意分开：那两个类说的是「作用于选中提交的四个工具」，这两个是「打开一个菜单」。 */
+/* ── ⋯ / ⚡：提交历史工具条右端那两个下拉按钮与它们的浮层（78-actions.js）──
+    按钮的样子照 .dsh-git-tool 画（同尺寸、同圆角、同悬停），类名刻意分开：那个类
+    说的是「作用于选中提交的工具」，这两个是「打开一个菜单」。 */
 .dsh-git-acts{position:relative;display:inline-flex;gap:3px;flex:none}
 .dsh-git-acts-btn{display:inline-flex;align-items:center;justify-content:center;gap:3px;width:26px;height:26px;padding:0;border:1px solid transparent;border-radius:5px;background:0 0;color:var(--dsw-alias-label-primary);font-family:inherit;font-size:12px;line-height:16px;cursor:pointer;flex:none}
 .dsh-git-acts-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}

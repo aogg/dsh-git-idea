@@ -87,6 +87,13 @@
         /* 事件一起回给面板：Ctrl/Cmd+点击是「挑进/移出多选」，普通点击照旧单选 ——
            区分只在这一层做，行自己不解读修饰键。 */
         onClick: function (event) { props.onPick(commit.hash, event) },
+        /* 右键：拦掉浏览器自己的菜单，把这条提交交给面板 —— 面板先按左键单选的同
+           一条路选中它，再在光标处打开上下文菜单（拣选/还原/打标签/新建分支）。 */
+        onContextMenu: function (event) {
+          event.preventDefault()
+          event.stopPropagation()
+          props.onContext(commit.hash, event)
+        },
       },
         h('span', { className: 'dsh-git-subject' }, commit.subject),
         chips.length > 0 ? h('span', { className: 'dsh-git-refs' }, chips) : null,
@@ -135,6 +142,7 @@
           selected: props.selected === commits[i].hash,
           multi: multiSet[commits[i].hash] === true,
           onPick: props.onPick,
+          onContext: props.onContext,
         }))
       }
 
@@ -282,6 +290,13 @@
                 title: headTip.join('\n'),
                 onClick: function () { props.onSelect(selOf(name)) },
                 onDoubleClick: function () { props.onSelect(selOf(name)); props.onPickBranch(opts.repo, name) },
+                /* 右键：分支行的上下文菜单（复制分支名称 / 删除分支）。HEAD 组的行
+                   也是分支行 —— 它就是当前分支，菜单里的删除项由面板按名字置灰。 */
+                onContextMenu: function (event) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  props.onBranchContext(name, 'head', opts.repo, event)
+                },
               },
                 h('span', { className: 'dsh-git-tw' }, '★'),
                 h('span', { className: 'dsh-git-tname' }, name),
@@ -297,6 +312,9 @@
           const shown = matching(entries)
           rows.push(groupTitle(title, keyOf(key), needle.length === 0 ? String(entries.length) : String(shown.length)))
           if (collapsed[keyOf(key)] === true) return
+          /* 右键菜单的菜单项跟着这一组走：远程的分支只给「复制分支名称」（远端分支
+             的删除不在这一棵树的手势里），本地的才有删除。 */
+          const branchKind = key.indexOf('@remote:') === 0 ? 'remote' : 'local'
           const tree = buildTree(shown)
           /* 末位 true：分支树保留压扁 —— 分支名自带层级（origin/feat/x），逐层
              展开只会让只有目录没有分支的每一级白占一行（见 42-tree.js squeeze）。 */
@@ -336,6 +354,13 @@
                 title: tip.join('\n'),
                 onClick: function () { props.onSelect(selOf(branchName)) },
                 onDoubleClick: function () { props.onSelect(selOf(branchName)); props.onPickBranch(opts.repo, branchName) },
+                /* 右键：与 HEAD 组的行同一个约定（50-log.js 顶部那一处），菜单项按
+                   这一组是本地还是远程收放。 */
+                onContextMenu: function (event) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  props.onBranchContext(branchName, branchKind, opts.repo, event)
+                },
               },
                 h('span', { className: 'dsh-git-tw' }),
                 h('span', { className: 'dsh-git-tname' }, node.name),

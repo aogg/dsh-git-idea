@@ -306,19 +306,12 @@ ok('分支触发器用短标签（当前 main）', textOf(byClass(t, 'dsh-git-lf
 ok('筛选用的是无边框 select/input', byClass(t, 'dsh-git-lf-select').length === 3 && byClass(t, 'dsh-git-lf-input').length === 1)
 /* 只看中间栏这条工具栏：面板头部那组同步按钮也是 .dsh-git-tool */
 const toolBar = byClass(t, 'dsh-git-tools')[0]
-const iconTools = byClass(toolBar, 'dsh-git-tool-ico')
-console.log('  提交操作按钮:', JSON.stringify(iconTools.map((b) => b.props.title)))
-ok('提交操作变成四个图标按钮', iconTools.length === 4 && byClass(toolBar, 'dsh-git-tool').length === 4)
-ok('图标按钮各自带说明（拣选/还原/标签/分支）',
-  ['拣选', '还原', '标签', '分支'].every((l) => iconTools.some((b) => String(b.props.title).indexOf(l) === 0)))
-ok('图标按钮里画的是图标而不是文字', iconTools.every((b) => collect(b).some((n) => n.type === 'svg') && textOf(b) === ''))
-const iconPaths = (btn) => collect(btn).filter((n) => n.type === 'svg')
-  .map((n) => n.props.children.map((c) => String(c.props.d || '')).join('|')).join('||')
-const shapes = iconTools.map(iconPaths)
-ok('四个图标互不相同', shapes.filter((x, i) => shapes.indexOf(x) === i).length === 4)
-ok('拣选不再是复制图标（复制是两个方框）', shapes[0].indexOf('H12.6') < 0 && shapes[0].indexOf('Z') < 0)
-ok('拣选画的是樱桃（两个圆 + 果柄）', shapes[0].indexOf('A2.1 2.1') > 0 && shapes[0].indexOf('C 4.5 6.6') > 0)
-ok('标签图标是带孔的标签形', shapes[2].indexOf('Z') > 0 && shapes[2].indexOf('A0.9 0.9') > 0)
+console.log('  这条工具栏里的 .dsh-git-tool:', JSON.stringify(byClass(toolBar, 'dsh-git-tool').map((b) => b.props.title)))
+ok('拣选/还原/标签/分支四个图标键没了（对选中提交的动作搬进了提交行右键菜单）',
+  byClass(toolBar, 'dsh-git-tool-ico').length === 0 && byClass(toolBar, 'dsh-git-tool').length === 0)
+const actBtns = byClass(toolBar, 'dsh-git-acts-btn')
+ok('⋯/⚡ 还在，仍是那两个「开一个菜单」的按钮', byClass(toolBar, 'dsh-git-acts').length === 1 && actBtns.length === 2)
+ok('⋯ 的说明跟到新住址（复制/新建/删除分支）', String(actBtns[0].props.title).indexOf('复制/新建/删除分支') > 0)
 
 console.log('')
 console.log('== 中间这条工具栏：一行装得下，且筛选一多也不乱 ==')
@@ -334,9 +327,11 @@ ok('条数绝对定位在右端（不会自己换到第二行）', /\.dsh-git-co
 ok('这条工具栏不再换行（分支名再长也挤不散）', /\.dsh-git-tools\{[^}]*flex-wrap:nowrap/.test(sourceCss))
 ok('分组/目录的条数跟在名字后面（不再顶到最右）', /\.dsh-git-tdim\{[^}]*\}/.test(sourceCss) && /\.dsh-git-tdim\{[^}]*margin-left:auto/.test(sourceCss) === false)
 ok('筛选触发器可以让位（flex:0 1 auto + min-width:0）', /\.dsh-git-lf\{[^}]*flex:0 1 auto[^}]*min-width:0/.test(sourceCss))
-ok('提交操作图标是固定的，不会被挤走', /\.dsh-git-tool-ico\{[^}]*width:26px/.test(sourceCss))
+ok('26px 图标键的画法还在，但主人换了（差异头部的返回/⟳/☰，不再是提交操作）', /\.dsh-git-tool-ico\{[^}]*width:26px/.test(sourceCss))
+ok('⋯/⚡ 两个开菜单的按钮照旧是 26px 方块', /\.dsh-git-acts-btn\{[^}]*width:26px/.test(sourceCss))
 ok('搜索框不再是越大越好（上限收到 260 以内）', searchMax > 0 && searchMax <= 260)
 ok('下拉不再写死宽度（改为按当前显示的值量宽）', selectRule.indexOf('max-width') < 0)
+ok('下拉关着时长名以省略号收尾（cap 放宽后靠它兜住）', selectRule.indexOf('text-overflow:ellipsis') >= 0)
 
 /* 具体到数字：把四个筛选都设上，量几个控件自己的宽度之和 */
 const setFilter = async (i, value) => {
@@ -360,10 +355,11 @@ ok('短值的下拉会缩到贴合文字（mays 不再是 112px 空框）', (fun
   const authorSel = byClass(t, 'dsh-git-lf-select')[1]
   return Number(String(authorSel.props.style.width).replace('px', '')) < 60
 })())
-ok('长值也不会超过上限', trigW.every((w) => w <= 132))
-/* 工具栏一行要装下的东西：4 个图标 + 分隔线 + 搜索框最小宽 + 四个触发器的
-   标签前缀 + 它们各自的控件 + 条数预留的位置 + 间距 */
-const chrome = 4 * 26 + 7 + 80 + (22 * 4) + 80 + 12 * 3
+ok('作者/时间的下拉仍以 132 封顶（放宽只属于分支范围）', trigW[1] <= 132 && trigW[2] <= 132)
+ok('分支范围这一格在分支自己的 cap（300）之内', trigW[0] <= 300)
+/* 工具栏一行要装下的东西：⋯/⚡ 两个 26px 键加它们的间隙 + 分隔线 + 搜索框最小宽
+   + 四个触发器的标签前缀 + 它们各自的控件 + 条数预留的位置 + 间距 */
+const chrome = 2 * 26 + 3 + 7 + 80 + (22 * 4) + 80 + 12 * 3
 console.log('  固定部分:', chrome, 'px  控件:', trigW.reduce((a, b) => a + b, 0) + pathW, 'px')
 ok('筛选全设上也只要 ~600px 出头（常见宽度下仍是一行）', chrome + trigW.reduce((a, b) => a + b, 0) + pathW < 660)
 
@@ -515,6 +511,41 @@ ok('× 之后 history 不再带 search', lastGraph().args.search === undefined)
 ok('× 之后搜索框空了', byClass(t, 'dsh-git-logsearch-input')[0].props.value === '')
 
 console.log('')
+console.log('== 分支范围筛选单独放宽：cap 300，关着时 title 给全名 ==')
+/* 分支名动辄二十几个字符，132px 只装得下一个省略号，原生下拉的弹层宽度还跟着
+   select 走。分支筛选的上限单独放宽到 300，作者/时间仍以 132 封顶 —— 用一个长
+   中文名把「破得了 132、破不了 300」和 title 全名一起钉住。 */
+const wideSavedCall = host.call
+const longBranch = '这是个相当长的中文分支名字用例'
+host.call = function (method, args) {
+  if (method === 'git/refs') {
+    return Promise.resolve({ ok: true, repo: '/tmp/ws', current: [longBranch],
+      local: [{ segments: [longBranch], data: longBranch }], remote: [] })
+  }
+  if (method === 'git/graph') {
+    return Promise.resolve({ ok: true, repo: '/tmp/ws', ref: (args && args.ref) || (args && args.allRefs === true ? '' : longBranch), currentBranch: longBranch, commits: graphCommits, rows: [], lanes: 1 })
+  }
+  return wideSavedCall(method, args)
+}
+fibers.clear()
+const wideTree = await openPanel()
+await wait(15)
+const wideSettled = await settle('pop')
+host.call = wideSavedCall
+const wideSelects = byClass(wideSettled, 'dsh-git-lf-select')
+const wideW = Number(String(wideSelects[0].props.style.width).replace('px', ''))
+console.log('  长分支名下:', wideW + 'px  title:', JSON.stringify(wideSelects[0].props.title))
+ok('长分支名撑破 132（旧上限装不下它）', wideW > 132)
+ok('但仍在分支自己的 300 之内', wideW <= 300)
+ok('select 的 title 是完整分支名（关着也能悬停读全名）', wideSelects[0].props.title === longBranch)
+ok('作者/时间在这里仍是 132 封顶', wideSelects.slice(1)
+  .every((s) => Number(String(s.props.style.width).replace('px', '')) <= 132))
+/* 重挂过后 t 必须跟着换新树：旧树上的 handler 还攥着旧 fiber 的 setter，
+   对它触发事件只会把状态写进一棵已经没人渲染的死树。 */
+fibers.clear()
+t = await openLog()
+
+console.log('')
 console.log('== 面板头部：不再有第二个「仓库路径」输入框 ==')
 /* 看哪个仓库不是面板的偏好设置，而是会话工作区本身，Host 从会话里取。
    头部再放一个预填着同一个路径的框 + 「应用」，就是把同一件事问两遍。 */
@@ -524,24 +555,6 @@ ok('头部没有仓库路径框了', byClass(t, 'dsh-git-repo-path').length === 
 ok('可清除框的那个变体类也一起没了', byClass(t, 'dsh-git-clearable-path').length === 0)
 ok('头部一个输入框都不剩', inputs(panelTop).length === 0)
 ok('也没有那个「应用」按钮', buttons(panelTop).every((b) => textOf(b) !== '应用'))
-
-console.log('')
-console.log('== 标签 / 分支 的内联输入：也能一键清空 ==')
-const promptInput = () => collect(byClass(t, 'dsh-git-prompt')[0]).find((n) => n.type === 'input')
-byClass(t, 'dsh-git-tool-ico')[2].props.onClick()
-await wait(10)
-t = await settle('pop')
-ok('点标签图标后出现输入行', byClass(t, 'dsh-git-prompt').length === 1)
-ok('空的时候没有 ×', byClass(byClass(t, 'dsh-git-prompt')[0], 'dsh-git-clear-x').length === 0)
-promptInput().props.onChange({ target: { value: 'v1.0.0' } })
-await wait(5)
-t = await settle('pop')
-const promptX = byClass(byClass(t, 'dsh-git-prompt')[0], 'dsh-git-clear-x')[0]
-ok('输入后出现 ×', promptX !== undefined)
-promptX.props.onClick({ stopPropagation() {} })
-await wait(5)
-t = await settle('pop')
-ok('点 × 清空了标签名', promptInput().props.value === '')
 
 console.log('')
 console.log('== 提交信息框：也能一键清空 ==')
@@ -572,7 +585,8 @@ const crowSel = () => byClass(fresh, 'dsh-git-crow-sel')
 ok('打开后一行提交都没有被选中', crowSel().length === 0)
 ok('也没有替用户去读提交详情', calls.filter((c) => c.method === 'git/commit-detail').length === 0)
 ok('右栏是空态「选择一个提交」', textOf(byClass(fresh, 'dsh-git-detail')[0]).indexOf('选择一个提交') >= 0)
-ok('提交操作按钮此时是禁用的', byClass(fresh, 'dsh-git-tool-ico').every((b) => b.props.disabled === true))
+ok('没有选中时也没有任何常驻的提交操作键（它们住进了右键菜单，菜单要右键才开）',
+  byClass(fresh, 'dsh-git-tool-ico').length === 0 && byClass(fresh, 'dsh-git-menu').length === 0)
 ok('列表本身有内容（不是没读到）', byClass(fresh, 'dsh-git-crow').length === 3)
 
 console.log('')
@@ -584,7 +598,15 @@ fresh = await settle('pop')
 ok('点的那一行被选中', crowSel().length === 1 && textOf(crowSel()[0]).indexOf('second commit') >= 0)
 ok('只为点的那一行读详情', calls.filter((c) => c.method === 'git/commit-detail').map((c) => c.args.hash).join(',') === 'bbb222')
 ok('右栏换成了那个提交', textOf(byClass(fresh, 'dsh-git-detail')[0]).indexOf('detail subject') >= 0)
-ok('选中后操作按钮解禁', byClass(fresh, 'dsh-git-tool-ico').every((b) => b.props.disabled !== true))
+/* 解禁的判定跟着选中走：对刚选中的那行右键，菜单四项就是可用的 */
+byClass(fresh, 'dsh-git-crow')[1].props.onContextMenu({ preventDefault() {}, stopPropagation() {}, clientX: 11, clientY: 12 })
+await wait(15)
+fresh = await settle('pop')
+const selMenuItems = buttons(byClass(fresh, 'dsh-git-menu')[0])
+ok('选中后右键：菜单四项全部可用', selMenuItems.length === 4 && selMenuItems.every((b) => b.props.disabled !== true))
+fakeDoc.fire('keydown', { key: 'Escape', target: OUTSIDE })
+await wait(15)
+fresh = await settle('pop')
 
 console.log('')
 console.log('== 重新读历史：选中的还在就保留，不在了就清空 ==')
@@ -671,6 +693,369 @@ ok('左侧分支树的行一直是这个规矩（对照）',
 console.log('  转圈的规则:', (cssText.match(/@keyframes dsh-git-spin\{[^}]*\}/) || [''])[0])
 ok('转圈是一条 @keyframes 动画，不是靠改尺寸或位置',
   /@keyframes dsh-git-spin\{/.test(cssText) && /\.dsh-git-spin\{[^}]*animation:dsh-git-spin/.test(cssText))
+
+console.log('')
+console.log('== 提交行右键：先按单选同一条路选中，再开光标处的菜单 ==')
+/* 前面的「重新读历史」段把 graphCommits 永久筛掉过一条（模块级变量）；这里恢复
+   原始三条再挂，crow 的下标（bbb222 在第二行）才是段落里写死的那些。 */
+graphCommits = [
+  { hash: 'aaa111', subject: 'tip commit', author: 'mays', date: '2026-09-16', committedAt: nowSec - 60, refs: ['HEAD -> dev'] },
+  { hash: 'bbb222', subject: 'second commit', author: 'mays', date: '2026-09-15', committedAt: nowSec - 3600, refs: [] },
+  { hash: 'ccc333', subject: 'third commit', author: 'jiangzx', date: '2026-09-14', committedAt: nowSec - 7200, refs: [] },
+]
+fibers.clear()
+t = await openLog()
+const ctxMenus = () => byClass(t, 'dsh-git-menu')
+const ctxItems = () => { const m = ctxMenus()[0]; return m === undefined ? [] : buttons(m) }
+const rightClickCrow = async (i, x, y) => {
+  byClass(t, 'dsh-git-crow')[i].props.onContextMenu({ preventDefault() {}, stopPropagation() {}, clientX: x, clientY: y })
+  await wait(15)
+  t = await settle('pop')
+}
+calls.length = 0
+await rightClickCrow(1, 123, 45)
+console.log('  菜单项:', JSON.stringify(ctxItems().map((b) => textOf(b))))
+ok('右键先选中那一行（左键单选同一条 openCommit 路）', byClass(t, 'dsh-git-crow-sel').length === 1
+  && textOf(byClass(t, 'dsh-git-crow-sel')[0]).indexOf('second commit') >= 0)
+ok('只为它读了一次详情', calls.filter((c) => c.method === 'git/commit-detail').map((c) => c.args.hash).join(',') === 'bbb222')
+ok('菜单开在光标坐标（position:fixed，left/top = clientX/clientY）', ctxMenus().length === 1
+  && ctxMenus()[0].props.style.position === 'fixed'
+  && ctxMenus()[0].props.style.left === '123px' && ctxMenus()[0].props.style.top === '45px')
+ok('四项：拣选 / 还原 / 打标签… / 从这个提交新建分支…', ctxItems().length === 4
+  && textOf(ctxItems()[0]) === '拣选' && textOf(ctxItems()[1]) === '还原'
+  && textOf(ctxItems()[2]) === '打标签…' && textOf(ctxItems()[3]) === '从这个提交新建分支…')
+ok('title 沿用原工具条四个键的文案',
+  ['拣选：cherry-pick，把这个提交应用到当前分支', '还原：revert，生成一个反向提交来撤销它',
+    '标签：在这个提交上打标签', '分支：从这个提交新建分支并切过去']
+    .every((l, i) => String(ctxItems()[i].props.title) === l))
+ok('四项都可用（右键即选中，!canAct 的置灰不出现）', ctxItems().every((b) => b.props.disabled !== true))
+
+/* 菜单开着时仓库忙起来：!canAct 的另一条腿（busy）在这里才看得见 —— 头部 ⌛ fetch
+   走 runOp 同步置忙，菜单不受影响地开着，四项跟着全部置灰。 */
+const fetchBtn = byClass(t, 'dsh-git-tool').find((b) => String(b.props.title).indexOf('fetch：') === 0)
+fetchBtn.props.onClick()
+/* renderRoot 的第二个参数是 fiber 的路径前缀：必须照 popTree 用 'pop'，
+   才会落在挂着的同一批 fiber 上读到 busy 帧；换个名字等于新挂一套。 */
+const busyFrame = renderRoot(makeElement(popover, { sessionId: 's-1' }), 'pop')
+const busyItems = buttons(byClass(busyFrame, 'dsh-git-menu')[0])
+ok('busy 帧里四项全部置灰', busyItems.length === 4 && busyItems.every((b) => b.props.disabled === true))
+await wait(15)
+t = await settle('pop')
+
+/* 动作目标 = 右键那一条（与多选无关） */
+calls.length = 0
+ctxItems()[0].props.onClick({ stopPropagation() {} })
+await wait(15)
+t = await settle('pop')
+const pickCalls = calls.filter((c) => c.method === 'git/sequence')
+ok('拣选把 cherry-pick 发给右键那一条（record 沿用插件配置）', pickCalls.length === 1
+  && pickCalls[0].args.op === 'cherry-pick' && pickCalls[0].args.action === 'start'
+  && pickCalls[0].args.target === 'bbb222' && pickCalls[0].args.record === false)
+ok('点完动作菜单收起', ctxMenus().length === 0)
+await rightClickCrow(1, 3, 4)
+calls.length = 0
+ctxItems()[1].props.onClick({ stopPropagation() {} })
+await wait(15)
+t = await settle('pop')
+const revCalls = calls.filter((c) => c.method === 'git/sequence')
+ok('还原把 revert 发给右键那一条', revCalls.length === 1
+  && revCalls[0].args.op === 'revert' && revCalls[0].args.target === 'bbb222')
+
+/* 打标签…：开的就是原来的内联输入行，可清除框的手感照旧 */
+await rightClickCrow(0, 5, 6)
+ctxItems()[2].props.onClick({ stopPropagation() {} })
+await wait(15)
+t = await settle('pop')
+const promptInput = () => collect(byClass(t, 'dsh-git-prompt')[0]).find((n) => n.type === 'input')
+ok('打标签… 打开了内联输入行', byClass(t, 'dsh-git-prompt').length === 1)
+ok('空的时候没有 ×', byClass(byClass(t, 'dsh-git-prompt')[0], 'dsh-git-clear-x').length === 0)
+promptInput().props.onChange({ target: { value: 'v1.0.0' } })
+await wait(5)
+t = await settle('pop')
+const promptX = byClass(byClass(t, 'dsh-git-prompt')[0], 'dsh-git-clear-x')[0]
+ok('输入后出现 ×', promptX !== undefined)
+promptX.props.onClick({ stopPropagation() {} })
+await wait(5)
+t = await settle('pop')
+ok('点 × 清空了标签名', promptInput().props.value === '')
+
+/* 从这个提交新建分支…：同一扇门，输入行换成分支的 */
+await rightClickCrow(0, 5, 6)
+ctxItems()[3].props.onClick({ stopPropagation() {} })
+await wait(15)
+t = await settle('pop')
+ok('从这个提交新建分支… 打开的是分支的输入行', byClass(t, 'dsh-git-prompt').length === 1
+  && promptInput().props.placeholder === '例如 feature/login')
+promptInput().props.onKeyDown({ key: 'Escape', preventDefault() {} })
+await wait(10)
+t = await settle('pop')
+ok('Escape 收起输入行', byClass(t, 'dsh-git-prompt').length === 0)
+
+console.log('')
+console.log('== 右键菜单的开合与多选 ==')
+/* Ctrl+点击两行进多选（⋯ 上出角标），再右键第三行：单选切过去，多选一个不动，
+   菜单的动作也只对右键那一条。 */
+byClass(t, 'dsh-git-crow')[0].props.onClick({ ctrlKey: true })
+await wait(10)
+t = await settle('pop')
+byClass(t, 'dsh-git-crow')[1].props.onClick({ ctrlKey: true })
+await wait(10)
+t = await settle('pop')
+/* ⋯ 上的角标要圈定在 acts 里找：头部同步键的 ahead/behind 也是 dsh-git-tool-badge */
+const actsBadge = (tree) => byClass(byClass(tree, 'dsh-git-acts')[0], 'dsh-git-tool-badge')
+ok('Ctrl+点击两行进了多选（⋯ 上有角标 2）', actsBadge(t).length === 1 && textOf(actsBadge(t)[0]) === '2')
+await rightClickCrow(2, 9, 9)
+ok('右键第三行：单选切到它', byClass(t, 'dsh-git-crow-sel').length === 1
+  && textOf(byClass(t, 'dsh-git-crow-sel')[0]).indexOf('third commit') >= 0)
+ok('⋯ 上的角标还是 2（Ctrl 多选不被右键清掉）', actsBadge(t).length === 1 && textOf(actsBadge(t)[0]) === '2')
+calls.length = 0
+ctxItems()[0].props.onClick({ stopPropagation() {} })
+await wait(15)
+t = await settle('pop')
+const thirdPick = calls.filter((c) => c.method === 'git/sequence')
+ok('拣选的目标是右键那一条（ccc333），不是多选里的任何一条', thirdPick.length === 1
+  && thirdPick[0].args.target === 'ccc333')
+
+/* Escape 与滚动都收走菜单 */
+await rightClickCrow(0, 3, 4)
+ok('菜单又开了', ctxMenus().length === 1)
+fakeDoc.fire('keydown', { key: 'Escape', target: OUTSIDE })
+await wait(15)
+t = await settle('pop')
+ok('Escape 收走菜单', ctxMenus().length === 0)
+await rightClickCrow(0, 3, 4)
+fakeDoc.fire('scroll', { target: OUTSIDE })
+await wait(15)
+t = await settle('pop')
+ok('滚动收走菜单（菜单自己内部的滚动不算）', ctxMenus().length === 0)
+
+/* ── ⋯ 菜单新增的两项：复制分支名称 / 新建分支 ──
+
+   refs 换一份才知道「复制子菜单把当前分支排最前」是真的排过（默认 mock 里 main
+   恰好就在首位，看不出 unshift）。这一段和下一段各自换 mock、各自重挂，收尾都把
+   mock 还原。 */
+console.log('')
+console.log('== ⋯ 菜单：复制分支名称 / 新建分支 在 删除分支 之上 ==')
+const moreSavedCall = host.call
+host.call = function (method, args) {
+  if (method === 'git/refs') {
+    return Promise.resolve({ ok: true, repo: '/tmp/ws', current: ['main'],
+      local: [{ segments: ['zeta'], data: 'zeta' }, { segments: ['main'], data: 'main' }, { segments: ['feature'], data: 'feature' }],
+      remote: [] })
+  }
+  return moreSavedCall(method, args)
+}
+fibers.clear()
+let menuTree = await openPanel()
+await wait(15)
+menuTree = await settle('pop')
+const openMore = async () => {
+  byClass(menuTree, 'dsh-git-acts-btn')[0].props.onClick({ stopPropagation() {} })
+  await wait(15)
+  menuTree = await settle('pop')
+}
+await openMore()
+/* 菜单项按文案找：子菜单一开，按钮的下标就被子菜单里的行挤掉了 */
+const moreItem = (label) => buttons(byClass(menuTree, 'dsh-git-menu')[0])
+  .find((b) => textOf(b).indexOf(label) === 0)
+const moreTexts = buttons(byClass(menuTree, 'dsh-git-menu')[0]).map(textOf)
+console.log('  ⋯ 菜单:', JSON.stringify(moreTexts))
+/* 压缩/删除两项可能带「（已选 n 个）」后缀（取决于当时的选中），顺序与新增两项的
+   位置是这里要钉死的东西。 */
+ok('⋯ 菜单的顺序：压缩提交 → 删除提交 → 复制分支名称 → 新建分支 → 删除分支',
+  moreTexts.length === 5 && moreTexts[0].indexOf('压缩提交') === 0
+  && moreTexts[1].indexOf('删除提交') === 0 && moreTexts[2] === '复制分支名称 ▾'
+  && moreTexts[3] === '新建分支 ▾' && moreTexts[4] === '删除分支 ▾')
+
+/* 复制子菜单：当前分支排最前（locals 里它本来在第二位），带「当前分支」灰字 */
+moreItem('复制分支名称').props.onClick({ stopPropagation() {} })
+await wait(15)
+menuTree = await settle('pop')
+const copySub = byClass(menuTree, 'dsh-git-menu-sub')[0]
+const copyRows = copySub === undefined ? [] : buttons(copySub)
+console.log('  复制子菜单:', JSON.stringify(copyRows.map((b) => textOf(b))))
+ok('当前分支排最前（unshift 过的顺序）', copyRows.length === 3
+  && textOf(copyRows[0]) === 'main当前分支' && textOf(copyRows[1]) === 'zeta' && textOf(copyRows[2]) === 'feature')
+ok('每一行的 title 都写着写进剪贴板', copyRows.every((b) => String(b.props.title).indexOf('写进剪贴板') > 0))
+copyRows[0].props.onClick({ stopPropagation() {} })
+await wait(15)
+menuTree = await settle('pop')
+ok('剪贴板不可用时名字亮进提示条，菜单也收了（全败退化链的末站）',
+  textOf(byClass(menuTree, 'dsh-git-oknote')[0]).indexOf('请手动复制分支名：main') >= 0
+  && byClass(menuTree, 'dsh-git-menu').length === 0)
+
+/* 新建分支：子菜单里的输入行，回车发 git/branch-create（不带 at = 从 HEAD 新建） */
+await openMore()
+moreItem('新建分支').props.onClick({ stopPropagation() {} })
+await wait(15)
+menuTree = await settle('pop')
+const newSub = byClass(menuTree, 'dsh-git-menu-sub')[0]
+const newInput = newSub === undefined ? undefined : collect(newSub).find((n) => n.type === 'input')
+ok('新建分支的子菜单是一个自动聚焦的输入行（placeholder 给了例子）', newInput !== undefined
+  && newInput.props.placeholder === '新分支名，例如 feature/login' && newInput.props.autoFocus === true)
+const createMark = calls.length
+newInput.props.onChange({ target: { value: 'feature/login' } })
+await wait(10)
+menuTree = await settle('pop')
+collect(byClass(menuTree, 'dsh-git-menu-sub')[0]).find((n) => n.type === 'input')
+  .props.onKeyDown({ key: 'Enter', preventDefault() {} })
+await wait(20)
+menuTree = await settle('pop')
+const createCalls = calls.slice(createMark).filter((c) => c.method === 'git/branch-create')
+console.log('  branch-create:', JSON.stringify(createCalls.map((c) => c.args)))
+ok('回车发出 git/branch-create，不带 at（Host 从 HEAD 新建并切过去）', createCalls.length === 1
+  && createCalls[0].args.name === 'feature/login' && createCalls[0].args.at === undefined
+  && createCalls[0].args.sessionId === 's-1')
+ok('成功后菜单收起，提示条说了切过去了', byClass(menuTree, 'dsh-git-menu').length === 0
+  && textOf(byClass(menuTree, 'dsh-git-oknote')[0]).indexOf('已新建并切换到分支 feature/login') >= 0)
+
+/* 互斥：三个子菜单只开一个 —— 开删除分支时复制/新建自己收起来 */
+await openMore()
+moreItem('复制分支名称').props.onClick({ stopPropagation() {} })
+await wait(10)
+menuTree = await settle('pop')
+moreItem('删除分支').props.onClick({ stopPropagation() {} })
+await wait(10)
+menuTree = await settle('pop')
+const subsNow = byClass(menuTree, 'dsh-git-menu-sub')
+const delRows = subsNow.length === 1 ? buttons(subsNow[0]) : []
+ok('三个子菜单互斥：开删除分支后只剩它一个', subsNow.length === 1 && delRows.length === 3)
+ok('删除子菜单里当前分支的行也是置灰的（title：git 不删除自己）', delRows.length === 3
+  && delRows[1].props.disabled === true && String(delRows[1].props.title).indexOf('不删除自己') >= 0)
+fakeDoc.fire('keydown', { key: 'Escape', target: OUTSIDE })
+await wait(15)
+menuTree = await settle('pop')
+ok('Escape 关掉整个 ⋯ 菜单', byClass(menuTree, 'dsh-git-menu').length === 0)
+host.call = moreSavedCall
+
+/* ── 分支行的右键菜单 ──
+
+   本地 = 复制分支名称 + 分隔线 + 删除分支（两段式确认，-d 被拒才给 -D）；远程 =
+   仅复制；HEAD 组的行也是分支行，它就是当前分支，删除项由面板按名字置灰。 */
+console.log('')
+console.log('== 分支行右键：本地=复制+删除（两段式），远程=仅复制 ==')
+const brSavedCall = host.call
+const branchRefs = {
+  ok: true, repo: '/tmp/ws', current: ['main'],
+  local: [{ segments: ['stable'], data: 'stable' }, { segments: ['main'], data: 'main' }, { segments: ['feature'], data: 'feature' }],
+  remote: [{ name: 'origin', refs: [{ segments: ['origin', 'ro'], data: 'origin/ro' }] }],
+}
+host.call = function (method, args) {
+  if (method === 'git/refs') return Promise.resolve(branchRefs)
+  return brSavedCall(method, args)
+}
+fibers.clear()
+let brTree = await openPanel()
+await wait(15)
+brTree = await settle('pop')
+const openBranchCtx = async (label) => {
+  /* squeeze 过的远程行（origin/ro）文本只剩末段 'ro'，全名在 title 里 —— 文本找
+     不到就按 title 的「全名（双击…」前缀找。 */
+  let row = trowWith(brTree, label)
+  if (row === undefined) {
+    row = byClass(brTree, 'dsh-git-trow').find((r) => String(r.props.title).indexOf(label + '（') === 0)
+  }
+  if (row === undefined) throw new Error('找不到分支行 ' + label)
+  row.props.onContextMenu({ preventDefault() {}, stopPropagation() {}, clientX: 20, clientY: 30 })
+  await wait(15)
+  brTree = await settle('pop')
+}
+/* HEAD 组的行（★main）：当前分支 —— 复制在、删除也在但置灰 */
+await openBranchCtx('★main')
+let brMenu = byClass(brTree, 'dsh-git-menu')[0]
+let brItems = brMenu === undefined ? [] : buttons(brMenu)
+ok('HEAD 组的行也是分支行：复制分支名称 + 删除分支', brItems.length === 2
+  && textOf(brItems[0]) === '复制分支名称' && textOf(brItems[1]) === '删除分支')
+ok('当前分支的删除项置灰（title 说 git 不删除自己）', brItems[1].props.disabled === true
+  && String(brItems[1].props.title).indexOf('不删除自己') >= 0)
+ok('复制和删除之间有分隔线', byClass(brMenu, 'dsh-git-menu-sep').length === 1)
+brItems[0].props.onClick({ stopPropagation() {} })
+await wait(15)
+brTree = await settle('pop')
+ok('右键复制同样落到提示条（菜单收起）', textOf(byClass(brTree, 'dsh-git-oknote')[0]).indexOf('请手动复制分支名：main') >= 0
+  && byClass(brTree, 'dsh-git-menu').length === 0)
+
+/* 普通本地分支：两段式删除，第二段才发 -d */
+await openBranchCtx('stable')
+brItems = buttons(byClass(brTree, 'dsh-git-menu')[0])
+ok('普通本地分支的删除项可用', brItems.length === 2 && brItems[1].props.disabled !== true)
+brItems[1].props.onClick({ stopPropagation() {} })
+await wait(15)
+brTree = await settle('pop')
+const armItems = buttons(byClass(brTree, 'dsh-git-menu')[0])
+ok('第一段只武装：按钮换成「确认删除 stable」，rpc 还没发', armItems.length === 2
+  && textOf(armItems[1]) === '确认删除 stable')
+const delMark = calls.length
+armItems[1].props.onClick({ stopPropagation() {} })
+await wait(20)
+brTree = await settle('pop')
+const delCalls = calls.slice(delMark).filter((c) => c.method === 'git/branch-delete')
+ok('第二段才发 git/branch-delete（-d，不带 force）', delCalls.length === 1
+  && delCalls[0].args.name === 'stable' && delCalls[0].args.force !== true)
+ok('删完菜单收起，提示条说了删了哪个', byClass(brTree, 'dsh-git-menu').length === 0
+  && textOf(byClass(brTree, 'dsh-git-oknote')[0]).indexOf('已删除分支 stable') >= 0)
+
+/* -d 被拒（not fully merged）才给 -D，-D 自己也要再确认一次 */
+host.call = function (method, args) {
+  if (method === 'git/branch-delete') {
+    calls.push({ method: method, args: args })
+    /* git 的原话在 stderr 里（commandDetail 只读 stderr/stdout），-d 的拒绝是这句 */
+    if (args.force !== true) return Promise.resolve({ ok: false, stderr: "error: Unable to delete branch 'feature': not fully merged", exitCode: 1 })
+    return Promise.resolve({ ok: true, repo: '/tmp/ws', stdout: '', stderr: '', exitCode: 0 })
+  }
+  if (method === 'git/refs') return Promise.resolve(branchRefs)
+  return brSavedCall(method, args)
+}
+await openBranchCtx('feature')
+brItems = buttons(byClass(brTree, 'dsh-git-menu')[0])
+brItems[1].props.onClick({ stopPropagation() {} })
+await wait(15)
+brTree = await settle('pop')
+buttons(byClass(brTree, 'dsh-git-menu')[0])[1].props.onClick({ stopPropagation() {} })
+await wait(20)
+brTree = await settle('pop')
+const forceItems = buttons(byClass(brTree, 'dsh-git-menu')[0])
+ok('-d 被拒（not fully merged）：菜单里出现「强制删除（-D）」，错误条说了原因',
+  forceItems.length === 2 && textOf(forceItems[1]) === '强制删除（-D）'
+  && textOf(byClass(brTree, 'dsh-git-error')[0]).indexOf('还没有合并到别处') >= 0)
+forceItems[1].props.onClick({ stopPropagation() {} })
+await wait(15)
+brTree = await settle('pop')
+const armForceItems = buttons(byClass(brTree, 'dsh-git-menu')[0])
+ok('-D 也要再确认一次（按钮换成「确认强制删除 feature」）', armForceItems.length === 2
+  && textOf(armForceItems[1]) === '确认强制删除 feature')
+armForceItems[1].props.onClick({ stopPropagation() {} })
+await wait(20)
+brTree = await settle('pop')
+const forceCalls = calls.filter((c) => c.method === 'git/branch-delete' && c.args.force === true)
+ok('第二段发的是 -D（force:true），成功条带「强制 -D」', forceCalls.length === 1
+  && forceCalls[0].args.name === 'feature'
+  && textOf(byClass(brTree, 'dsh-git-oknote')[0]).indexOf('强制 -D') >= 0
+  && byClass(brTree, 'dsh-git-menu').length === 0)
+/* 远程段还要 branchRefs 这份 refs（branch-delete 恢复成放行），测完再整体还原 */
+host.call = function (method, args) {
+  if (method === 'git/refs') return Promise.resolve(branchRefs)
+  return brSavedCall(method, args)
+}
+
+/* 远程分支行：只有「复制分支名称」—— 没有分隔线，也没有删除 */
+fibers.clear()
+brTree = await openPanel()
+await wait(15)
+brTree = await settle('pop')
+await openBranchCtx('origin/ro')
+const roMenu = byClass(brTree, 'dsh-git-menu')[0]
+const roItems = roMenu === undefined ? [] : buttons(roMenu)
+ok('远程分支行只有「复制分支名称」一项（没有分隔线与删除）', roItems.length === 1
+  && textOf(roItems[0]) === '复制分支名称' && byClass(roMenu, 'dsh-git-menu-sep').length === 0)
+roItems[0].props.onClick({ stopPropagation() {} })
+await wait(15)
+brTree = await settle('pop')
+ok('远程行的复制也落提示条', textOf(byClass(brTree, 'dsh-git-oknote')[0]).indexOf('请手动复制分支名：origin/ro') >= 0)
+host.call = brSavedCall
+/* 同样把 t 换回活树（fibers 被这几段重挂过），说明页那一段还接着用 t */
+fibers.clear()
+t = await openLog()
 
 /* ── 清空按钮还活着，只是搬到了唯一还需要它的地方 ──
 
