@@ -180,6 +180,7 @@ console.log('=== 绑定成功而 pull 失败（冲突）：upstream 保留 ===')
   await sh('rm -f ' + HOME + '/.dsh/dsh-git-idea.json', '/tmp')
   const a = makeBody({ HOME: HOME, GIT_CONFIG_GLOBAL: GLOBAL }, seen)
   await sh(`cd ${R} && git checkout -q -b conf main
+git config pull.rebase false
 echo base > c.txt && git add -A && git commit -qm conf-base && git push -q origin conf
 git clone -q ${O} ${T} && cd ${T} && git config user.email t@t && git config user.name T && git checkout -q -b conf origin/conf && echo theirs > c.txt && git add -A && git commit -qm conf-theirs && git push -q origin conf
 cd ${R} && git checkout -q conf && echo ours > c.txt && git add -A && git commit -qm conf-ours`, '/tmp')
@@ -187,7 +188,9 @@ cd ${R} && git checkout -q conf && echo ours > c.txt && git add -A && git commit
   check('答复 upstreamSet:true（绑定这步成功了）但 ok:false、pulled:true、退出码非 0',
     reply.upstreamSet === true && reply.pulled === true && reply.ok !== true && reply.exitCode !== 0)
   /* git merge 的冲突叙述走 stdout（Auto-merging / CONFLICT / Automatic merge
-     failed），stderr 常常是空的 —— 两股合起来验。 */
+     failed），stderr 常常是空的 —— 两股合起来验。仓库里 config 了 pull.rebase
+     false：这台 git（≥2.34）在策略未定时根本不拉（"Need to specify how to
+     reconcile divergent branches"），那就到不了冲突这一步。 */
   check('答复里说的是合并冲突（stdout 或 stderr）',
     /CONFLICT|Automatic merge failed/i.test((reply.stderr || '') + '\n' + (reply.stdout || '')))
   check('upstream 保留：@{u} 已经指向 origin/conf —— 冲突解决后照常 pull',
