@@ -232,9 +232,11 @@ ok('分支卡开着，↓ 在卡上的动作区里', card !== undefined && cardG
 mark = pullCalls.length
 cardGlyph(tree, '↓').props.onClick({ stopEvent: function () {} })
 tree = await settle()
-ok('卡里已有 upstream：直接裸 pull（不问 refs、不带 setUpstream）',
+/* 「不问 refs」不能跨 settle 数：pull 成功后的 bump 会让面板自己补读一次 refs。
+   钉的是行为：裸 pull（无 setUpstream）+ 卡上内联反馈（act 的老路）。 */
+ok('卡里已有 upstream：直接裸 pull（不带 setUpstream，走 act 的内联反馈）',
   pullCalls.length === mark + 1 && pullCalls[pullCalls.length - 1].setUpstream === undefined
-  && callsOf(mark, 'git/refs').length === 0)
+  && textOf(cardOf(tree)).indexOf('pull 完成') >= 0)
 /* 换成「没有 upstream」的卡片列表：⇣ 一次 fetch（成功后 bump）让卡片按新答复重读。 */
 branchListReply = {
   ok: true, repo: '/tmp/ws', current: 'main', previous: '',
