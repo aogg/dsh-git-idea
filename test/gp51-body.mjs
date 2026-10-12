@@ -25,7 +25,7 @@ let refsReply = {
     { name: 'zeta', refs: [{ segments: ['main'], data: 'zeta/main' }] },
   ],
 }
-let branchesReply = {
+let branchListReply = {
   ok: true, repo: '/tmp/ws', current: 'main', previous: '',
   branches: [{ name: 'main', current: true, committedAt: Math.floor(Date.now() / 1000), upstream: '', track: '', ahead: 0, behind: 0, head: 'aaa', subject: 'tip' }],
   remotes: [{ name: 'remote-only', remote: 'origin', ref: 'origin/remote-only', committedAt: Math.floor(Date.now() / 1000), head: 'bbb', subject: 'r' }],
@@ -40,7 +40,7 @@ const realCall = host.call
 host.call = function (method, args) {
   if (method === 'git/panel') { calls.push({ method, args }); return Promise.resolve(panelReply) }
   if (method === 'git/refs') { calls.push({ method, args }); return Promise.resolve(refsReply) }
-  if (method === 'git/branches') { calls.push({ method, args }); return Promise.resolve(branchesReply) }
+  if (method === 'git/branches') { calls.push({ method, args }); return Promise.resolve(branchListReply) }
   if (method === 'git/pull') { calls.push({ method, args }); pullCalls.push(args); return Promise.resolve(pullReply()) }
   if (method === 'git/repos') { calls.push({ method, args }); return Promise.resolve({ ok: true, workspace: '/tmp/ws', repos: [], manual: [], missing: [] }) }
   if (method === 'git/authors') { calls.push({ method, args }); return Promise.resolve({ ok: true, repo: '/tmp/ws', authors: [] }) }
