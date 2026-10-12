@@ -207,9 +207,7 @@
       pluginConfigError = ''
       pluginConfigSignal.notify()
       if (configSaveTimer != null) { configSaveTimer(); configSaveTimer = null }
-      const timer = ctx.get('timer')
-      if (timer === undefined) { writePluginConfig(); return }
-      configSaveTimer = timer.timeout(function () {
+      configSaveTimer = timerOf().timeout(function () {
         configSaveTimer = null
         writePluginConfig()
       }, CONFIG_SAVE_MS)

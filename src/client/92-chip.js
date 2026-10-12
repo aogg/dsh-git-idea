@@ -101,6 +101,27 @@
       return out
     }
 
+    /* 完成的那一刷的本体。独立成模块函数（不闭包在组件里），因为它有两个调用时机
+       都在组件之外：页面藏着时的那一刷记成欠账（30-watch.js 的 oweCompleteRefresh），
+       回可见时由可见性处理函数补发 —— 那一刻完成它的那棵 chip 可能早就重挂过了。
+       本体做的事：对本会话名得出来的每个仓库失效 Host 的读缓存（git/flush 只删缓存
+       条目，不起进程），把本地那份读数标成「不再证明完整」，然后铃 + bump —— 面板
+       开着就把 needFull 立起来、走 ⟳ 同一条整树路重读并重画；关着则 chip 自己的
+       label、分支预取和压后的整树读都在同一次 bump 里走完。刚被会话新建的文件只有
+       全树读能看见，这正是它该刷的时机。 */
+    function runCompleteRefresh(sessionId) {
+      const repos = completionReposOf(sessionId)
+      /* flush 只是删 Host 的缓存条目；运输层断了的这一次安静放过（30-watch.js 的
+         watcherTick 同款）—— 下一读拿旧答案，再下一次读自会跟上。 */
+      callHost('git/flush', { sessionId: sessionId }).catch(function () {})
+      for (let i = 0; i < repos.length; i += 1) {
+        callHost('git/flush', { sessionId: sessionId, repo: repos[i] }).catch(function () {})
+        markTreePartial(repos[i])
+      }
+      ringTreeReload()
+      bumpData()
+    }
+
     function GitChip(props) {
       const isOpen = useOpen()
       const switching = useSwitchingTo()
@@ -166,23 +187,13 @@
       const [runEdge] = React.useState(function () { return { armed: false, was: false, timer: null } })
       const [idleEdge] = React.useState(function () { return { armed: false, was: null, timer: null } })
 
-      /* 完成的那一刷：对本会话名得出来的每个仓库失效 Host 的读缓存（git/flush 只删
-         缓存条目，不起进程），把本地那份读数标成「不再证明完整」，然后铃 + bump ——
-         面板开着就把 needFull 立起来、走 ⟳ 同一条整树路重读并重画；关着则 chip 自己
-         的 label、分支预取和压后的整树读都在同一次 bump 里走完。刚被会话新建的文件
-         只有全树读能看见，这正是它该刷的时机。 */
+      /* 完成的那一刷：页面开着就当场跑（本体在模块层的 runCompleteRefresh）；
+         页面藏着时过去是直接丢掉，指望「回可见时 watcherTickAll 补读兜底」—— 但那条
+         兜底自己会断（第一次 tick 只记基线，30-watch.js），真机上整整一段 agent 干活
+         时间的提交就都丢了。所以藏着时把这一刷记成欠账，回可见时补发。 */
       const completeRefresh = function () {
-        if (watchPageDoc != null && watchPageDoc.hidden === true) return
-        const repos = completionReposOf(sessionId)
-        /* flush 只是删 Host 的缓存条目；运输层断了的这一次安静放过（30-watch.js 的
-           watcherTick 同款）—— 下一读拿旧答案，再下一次读自会跟上。 */
-        callHost('git/flush', { sessionId: sessionId }).catch(function () {})
-        for (let i = 0; i < repos.length; i += 1) {
-          callHost('git/flush', { sessionId: sessionId, repo: repos[i] }).catch(function () {})
-          markTreePartial(repos[i])
-        }
-        ringTreeReload()
-        bumpData()
+        if (watchPageDoc != null && watchPageDoc.hidden === true) { oweCompleteRefresh(sessionId); return }
+        runCompleteRefresh(sessionId)
       }
 
       /* 「所有会话都停满 5 秒」的那一推。只推「领先远端且没有未解决冲突」的当前
@@ -235,12 +246,7 @@
         runEdge.was = runningNow === true
         if (runEdge.armed !== true) { runEdge.armed = true; return undefined }
         if (previous !== true || runningNow === true) return undefined
-        const timer = ctx.get('timer')
-        if (timer === undefined) {
-          if (pluginConfig.refreshOnComplete === true) completeRefresh()
-          return undefined
-        }
-        runEdge.timer = timer.timeout(function () {
+        runEdge.timer = timerOf().timeout(function () {
           runEdge.timer = null
           /* 开关在开跑那一刻再读模块层那份（随时是新的）：挂起的这两秒里读者把它
              关掉，这一轮就不该再跑。 */
@@ -265,12 +271,7 @@
           return undefined
         }
         if (previous !== null && previous > 0 && idleEdge.timer == null) {
-          const timer = ctx.get('timer')
-          if (timer === undefined) {
-            if (pluginConfig.pushOnAllComplete === true) autoPushRun()
-            return undefined
-          }
-          idleEdge.timer = timer.timeout(function () {
+          idleEdge.timer = timerOf().timeout(function () {
             idleEdge.timer = null
             if (pluginConfig.pushOnAllComplete !== true) return
             autoPushRun()
@@ -369,9 +370,7 @@
              （分支名、面板那条 0.2s 的路径读）先走。 */
           const defer = current !== null && nothingToAsk !== true
           if (defer !== true) { wholeTree(); return }
-          const timer = ctx.get('timer')
-          if (timer === undefined) { wholeTree(); return }
-          stopFull = timer.timeout(function () {
+          stopFull = timerOf().timeout(function () {
             /* 开跑之前再问一遍该不该跑：这 2 秒里面板的全树读可能已经把这份读数补
                完整了（会话完成那一刷就是这么接力的 —— 面板听见铃先读，chip 让路），
                再跑一次就是让最贵的那条路排两遍队。 */

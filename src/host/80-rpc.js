@@ -22,9 +22,13 @@ onRpc('git/panel', function (input) { return panelSnapshot(input) })
 onRpc('git/init', function (input) { return initSnapshot(input, '初始化仓库') })
 
 /* The client's refresh button must be able to force a re-read; without this it
-   would only repaint whatever the read cache already held. */
+   would only repaint whatever the read cache already held. `tags` narrows the
+   invalidation to those exact cache entries — the panel's reopen-time identity
+   re-verification drops only panel-ident and branches (see 80-panel.js), so
+   reopening stays cheap while the ↑ count it shows can no longer be a stale
+   cache answer. */
 onRpc('git/flush', function (input) {
-  invalidateRepo(repoFrom(input, null))
+  invalidateRepo(repoFrom(input, null), input != null && Array.isArray(input.tags) ? input.tags : null)
   return { ok: true }
 })
 

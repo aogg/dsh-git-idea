@@ -28,10 +28,37 @@
 
     function hostWait(ms) {
       return new Promise(function (resolve) {
-        const timer = ctx.get('timer')
-        if (timer === undefined) { resolve(); return }
-        timer.timeout(function () { resolve() }, ms)
+        timerOf().timeout(function () { resolve() }, ms)
       })
+    }
+
+    /* ── 时钟从哪来 ──
+
+       动态桥的浏览器组合提供 timer 服务（cordis 的 ClientTimerService，定时器系在
+       fiber 上，插件卸载即拆）；真包所在的前端组合则未必 —— 部署实测
+       （dsh-web-frontend 的组合只 mixin 了 reflect / fiber / registry / events），
+       ctx.get('timer') 在那里永远答 undefined。而没有时钟的代价不是少几个优化：
+       watcherSchedule 拿不到 timer 一档都不排，轮询整个不存在，签名变化永远无人
+       flush —— Host 那份从不过期的读缓存（60-reads.js）就把 ↑ 的待推送数冻结在
+       最后一次 flush 上。真机上 agent 连提十来个提交、面板一个数都不动的现场就是它。
+
+       所以这里兜底：真包是普通脚本，window 自己的 setTimeout / setInterval 就够。
+       返回的拆销函数与 timer 服务同形，所有调用点本来就只存拆销、只在 effect 清理里
+       拆 —— 兜底做不到 fiber 级回收的泄漏面，只剩「插件卸载瞬间恰好挂着的单发定时
+       器」，多响一次就静默结束，无害。优先 ctx 服务：桥版与测试套件的桩都在。 */
+    function timerOf() {
+      const service = ctx.get('timer')
+      if (service !== undefined) return service
+      return {
+        timeout: function (callback, delay) {
+          const handle = setTimeout(callback, delay)
+          return function () { clearTimeout(handle) }
+        },
+        interval: function (callback, delay) {
+          const handle = setInterval(callback, delay)
+          return function () { clearInterval(handle) }
+        },
+      }
     }
 
     function callHost(method, payload, left) {
@@ -420,9 +447,7 @@
     function hoverOpenSoon() {
       clearHoverTimer()
       if (switchMode !== null) return
-      const timer = ctx.get('timer')
-      if (timer === undefined) return
-      hoverTimer = timer.timeout(function () {
+      hoverTimer = timerOf().timeout(function () {
         hoverTimer = null
         if (switchMode === null) setSwitchMode('hover')
       }, 180)
@@ -453,9 +478,7 @@
       clearHoverTimer()
       if (switchMode !== 'hover') return
       if (switchBusy === true) return
-      const timer = ctx.get('timer')
-      if (timer === undefined) { setSwitchMode(null); return }
-      hoverTimer = timer.timeout(function () {
+      hoverTimer = timerOf().timeout(function () {
         hoverTimer = null
         if (switchMode === 'hover') setSwitchMode(null)
       }, 200)

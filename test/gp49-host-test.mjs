@@ -182,6 +182,41 @@ console.log('=== 设置类动作不进「命令」页；plugin 配置归一化�
   check('没有这份配置时落在缺省：true / false', blank.ok === true && blank.config.refreshOnComplete === true && blank.config.pushOnAllComplete === false)
 }
 
+console.log('')
+console.log('=== git/flush 的 tags：只作废点名的两格，其余缓存照旧 ===')
+/* 面板重开时的身份校正（80-panel.js）靠这一条才买得起：只让 panel-ident / branches
+ * 重读，图、作者、refs、整树读的缓存一格不动。这里用 shell spy 数 git 进程数来分辨
+ * 「缓存命中」和「真的重读了」。 */
+{
+  const spy = []
+  const a = makeBody({}, spy)
+  const gitRuns = () => spy.filter((c) => c.indexOf('git ') >= 0 || c.indexOf("'git'") >= 0).length
+  /* main 得先有 upstream，ahead 才是有意义的数（没配 upstream 时 %(upstream:track)
+   * 恒空、ahead 恒 0，这条就钉不住任何东西了）。remote.origin.fetch 必须在 ——
+   * 没有它 git 把 branch.main.merge 当成本地 refs/heads/main，拒不认账。 */
+  await sh(`cd ${R} && git remote add origin . && git update-ref refs/remotes/origin/main main && git config branch.main.remote origin && git config branch.main.merge refs/heads/main`)
+  const first = await a.H('git/panel')({ repo: R, quick: true })
+  await a.H('git/refs')({ repo: R })
+  check('预热：身份读答 ahead=0（一次提交都没落后）', first.ok === true && first.ahead === 0)
+  await sh(`cd ${R} && git config user.email t@t && git config user.name T && printf 'b\\n' > b.txt && git add -A && git commit -qm two`)
+  const stale = await a.H('git/panel')({ repo: R, quick: true })
+  check('没 flush 就重读：拿到的还是缓存里的旧 ahead（真机现场的同款形状）',
+    stale.ok === true && stale.ahead === 0)
+  const warmRuns = gitRuns()
+  await a.H('git/flush')({ repo: R, tags: ['panel-ident', 'branches'] })
+  const fresh = await a.H('git/panel')({ repo: R, quick: true })
+  check('点名的 panel-ident 作废了：重读答出新 ahead=1', fresh.ok === true && fresh.ahead === 1)
+  check('同一格的确重跑了 git（不是换个说法的缓存命中）', gitRuns() > warmRuns)
+  const afterTagged = gitRuns()
+  const refsAgain = await a.H('git/refs')({ repo: R })
+  check('refs 的缓存没被点名的 flush 波及（命中缓存，一个 git 进程都没起）',
+    refsAgain.ok === true && gitRuns() === afterTagged)
+  await a.H('git/flush')({ repo: R })
+  const refsAfterAll = await a.H('git/refs')({ repo: R })
+  check('不带 tags 的 flush 照旧清整仓：refs 这次真的重读了',
+    refsAfterAll.ok === true && refsAfterAll.current.join(',') === 'main' && gitRuns() > afterTagged)
+}
+
 if (failed > 0) {
   console.error('gp49-host: ' + String(failed) + ' check(s) failed')
   process.exit(1)

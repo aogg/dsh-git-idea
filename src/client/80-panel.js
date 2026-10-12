@@ -588,6 +588,37 @@
         callHost('git/flush', base(appliedRepo)).then(bump, bump)
       }
 
+      /* ── 面板成为屏上的那块面时，↑ 的数不许是 Host 缓存里的旧答案 ──
+
+         读缓存在 Host 手里从不过期（60-reads.js），新鲜度全靠有人先 flush：轮询的
+         签名（30-watch.js）、会话完成那一刷（92-chip.js）、⟳，都是「先 flush 再读」。
+         但三条路都会断 —— 轮询要时钟（无 timer 服务的前端组合里整条不存在）、完成的
+         一刷页面藏着时记成欠账要等回可见、⟳ 要人点。真机的现场就是：agent 连提十来
+         个提交，面板关了再开，↑ 上的待推送数还停在几个提交之前 —— 因为重开重发的
+         身份读命中了那份没人 flush 过的缓存。
+         所以「面板变成屏上的那块面」本身就是一次 flush 时机：只作废身份与分支两格
+         （tags，几十微秒），再补一次 0.1–0.4s 的身份读把 work.ahead 校正回来。图、
+         作者、refs、整树读的缓存一格不动 —— 重开面板照旧接近零成本，只有那个必须
+         新鲜的数字重新问了一遍。开着的期间切仓库也算一次「成为」（新仓库同名格
+         同样作废）；在飞期间的一次变更（repoEpoch）照旧让迟到的答复作废。 */
+      const [openBox] = React.useState(function () { return { flushedFor: null } })
+      React.useEffect(function () {
+        if (props.active !== true) { openBox.flushedFor = null; return undefined }
+        const request = base(appliedRepo)
+        const key = request.repo === undefined ? '\u0000' + sessionId : request.repo
+        if (openBox.flushedFor === key) return undefined
+        openBox.flushedFor = key
+        const asked = request.repo === undefined ? '' : request.repo
+        const epoch = repoEpoch(asked, sessionId)
+        callHost('git/flush', Object.assign({ tags: ['panel-ident', 'branches'] }, request)).catch(function () {})
+        callHost('git/panel', Object.assign({ quick: true }, request)).then(function (data) {
+          if (data == null || data.ok !== true) return
+          if (epoch !== repoEpoch(asked, sessionId)) return
+          setWork(data)
+        }, function () {})
+        return undefined
+      }, [props.active, appliedRepo, sessionId])
+
       const resetFilters = function () {
         setActiveRef('')
         setAllRefs(false)
@@ -682,9 +713,7 @@
       const scheduleDraftSave = function (repo, value) {
         if (repo.length === 0) return
         if (draftBox.timer !== null) { draftBox.timer(); draftBox.timer = null }
-        const timer = ctx.get('timer')
-        if (timer === undefined) { saveDraft(repo, value); return }
-        draftBox.timer = timer.timeout(function () {
+        draftBox.timer = timerOf().timeout(function () {
           draftBox.timer = null
           saveDraft(repo, value)
         }, DRAFT_SAVE_MS)
@@ -1266,9 +1295,7 @@
          on screen and nowhere else. */
       React.useEffect(function () {
         if (!repoOk || props.ready !== true || props.active !== true || tab !== 'changes') return undefined
-        const timer = ctx.get('timer')
-        if (timer === undefined) return undefined
-        return timer.interval(function () { reloadChanges() }, fullReadGapMs(treeCost))
+        return timerOf().interval(function () { reloadChanges() }, fullReadGapMs(treeCost))
       }, [appliedRepo, repoOk, props.active, props.ready, tab, treeCost])
 
       /* ── 多选的变更分组：每个选中仓库一份工作区快照 ──

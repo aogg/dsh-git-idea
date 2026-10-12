@@ -211,24 +211,20 @@
       }
       const flyOpenSoon = function (key, top) {
         clearFlyTimer()
-        const timer = ctx.get('timer')
         const reveal = function () {
           setFly(function (prev) {
             if (prev !== null && prev.pinned === true) return prev
             return { key: key, top: top, pinned: false }
           })
         }
-        if (timer === undefined) { reveal(); return }
-        flyTimer = timer.timeout(function () { flyTimer = null; reveal() }, FLY_OPEN_MS)
+        flyTimer = timerOf().timeout(function () { flyTimer = null; reveal() }, FLY_OPEN_MS)
       }
       const flyCloseSoon = function () {
         clearFlyTimer()
-        const timer = ctx.get('timer')
         const dismiss = function () {
           setFly(function (prev) { return prev !== null && prev.pinned === true ? prev : null })
         }
-        if (timer === undefined) { dismiss(); return }
-        flyTimer = timer.timeout(function () { flyTimer = null; dismiss() }, FLY_CLOSE_MS)
+        flyTimer = timerOf().timeout(function () { flyTimer = null; dismiss() }, FLY_CLOSE_MS)
       }
       const flyPin = function (key, top) {
         clearFlyTimer()

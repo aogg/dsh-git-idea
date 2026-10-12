@@ -165,8 +165,24 @@ async function cached(repo, tag, loader) {
   }
 }
 
-function invalidateRepo(repo) {
+/* Invalidate one repository's cached reads. Without tags the whole repository
+   goes (the mutation and refresh paths); with tags only those exact entries do —
+   `repo + '\0' + tag` is the whole key for the tags the client asks for by name
+   (panel-ident, branches), so the deletion is exact and the rest of the cache
+   (the graph, the authors, the pathspec reads) survives. This is what makes the
+   panel's reopen-time identity re-verification affordable: one cache entry
+   re-read, not nine. */
+function invalidateRepo(repo, tags) {
   if (repo === undefined || repo === null) { readCache.clear(); return }
+  if (Array.isArray(tags) && tags.length > 0) {
+    for (let i = 0; i < tags.length; i += 1) {
+      if (!isStr(tags[i]) || tags[i].length === 0) continue
+      const key = repo + '\u0000' + tags[i]
+      readCache.delete(key)
+    }
+    while (readCache.size > READ_CACHE_MAX) readCache.delete(readCache.keys().next().value)
+    return
+  }
   const prefix = repo + '\u0000'
   const doomed = []
   readCache.forEach(function (_value, key) {

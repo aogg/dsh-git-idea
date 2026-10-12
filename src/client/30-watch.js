@@ -58,10 +58,8 @@
 
     function watcherSchedule(entry) {
       if (entry.stop != null) { entry.stop(); entry.stop = null }
-      const timer = ctx.get('timer')
-      if (timer === undefined) return
       if (gitSettings.watchEnabled !== true || entry.listeners.size === 0) return
-      entry.stop = timer.interval(function () { watcherTick(entry) }, watcherInterval(entry))
+      entry.stop = timerOf().interval(function () { watcherTick(entry) }, watcherInterval(entry))
     }
 
     function watcherTick(entry) {
@@ -110,6 +108,26 @@
       Object.keys(repoWatchers).forEach(function (key) { watcherSchedule(repoWatchers[key]) })
     }
 
+    /* ── 「会话完成的那一刷」欠着的账（92-chip.js 记，这里在回可见时补）──
+
+       页面藏着时完成的那一刷过去是直接丢掉，理由是「回可见时靠 watcherTickAll 补读
+       兜底」。但那条兜底路自己会断：它走 watcherTick 的签名比对，而第一次 tick 只记
+       基线不做任何事 —— 一个页面若在整个 agent 干活期间都藏着（真机常态：读者在编辑
+       器里，浏览器缩在后台），回可见的那一次 tick 记下的就是提交之后的基线，之前
+       丢了什么永远追不回来；真机上 Host 缓存里 ahead 停在十个提交之前的现场，就有
+       这一条的份。所以藏起来的那一刷在这里记成欠账（记着是哪个会话完成的），回可见
+       先补账、再对签名。 */
+    let completeRefreshOwedFor = null
+    function oweCompleteRefresh(forSession) {
+      completeRefreshOwedFor = forSession
+    }
+    function settleOwedCompleteRefresh() {
+      if (completeRefreshOwedFor == null) return
+      const forSession = completeRefreshOwedFor
+      completeRefreshOwedFor = null
+      runCompleteRefresh(forSession)
+    }
+
     function watchRepo(repo, sessionId, listener, fast, deep) {
       const entry = watcherFor(repo, sessionId)
       const token = {}
@@ -125,7 +143,11 @@
              takes the listener with it. */
           if (typeof doc.addEventListener === 'function') {
             ctx.effect(function () {
-              const onVisibility = function () { if (doc.hidden !== true) watcherTickAll() }
+              const onVisibility = function () {
+                if (doc.hidden === true) return
+                settleOwedCompleteRefresh()
+                watcherTickAll()
+              }
               doc.addEventListener('visibilitychange', onVisibility)
               return function () { doc.removeEventListener('visibilitychange', onVisibility) }
             }, 'dsh-git-idea visibility watch')

@@ -268,23 +268,35 @@ await wait(20)
 ok('补完之后不再重复读', calls.length === 0)
 
 console.log('')
-console.log('== 没有任何变化时，关掉再打开：历史照旧零读，只多打开即预读的那一次命令记录 ==')
+console.log('== 没有任何变化时，关掉再打开：身份校正一对，历史照旧零读 ==')
 await chipClose()
 calls.length = 0
 tree = await openPanel()
 await wait(30)
 console.log('  无变化重开的 RPC:', JSON.stringify(calls.map((c) => c.method + ' @' + c.tree)))
-ok('没有重读历史/分支/作者', heavy().length === 0)
-/* 芯片发两次：先便宜的「哪个仓库哪个分支」，再补工作区状态（走缓存，0ms）。
-   6aede2c 起「每次打开」算一次刷新时机：重开还多发一次后台 git/command-log 预读
-   （open 即发，不等切页）—— 这一次是规格内的代价，历史/分支/作者照旧一个不发。 */
+/* 6aede2c 起「每次打开」算一次刷新时机：重开发一次后台 git/command-log 预读。
+   往后「面板成为屏上的那块面」本身又是一次 flush 时机：只作废 panel-ident /
+   branches 两格缓存，再补一次 0.1–0.4s 的身份读 —— ↑ 的待推送数不许是 Host 缓存
+   里的旧答案（真机现场：agent 连提十来个提交、重开面板 ↑ 还停在几个提交之前，
+   因为重发的那次读命中了没人 flush 过的缓存）。历史/分支/作者/提交详情照旧一个
+   不发，整树读也一个不发 —— 重开仍接近零成本，只有必须新鲜的数字重新问了一遍。 */
 const panelCalls = calls.filter((c) => c.method === 'git/panel')
+const flushCalls = calls.filter((c) => c.method === 'git/flush')
 const cmdlogCalls = calls.filter((c) => c.method === 'git/command-log')
-ok('芯片两次状态读（走缓存，0ms）+ 面板打开即发的那一次后台命令预读',
-  calls.length === 3 && panelCalls.length === 2 && cmdlogCalls.length === 1
-  && calls.every((c) => c.tree === 'chip' || c.method === 'git/command-log')
+ok('没有重读历史/分支/作者/提交详情，面板这侧也没有整树读',
+  calls.every((c) => ['git/graph', 'git/authors', 'git/refs', 'git/commit-detail', 'git/branches'].indexOf(c.method) < 0)
+  && panelCalls.every((c) => c.args.quick === true || c.tree === 'chip'))
+ok('身份校正正好一对：带 tags 的 flush + 面板这侧的一次 quick 身份读',
+  flushCalls.length === 1 && JSON.stringify(flushCalls[0].args.tags) === JSON.stringify(['panel-ident', 'branches'])
+  && panelCalls.filter((c) => c.tree !== 'chip' && c.args.quick === true).length === 1)
+/* 芯片发两次：先便宜的「哪个仓库哪个分支」，再补工作区状态（走缓存，0ms）。
+   面板这侧是身份校正的一对（上面的 flush + quick 读）+ 打开即发的那一次后台
+   git/command-log 预读 —— 共五条。 */
+ok('芯片两次状态读（走缓存，0ms）+ 身份校正一对 + 打开即发的命令预读',
+  calls.length === 5 && panelCalls.length === 3 && flushCalls.length === 1 && cmdlogCalls.length === 1
+  && calls.every((c) => c.tree === 'chip' || c.method === 'git/command-log' || c.method === 'git/flush' || (c.method === 'git/panel' && c.args.quick === true))
   && cmdlogCalls.every((c) => c.tree === 'pop')
-  && panelCalls.filter((c) => c.args.quick === true).length === 1)
+  && panelCalls.filter((c) => c.tree === 'chip' && c.args.quick === true).length === 1)
 ok('面板内容还在（标签页没丢）', textOf(tree).indexOf('历史') >= 0)
 
 console.log('')
