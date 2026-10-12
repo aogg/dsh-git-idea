@@ -54,10 +54,37 @@ return {
 
     function hostWait(ms) {
       return new Promise(function (resolve) {
-        const timer = ctx.get('timer')
-        if (timer === undefined) { resolve(); return }
-        timer.timeout(function () { resolve() }, ms)
+        timerOf().timeout(function () { resolve() }, ms)
       })
+    }
+
+    /* ── 时钟从哪来 ──
+
+       动态桥的浏览器组合提供 timer 服务（cordis 的 ClientTimerService，定时器系在
+       fiber 上，插件卸载即拆）；真包所在的前端组合则未必 —— 部署实测
+       （dsh-web-frontend 的组合只 mixin 了 reflect / fiber / registry / events），
+       ctx.get('timer') 在那里永远答 undefined。而没有时钟的代价不是少几个优化：
+       watcherSchedule 拿不到 timer 一档都不排，轮询整个不存在，签名变化永远无人
+       flush —— Host 那份从不过期的读缓存（60-reads.js）就把 ↑ 的待推送数冻结在
+       最后一次 flush 上。真机上 agent 连提十来个提交、面板一个数都不动的现场就是它。
+
+       所以这里兜底：真包是普通脚本，window 自己的 setTimeout / setInterval 就够。
+       返回的拆销函数与 timer 服务同形，所有调用点本来就只存拆销、只在 effect 清理里
+       拆 —— 兜底做不到 fiber 级回收的泄漏面，只剩「插件卸载瞬间恰好挂着的单发定时
+       器」，多响一次就静默结束，无害。优先 ctx 服务：桥版与测试套件的桩都在。 */
+    function timerOf() {
+      const service = ctx.get('timer')
+      if (service !== undefined) return service
+      return {
+        timeout: function (callback, delay) {
+          const handle = setTimeout(callback, delay)
+          return function () { clearTimeout(handle) }
+        },
+        interval: function (callback, delay) {
+          const handle = setInterval(callback, delay)
+          return function () { clearInterval(handle) }
+        },
+      }
     }
 
     function callHost(method, payload, left) {
@@ -446,9 +473,7 @@ return {
     function hoverOpenSoon() {
       clearHoverTimer()
       if (switchMode !== null) return
-      const timer = ctx.get('timer')
-      if (timer === undefined) return
-      hoverTimer = timer.timeout(function () {
+      hoverTimer = timerOf().timeout(function () {
         hoverTimer = null
         if (switchMode === null) setSwitchMode('hover')
       }, 180)
@@ -479,9 +504,7 @@ return {
       clearHoverTimer()
       if (switchMode !== 'hover') return
       if (switchBusy === true) return
-      const timer = ctx.get('timer')
-      if (timer === undefined) { setSwitchMode(null); return }
-      hoverTimer = timer.timeout(function () {
+      hoverTimer = timerOf().timeout(function () {
         hoverTimer = null
         if (switchMode === 'hover') setSwitchMode(null)
       }, 200)
@@ -887,9 +910,7 @@ return {
       pluginConfigError = ''
       pluginConfigSignal.notify()
       if (configSaveTimer != null) { configSaveTimer(); configSaveTimer = null }
-      const timer = ctx.get('timer')
-      if (timer === undefined) { writePluginConfig(); return }
-      configSaveTimer = timer.timeout(function () {
+      configSaveTimer = timerOf().timeout(function () {
         configSaveTimer = null
         writePluginConfig()
       }, CONFIG_SAVE_MS)
@@ -1410,10 +1431,8 @@ return {
 
     function watcherSchedule(entry) {
       if (entry.stop != null) { entry.stop(); entry.stop = null }
-      const timer = ctx.get('timer')
-      if (timer === undefined) return
       if (gitSettings.watchEnabled !== true || entry.listeners.size === 0) return
-      entry.stop = timer.interval(function () { watcherTick(entry) }, watcherInterval(entry))
+      entry.stop = timerOf().interval(function () { watcherTick(entry) }, watcherInterval(entry))
     }
 
     function watcherTick(entry) {
@@ -1462,6 +1481,26 @@ return {
       Object.keys(repoWatchers).forEach(function (key) { watcherSchedule(repoWatchers[key]) })
     }
 
+    /* ── 「会话完成的那一刷」欠着的账（92-chip.js 记，这里在回可见时补）──
+
+       页面藏着时完成的那一刷过去是直接丢掉，理由是「回可见时靠 watcherTickAll 补读
+       兜底」。但那条兜底路自己会断：它走 watcherTick 的签名比对，而第一次 tick 只记
+       基线不做任何事 —— 一个页面若在整个 agent 干活期间都藏着（真机常态：读者在编辑
+       器里，浏览器缩在后台），回可见的那一次 tick 记下的就是提交之后的基线，之前
+       丢了什么永远追不回来；真机上 Host 缓存里 ahead 停在十个提交之前的现场，就有
+       这一条的份。所以藏起来的那一刷在这里记成欠账（记着是哪个会话完成的），回可见
+       先补账、再对签名。 */
+    let completeRefreshOwedFor = null
+    function oweCompleteRefresh(forSession) {
+      completeRefreshOwedFor = forSession
+    }
+    function settleOwedCompleteRefresh() {
+      if (completeRefreshOwedFor == null) return
+      const forSession = completeRefreshOwedFor
+      completeRefreshOwedFor = null
+      runCompleteRefresh(forSession)
+    }
+
     function watchRepo(repo, sessionId, listener, fast, deep) {
       const entry = watcherFor(repo, sessionId)
       const token = {}
@@ -1477,7 +1516,11 @@ return {
              takes the listener with it. */
           if (typeof doc.addEventListener === 'function') {
             ctx.effect(function () {
-              const onVisibility = function () { if (doc.hidden !== true) watcherTickAll() }
+              const onVisibility = function () {
+                if (doc.hidden === true) return
+                settleOwedCompleteRefresh()
+                watcherTickAll()
+              }
               doc.addEventListener('visibilitychange', onVisibility)
               return function () { doc.removeEventListener('visibilitychange', onVisibility) }
             }, 'dsh-git-idea visibility watch')
@@ -6020,24 +6063,20 @@ textarea.dsh-git-input{resize:vertical}
       }
       const flyOpenSoon = function (key, top) {
         clearFlyTimer()
-        const timer = ctx.get('timer')
         const reveal = function () {
           setFly(function (prev) {
             if (prev !== null && prev.pinned === true) return prev
             return { key: key, top: top, pinned: false }
           })
         }
-        if (timer === undefined) { reveal(); return }
-        flyTimer = timer.timeout(function () { flyTimer = null; reveal() }, FLY_OPEN_MS)
+        flyTimer = timerOf().timeout(function () { flyTimer = null; reveal() }, FLY_OPEN_MS)
       }
       const flyCloseSoon = function () {
         clearFlyTimer()
-        const timer = ctx.get('timer')
         const dismiss = function () {
           setFly(function (prev) { return prev !== null && prev.pinned === true ? prev : null })
         }
-        if (timer === undefined) { dismiss(); return }
-        flyTimer = timer.timeout(function () { flyTimer = null; dismiss() }, FLY_CLOSE_MS)
+        flyTimer = timerOf().timeout(function () { flyTimer = null; dismiss() }, FLY_CLOSE_MS)
       }
       const flyPin = function (key, top) {
         clearFlyTimer()
@@ -7976,6 +8015,37 @@ textarea.dsh-git-input{resize:vertical}
         callHost('git/flush', base(appliedRepo)).then(bump, bump)
       }
 
+      /* ── 面板成为屏上的那块面时，↑ 的数不许是 Host 缓存里的旧答案 ──
+
+         读缓存在 Host 手里从不过期（60-reads.js），新鲜度全靠有人先 flush：轮询的
+         签名（30-watch.js）、会话完成那一刷（92-chip.js）、⟳，都是「先 flush 再读」。
+         但三条路都会断 —— 轮询要时钟（无 timer 服务的前端组合里整条不存在）、完成的
+         一刷页面藏着时记成欠账要等回可见、⟳ 要人点。真机的现场就是：agent 连提十来
+         个提交，面板关了再开，↑ 上的待推送数还停在几个提交之前 —— 因为重开重发的
+         身份读命中了那份没人 flush 过的缓存。
+         所以「面板变成屏上的那块面」本身就是一次 flush 时机：只作废身份与分支两格
+         （tags，几十微秒），再补一次 0.1–0.4s 的身份读把 work.ahead 校正回来。图、
+         作者、refs、整树读的缓存一格不动 —— 重开面板照旧接近零成本，只有那个必须
+         新鲜的数字重新问了一遍。开着的期间切仓库也算一次「成为」（新仓库同名格
+         同样作废）；在飞期间的一次变更（repoEpoch）照旧让迟到的答复作废。 */
+      const [openBox] = React.useState(function () { return { flushedFor: null } })
+      React.useEffect(function () {
+        if (props.active !== true) { openBox.flushedFor = null; return undefined }
+        const request = base(appliedRepo)
+        const key = request.repo === undefined ? '\u0000' + sessionId : request.repo
+        if (openBox.flushedFor === key) return undefined
+        openBox.flushedFor = key
+        const asked = request.repo === undefined ? '' : request.repo
+        const epoch = repoEpoch(asked, sessionId)
+        callHost('git/flush', Object.assign({ tags: ['panel-ident', 'branches'] }, request)).catch(function () {})
+        callHost('git/panel', Object.assign({ quick: true }, request)).then(function (data) {
+          if (data == null || data.ok !== true) return
+          if (epoch !== repoEpoch(asked, sessionId)) return
+          setWork(data)
+        }, function () {})
+        return undefined
+      }, [props.active, appliedRepo, sessionId])
+
       const resetFilters = function () {
         setActiveRef('')
         setAllRefs(false)
@@ -8070,9 +8140,7 @@ textarea.dsh-git-input{resize:vertical}
       const scheduleDraftSave = function (repo, value) {
         if (repo.length === 0) return
         if (draftBox.timer !== null) { draftBox.timer(); draftBox.timer = null }
-        const timer = ctx.get('timer')
-        if (timer === undefined) { saveDraft(repo, value); return }
-        draftBox.timer = timer.timeout(function () {
+        draftBox.timer = timerOf().timeout(function () {
           draftBox.timer = null
           saveDraft(repo, value)
         }, DRAFT_SAVE_MS)
@@ -8654,9 +8722,7 @@ textarea.dsh-git-input{resize:vertical}
          on screen and nowhere else. */
       React.useEffect(function () {
         if (!repoOk || props.ready !== true || props.active !== true || tab !== 'changes') return undefined
-        const timer = ctx.get('timer')
-        if (timer === undefined) return undefined
-        return timer.interval(function () { reloadChanges() }, fullReadGapMs(treeCost))
+        return timerOf().interval(function () { reloadChanges() }, fullReadGapMs(treeCost))
       }, [appliedRepo, repoOk, props.active, props.ready, tab, treeCost])
 
       /* ── 多选的变更分组：每个选中仓库一份工作区快照 ──
@@ -10806,6 +10872,27 @@ textarea.dsh-git-input{resize:vertical}
       return out
     }
 
+    /* 完成的那一刷的本体。独立成模块函数（不闭包在组件里），因为它有两个调用时机
+       都在组件之外：页面藏着时的那一刷记成欠账（30-watch.js 的 oweCompleteRefresh），
+       回可见时由可见性处理函数补发 —— 那一刻完成它的那棵 chip 可能早就重挂过了。
+       本体做的事：对本会话名得出来的每个仓库失效 Host 的读缓存（git/flush 只删缓存
+       条目，不起进程），把本地那份读数标成「不再证明完整」，然后铃 + bump —— 面板
+       开着就把 needFull 立起来、走 ⟳ 同一条整树路重读并重画；关着则 chip 自己的
+       label、分支预取和压后的整树读都在同一次 bump 里走完。刚被会话新建的文件只有
+       全树读能看见，这正是它该刷的时机。 */
+    function runCompleteRefresh(sessionId) {
+      const repos = completionReposOf(sessionId)
+      /* flush 只是删 Host 的缓存条目；运输层断了的这一次安静放过（30-watch.js 的
+         watcherTick 同款）—— 下一读拿旧答案，再下一次读自会跟上。 */
+      callHost('git/flush', { sessionId: sessionId }).catch(function () {})
+      for (let i = 0; i < repos.length; i += 1) {
+        callHost('git/flush', { sessionId: sessionId, repo: repos[i] }).catch(function () {})
+        markTreePartial(repos[i])
+      }
+      ringTreeReload()
+      bumpData()
+    }
+
     function GitChip(props) {
       const isOpen = useOpen()
       const switching = useSwitchingTo()
@@ -10871,23 +10958,13 @@ textarea.dsh-git-input{resize:vertical}
       const [runEdge] = React.useState(function () { return { armed: false, was: false, timer: null } })
       const [idleEdge] = React.useState(function () { return { armed: false, was: null, timer: null } })
 
-      /* 完成的那一刷：对本会话名得出来的每个仓库失效 Host 的读缓存（git/flush 只删
-         缓存条目，不起进程），把本地那份读数标成「不再证明完整」，然后铃 + bump ——
-         面板开着就把 needFull 立起来、走 ⟳ 同一条整树路重读并重画；关着则 chip 自己
-         的 label、分支预取和压后的整树读都在同一次 bump 里走完。刚被会话新建的文件
-         只有全树读能看见，这正是它该刷的时机。 */
+      /* 完成的那一刷：页面开着就当场跑（本体在模块层的 runCompleteRefresh）；
+         页面藏着时过去是直接丢掉，指望「回可见时 watcherTickAll 补读兜底」—— 但那条
+         兜底自己会断（第一次 tick 只记基线，30-watch.js），真机上整整一段 agent 干活
+         时间的提交就都丢了。所以藏着时把这一刷记成欠账，回可见时补发。 */
       const completeRefresh = function () {
-        if (watchPageDoc != null && watchPageDoc.hidden === true) return
-        const repos = completionReposOf(sessionId)
-        /* flush 只是删 Host 的缓存条目；运输层断了的这一次安静放过（30-watch.js 的
-           watcherTick 同款）—— 下一读拿旧答案，再下一次读自会跟上。 */
-        callHost('git/flush', { sessionId: sessionId }).catch(function () {})
-        for (let i = 0; i < repos.length; i += 1) {
-          callHost('git/flush', { sessionId: sessionId, repo: repos[i] }).catch(function () {})
-          markTreePartial(repos[i])
-        }
-        ringTreeReload()
-        bumpData()
+        if (watchPageDoc != null && watchPageDoc.hidden === true) { oweCompleteRefresh(sessionId); return }
+        runCompleteRefresh(sessionId)
       }
 
       /* 「所有会话都停满 5 秒」的那一推。只推「领先远端且没有未解决冲突」的当前
@@ -10940,12 +11017,7 @@ textarea.dsh-git-input{resize:vertical}
         runEdge.was = runningNow === true
         if (runEdge.armed !== true) { runEdge.armed = true; return undefined }
         if (previous !== true || runningNow === true) return undefined
-        const timer = ctx.get('timer')
-        if (timer === undefined) {
-          if (pluginConfig.refreshOnComplete === true) completeRefresh()
-          return undefined
-        }
-        runEdge.timer = timer.timeout(function () {
+        runEdge.timer = timerOf().timeout(function () {
           runEdge.timer = null
           /* 开关在开跑那一刻再读模块层那份（随时是新的）：挂起的这两秒里读者把它
              关掉，这一轮就不该再跑。 */
@@ -10970,12 +11042,7 @@ textarea.dsh-git-input{resize:vertical}
           return undefined
         }
         if (previous !== null && previous > 0 && idleEdge.timer == null) {
-          const timer = ctx.get('timer')
-          if (timer === undefined) {
-            if (pluginConfig.pushOnAllComplete === true) autoPushRun()
-            return undefined
-          }
-          idleEdge.timer = timer.timeout(function () {
+          idleEdge.timer = timerOf().timeout(function () {
             idleEdge.timer = null
             if (pluginConfig.pushOnAllComplete !== true) return
             autoPushRun()
@@ -11074,9 +11141,7 @@ textarea.dsh-git-input{resize:vertical}
              （分支名、面板那条 0.2s 的路径读）先走。 */
           const defer = current !== null && nothingToAsk !== true
           if (defer !== true) { wholeTree(); return }
-          const timer = ctx.get('timer')
-          if (timer === undefined) { wholeTree(); return }
-          stopFull = timer.timeout(function () {
+          stopFull = timerOf().timeout(function () {
             /* 开跑之前再问一遍该不该跑：这 2 秒里面板的全树读可能已经把这份读数补
                完整了（会话完成那一刷就是这么接力的 —— 面板听见铃先读，chip 让路），
                再跑一次就是让最贵的那条路排两遍队。 */
