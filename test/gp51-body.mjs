@@ -219,14 +219,35 @@ ok('unborn（refs.current 说得出名字、refs/heads 里没有它）：裸 pul
 
 console.log('')
 console.log('== 分支卡 ↓：同名带参跑；没同名卡内就地选 ==')
+/* 卡片列表里当前分支已有 upstream：行为一字不变，直接裸 pull，连 refs 都不问。
+   答复在卡片挂载前就位 —— 卡片只在挂载和 bump 后读 branches。 */
+branchListReply = {
+  ok: true, repo: '/tmp/ws', current: 'main', previous: '',
+  branches: [{ name: 'main', current: true, committedAt: Math.floor(Date.now() / 1000), upstream: 'origin/main', track: '=', ahead: 0, behind: 0, head: 'aaa', subject: 'tip' }],
+  remotes: [],
+}
 tree = await openSwitcher()
 const card = cardOf(tree)
 ok('分支卡开着，↓ 在卡上的动作区里', card !== undefined && cardGlyph(tree, '↓') !== undefined)
+mark = pullCalls.length
+cardGlyph(tree, '↓').props.onClick({ stopEvent: function () {} })
+tree = await settle()
+ok('卡里已有 upstream：直接裸 pull（不问 refs、不带 setUpstream）',
+  pullCalls.length === mark + 1 && pullCalls[pullCalls.length - 1].setUpstream === undefined
+  && callsOf(mark, 'git/refs').length === 0)
+/* 换成「没有 upstream」的卡片列表：⇣ 一次 fetch（成功后 bump）让卡片按新答复重读。 */
+branchListReply = {
+  ok: true, repo: '/tmp/ws', current: 'main', previous: '',
+  branches: [{ name: 'main', current: true, committedAt: Math.floor(Date.now() / 1000), upstream: '', track: '', ahead: 0, behind: 0, head: 'aaa', subject: 'tip' }],
+  remotes: [{ name: 'remote-only', remote: 'origin', ref: 'origin/remote-only', committedAt: Math.floor(Date.now() / 1000), head: 'bbb', subject: 'r' }],
+}
 refsReply = {
   ok: true, repo: '/tmp/ws', current: ['main'],
   local: [{ segments: ['main'], data: 'main' }],
   remote: [{ name: 'origin', refs: [{ segments: ['main'], data: 'origin/main' }] }],
 }
+buttons(cardOf(tree)).find((b) => textOf(b) === '⇣').props.onClick({ stopEvent: function () {} })
+tree = await settle()
 mark = pullCalls.length
 cardGlyph(tree, '↓').props.onClick({ stopEvent: function () {} })
 tree = await settle()

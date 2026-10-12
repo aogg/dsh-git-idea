@@ -371,6 +371,8 @@
       const pullAction = function () {
         if (busy === true) return
         const row = all.find(function (one) { return one.current === true })
+        /* 已有 upstream：行为一字不变，照旧直接 pull。 */
+        if (row != null && text(row.upstream).length > 0) { act('git/pull', {}, 'pull'); return }
         /* 没有当前行：detached（没有名字）或还没出生（unborn，这张卡列表不收它）
            —— set-upstream 无从谈起，照旧直接 pull。 */
         if (row == null) { act('git/pull', {}, 'pull'); return }
