@@ -89,10 +89,11 @@
     }
 
     /* squeeze 把「自己没有叶子、只有唯一子目录」的目录链一路拼起来，
-       a/b/c/file.txt 就合成一行目录 a/b/c。这是 IDEA 分支树的画法 —— 分支名
-       自带 origin/feat/x 这样的层级，逐层展开会让只有目录没有分支的每一级都
-       白占一行。现在只有 RefTree（50-log.js 的分支分组树）还要它；文件列表
-       一律不用（flattenTree 的 squeezeOn 传 false），目录不许合并。 */
+       a/b/c/file.txt 就合成一行目录 a/b/c。曾经 RefTree（50-log.js 的分支分组树）
+       也用它压扁分支名的层级，分支树改按 PhpStorm 分组后（squeezeOn 传 false）它
+       再无调用方传 true —— 参数与函数留着：flattenTree 的形状不动，万一哪天又要
+       「目录链合一行」的画法，路还在。文件列表一律不用（squeezeOn 传 false），
+       目录不许合并。 */
     function squeeze(node) {
       let name = ''
       let target = node
@@ -105,8 +106,9 @@
       return { name: name, target: target }
     }
 
-    /* squeezeOn === true 时目录链照旧压扁成一行（仅 RefTree 在用）；false 时
-       每一级目录独立成行、独立缩进，name 就是本级那一段。目录行的 path 仍由
+    /* squeezeOn === true 时目录链照旧压扁成一行（现在没有调用方在用）；false 时
+       每一级目录独立成行、独立缩进，name 就是本级那一段 —— 分支树（50-log.js）
+       与全部文件列表都是 false。目录行的 path 仍由
        prefix 逐层拼出，不压扁后同一棵树的键变细（多出中间层的键）：折叠表里
        旧存档的压扁键（如 @files/a/b/c）恰好等于新树最深那层目录的键，等于旧
        折叠状态自动落到最深一层，中间层一次性回到展开 —— 不做额外迁移。 */

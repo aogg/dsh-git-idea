@@ -294,11 +294,13 @@
                 onClick: function () { props.onSelect(selOf(name)) },
                 onDoubleClick: function () { props.onSelect(selOf(name)); props.onPickBranch(opts.repo, name) },
                 /* 右键：分支行的上下文菜单（复制分支名称 / 删除分支）。HEAD 组的行
-                   也是分支行 —— 它就是当前分支，菜单里的删除项由面板按名字置灰。 */
+                   也是分支行 —— 它就是当前分支，菜单里的删除项由面板按名字置灰；
+                   末位 true 告诉菜单「这一行是当前分支」：签出项由它置灰（多选分组
+                   里 currentName 是生效仓库的，认不得别的仓库的当前分支）。 */
                 onContextMenu: function (event) {
                   event.preventDefault()
                   event.stopPropagation()
-                  props.onBranchContext(name, 'head', opts.repo, event)
+                  props.onBranchContext(name, 'head', opts.repo, event, true)
                 },
               },
                 h('span', { className: 'dsh-git-tw' }, '★'),
@@ -324,9 +326,12 @@
              的删除不在这一棵树的手势里），本地的才有删除。 */
           const branchKind = key.indexOf('@remote:') === 0 ? 'remote' : 'local'
           const tree = buildTree(shown)
-          /* 末位 true：分支树保留压扁 —— 分支名自带层级（origin/feat/x），逐层
-             展开只会让只有目录没有分支的每一级白占一行（见 42-tree.js squeeze）。 */
-          const flat = flattenTree(tree, 2, keyOf(key), collapsed, [], keyOf(key), true)
+          /* 末位 false：分支树不再压扁 —— `feature/a`、`feature/b` 归到可折叠的
+             目录行 `feature`（treeDirRow 自带展开/收起与条数），叶子行只显示末段
+             名，tooltip 与上游小字仍按完整分支名（node.data）说。PhpStorm 的分支
+             树就是这么分组的；搜索时 collapsed 被上面的 NO_COLLAPSE 整棵强制展开，
+             目录不会藏住任何匹配结果。 */
+          const flat = flattenTree(tree, 2, keyOf(key), collapsed, [], keyOf(key), false)
           for (let i = 0; i < flat.length; i += 1) {
             const node = flat[i]
             if (node.kind === 'dir') {
@@ -363,11 +368,11 @@
                 onClick: function () { props.onSelect(selOf(branchName)) },
                 onDoubleClick: function () { props.onSelect(selOf(branchName)); props.onPickBranch(opts.repo, branchName) },
                 /* 右键：与 HEAD 组的行同一个约定（50-log.js 顶部那一处），菜单项按
-                   这一组是本地还是远程收放。 */
+                   这一组是本地还是远程收放；末位的 onHead 让「签出」在对的行上置灰。 */
                 onContextMenu: function (event) {
                   event.preventDefault()
                   event.stopPropagation()
-                  props.onBranchContext(branchName, branchKind, opts.repo, event)
+                  props.onBranchContext(branchName, branchKind, opts.repo, event, onHead)
                 },
               },
                 h('span', { className: 'dsh-git-tw' }),

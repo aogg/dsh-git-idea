@@ -220,10 +220,22 @@ async function previousBranch(input) {
 /* desc 是「命令」页（77-cmdrec.js）给这次切换起的中文名，由 RPC 调用点（80-rpc.js）
    传入。这里不经 panelMutate —— 答复的形状（stashed/dirty/popConflict…）是客户端
    专门消费的 —— 所以它手里的四次变更 git 调用各自用 cmdrecGit 包上记录；开头那次
-   status 是读，不记。 */
-async function switchBranch(input, name, desc) {
+   status 是读，不记。
+
+   create（可选）是远程分支行的「签出」走的形状：'origin/feat/x' 这样一个
+   远端分支全名 —— 命令变成 `git switch -c <本地名> --track <全名>`，本地名由调用点
+   剥好（去掉远端前缀的那一段）。不用裸的 `git switch <remote>/<branch>` 是因为
+   DWIM 在「本地同名分支已存在」时的行为不明确（git switch 直接拒绝、git checkout
+   却悄悄切到已有的本地分支），显式 -c 让两边都是同一句看得懂的错。stash 兜底对
+   这条路同样成立 —— 签出前工作区是脏的照样先收再切。 */
+async function switchBranch(input, name, desc, create) {
   const args = argsFor(input)
   const requested = repoFrom(input, null)
+  const argvOf = function () {
+    return create != null
+      ? ['switch', '-c', name, '--track', create]
+      : ['switch', name]
+  }
   const finish = function (result, extra) {
     invalidateRepo(requested !== undefined ? requested : result.cwd)
     const out = extra == null ? {} : extra
@@ -241,7 +253,7 @@ async function switchBranch(input, name, desc) {
   }
 
   if (input == null || input.stash !== true) {
-    const moved = await mutate(['switch', name])
+    const moved = await mutate(argvOf())
     return finish(moved, { stashed: false, dirty: 0, popConflict: false })
   }
 
@@ -262,7 +274,7 @@ async function switchBranch(input, name, desc) {
     stashed = true
   }
 
-  const moved = await mutate(['switch', name])
+  const moved = await mutate(argvOf())
   if (moved.exitCode !== 0) {
     let restored = false
     let restoreError = ''

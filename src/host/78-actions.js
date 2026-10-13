@@ -289,3 +289,20 @@ async function branchUpstreamRun(input) {
      说一遍，命令页之外读答复的人不用猜。 */
   return Object.assign({}, done, { setUpstream: { remote: remote, branch: upstream } })
 }
+
+/* ── git/branch-rename：重命名一个本地分支 ──
+ *
+ * { name: 旧名, to: 新名 } → git branch -m <旧> <新>。对当前分支同样成立：git 自己
+ * 会把 HEAD 与它写着的旧名一起改过去，不需要先切走。名字的清洗沿用 cleanRefHalf
+ * （80-rpc.js：trim、拒控制字符与前导 -，上限 300）—— 本地分支名与远端两半走同一
+ * 套，argv 是数组、不过 shell，要挡的是 git 自己会误读的形状。desc 固定「重命名
+ * 分支」，与 branch-delete / branch-upstream 一个先例：一件事在命令页里一个名字。
+ */
+async function branchRenameRun(input) {
+  const name = cleanRefHalf(input != null && isStr(input.name) ? input.name : '')
+  const to = cleanRefHalf(input != null && isStr(input.to) ? input.to : '')
+  if (name === null || to === null || name.length === 0 || to.length === 0) {
+    return { ok: false, error: 'bad-value', stderr: '重命名需要合法的旧名字与新名字：不能为空、不能以 - 开头、不能含控制字符' }
+  }
+  return panelMutate(input, ['branch', '-m', name, to], { desc: '重命名分支' })
+}

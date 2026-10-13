@@ -183,6 +183,24 @@ onRpc('git/commit', function (input) {
 onRpc('git/checkout', async function (input) {
   const name = input != null && isStr(input.name) ? input.name.trim() : ''
   if (name.length === 0) return { ok: false, error: 'a branch name is required' }
+  /* 远程分支行的「签出（检出为本地分支）」：name 是完整的远端分支短名
+     （origin/feat/x），第一段是远端名，其余是本地分支名。走 switchBranch 的
+     create 形状 → `git switch -c feat/x --track origin/feat/x`，与 git 自己的
+     DWIM（--guess 默认开）等价，但两件事被说死了：本地建的是什么名字、跟的是
+     哪一条 —— 本地同名分支已存在时 git 的拒绝（a branch named 'feat/x' already
+     exists）就是明确的错，原话会一路带到错误条。 */
+  if (input != null && input.asNewLocal === true) {
+    const slash = name.indexOf('/')
+    const remote = slash > 0 ? cleanRefHalf(name.slice(0, slash)) : ''
+    const branch = slash > 0 ? cleanRefHalf(name.slice(slash + 1)) : ''
+    if (remote === null || branch === null || remote.length === 0 || branch.length === 0) {
+      return {
+        ok: false, error: 'bad-value',
+        stderr: '签出远程分支需要一个完整的远端分支名（如 origin/feature）：远端名与远端分支名都不能为空、不能以 - 开头、不能含控制字符',
+      }
+    }
+    return await switchBranch(input, branch, '签出远程分支', name)
+  }
   /* `-` is git's own shorthand for the previous branch; resolve it here so the
      caller never has to know that the switcher's "previous" row and this
      argument are the same idea. */
@@ -318,6 +336,10 @@ onRpc('git/branch-delete', function (input) {
 /* 修改一个本地分支跟踪的远端分支（78-actions.js 的 branchUpstreamRun）：客户端分支
     行右键「修改跟踪分支…」的选择层发的就是这一条。 */
 onRpc('git/branch-upstream', function (input) { return branchUpstreamRun(input) })
+
+/* 重命名一个本地分支（78-actions.js 的 branchRenameRun）：客户端分支行右键
+    「重命名分支…」的输入框发的就是这一条（{name: 旧名, to: 新名}）。 */
+onRpc('git/branch-rename', function (input) { return branchRenameRun(input) })
 
 onRpc('git/tag', function (input) {
   const name = input != null && isStr(input.name) ? input.name.trim() : ''
