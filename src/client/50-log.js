@@ -267,6 +267,9 @@
             for (let i = 0; i < headNames.length; i += 1) {
               const name = headNames[i]
               const headMeta = metaOf[name]
+              /* 小字那一行说的就是 tooltip 里那句的上游半句：有上游写上游名，没有
+                 写更淡的「未跟踪」（远程组的行不加这一行，见下面 section）。 */
+              const headUp = headMeta === undefined ? '' : text(headMeta.upstream)
               const headTip = [name + (opts.compact === true ? '' : '（双击只看这个分支的历史）')]
               if (headMeta !== undefined) {
                 const ha = typeof headMeta.ahead === 'number' ? headMeta.ahead : 0
@@ -299,7 +302,12 @@
                 },
               },
                 h('span', { className: 'dsh-git-tw' }, '★'),
-                h('span', { className: 'dsh-git-tname' }, name),
+                /* 名字与其下的小字包在同一个纵列里：小字跟着名字同宽、一起省略，
+                   行里的其余记号（●改动数、↑↓）仍待在名字右侧自己的位置。 */
+                h('span', { className: 'dsh-git-tmain' },
+                  h('span', { className: 'dsh-git-tname' }, name),
+                  h('span', { className: 'dsh-git-tsub' + (headUp.length > 0 ? '' : ' dsh-git-tsub-none') },
+                    headUp.length > 0 ? headUp : '未跟踪')),
                 opts.dirty > 0
                   ? h('span', { key: 'd', className: 'dsh-git-tdirty', title: String(opts.dirty) + ' 个未提交改动' }, '●' + String(opts.dirty))
                   : null,
@@ -363,7 +371,13 @@
                 },
               },
                 h('span', { className: 'dsh-git-tw' }),
-                h('span', { className: 'dsh-git-tname' }, node.name),
+                /* 与 HEAD 组的行同一个约定：名字下面一行小字写它跟踪的上游，没有
+                   上游写更淡的「未跟踪」。远程组的行不进来（见 branchKind），保持
+                   单行。 */
+                h('span', { className: 'dsh-git-tmain' },
+                  h('span', { className: 'dsh-git-tname' }, node.name),
+                  h('span', { className: 'dsh-git-tsub' + (upstream.length > 0 ? '' : ' dsh-git-tsub-none') },
+                    upstream.length > 0 ? upstream : '未跟踪')),
                 onHead && opts.dirty > 0
                   ? h('span', { key: 'd', className: 'dsh-git-tdirty', title: String(opts.dirty) + ' 个未提交改动' }, '●' + String(opts.dirty))
                   : null,

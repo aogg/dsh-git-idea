@@ -148,7 +148,11 @@
           items.push(h('div', {
             key: 'r:' + group.name + '/' + row.branch,
             className: 'dsh-git-bs-row' + (mine === index ? ' dsh-git-bs-row-on' : '') + (props.busy === true ? ' dsh-git-bs-busy' : ''),
-            title: '绑定上游 ' + group.name + '/' + row.branch + ' 并拉取',
+            /* title 默认还是 pull 那句话；「修改跟踪分支」（80-panel.js）的选择层用
+               pickTip 换成自己的动词 —— 列表本身两种用处共用，手势一字不改。 */
+            title: typeof props.pickTip === 'function'
+              ? props.pickTip(group.name + '/' + row.branch)
+              : '绑定上游 ' + group.name + '/' + row.branch + ' 并拉取',
             onClick: function () { if (props.busy !== true) props.onPick(row) },
           },
             h('span', { key: 'i', className: 'dsh-git-bs-ico' }, h(BranchIcon, { size: 13 })),

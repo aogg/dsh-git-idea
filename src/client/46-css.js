@@ -72,6 +72,13 @@
 .dsh-git-trow-scope .dsh-git-tname{color:var(--dsw-alias-brand-primary)}
 .dsh-git-tw{flex:none;width:10px;color:var(--dsw-alias-label-secondary);font-size:9px;cursor:pointer}
 .dsh-git-tname{overflow:hidden;text-overflow:ellipsis;min-width:0}
+/* 分支行名字下面的一行小字（50-log.js）：这个分支跟踪的上游名。纵向列包住名字与
+    小字，两者同宽、一起省略；行高压到 12px 让行只多出一小截，树不至于胖一圈。 */
+.dsh-git-tmain{display:flex;flex-direction:column;justify-content:center;min-width:0}
+.dsh-git-tsub{max-width:100%;overflow:hidden;text-overflow:ellipsis;font-size:10px;line-height:12px;color:var(--dsw-alias-label-secondary)}
+/* 没有上游的「未跟踪」再淡一档：它是「这里什么都没有」，不该和真有个名字的上游
+    抓一样的眼。 */
+.dsh-git-tsub-none{opacity:.55}
 /* 扁平视图里跟在文件名后面的目录：压暗、小一号。名字必须排在前面，否则一条 120 字
    的路径先把自己铺满，被裁掉的正好是文件名（见 54-changes.js 的注释）。 */
 .dsh-git-tpath{color:var(--dsw-alias-label-secondary);font-size:11px;margin-left:8px}

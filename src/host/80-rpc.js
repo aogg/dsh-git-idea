@@ -315,6 +315,10 @@ onRpc('git/branch-delete', function (input) {
   return panelMutate(input, ['branch', force ? '-D' : '-d', name], { desc: '删除分支' })
 })
 
+/* 修改一个本地分支跟踪的远端分支（78-actions.js 的 branchUpstreamRun）：客户端分支
+    行右键「修改跟踪分支…」的选择层发的就是这一条。 */
+onRpc('git/branch-upstream', function (input) { return branchUpstreamRun(input) })
+
 onRpc('git/tag', function (input) {
   const name = input != null && isStr(input.name) ? input.name.trim() : ''
   if (name.length === 0) return { ok: false, error: 'a tag name is required' }

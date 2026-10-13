@@ -411,6 +411,11 @@
          远端分支选择（RemotePickList，70-branchpicker.js）。点行 = runOp('git/pull',
          {setUpstream})，成功后 runOp 自己关掉它并写成功条。 */
       const [pullPick, setPullPick] = React.useState(null)
+      /* 「修改跟踪分支」的选择层：null 关着；非 null 是 {name, repo} —— 右键的那个
+         本地分支（HEAD 组与「本地」组的行都算，远程组的行没有这一项）。开着时正文
+         上面盖一层远端分支选择（RemotePickList，70-branchpicker.js，与 pull 的上游
+         选择同一块板子）：点行 = ctxSetUpstream 绑定，层里的「取消跟踪」走 unset。 */
+      const [upstreamPick, setUpstreamPick] = React.useState(null)
       /* The file whose patch is on screen, and a counter the refresh button
          bumps. Null means the list the reader came from is on screen — the two
          lists that can open a diff (the changes tree, a commit's file list) both
@@ -1566,6 +1571,48 @@
             }
             setError(detail)
           })
+      }
+
+      /* ── 修改跟踪分支 ──
+
+         右键菜单「修改跟踪分支…」的两步动作：绑定（git/branch-upstream 带
+         {name, upstream:{remote,branch}}，Host 拼的是 git branch
+         --set-upstream-to=<remote>/<branch> <本地分支>）与取消（{name, unset:true}，
+         --unset-upstream）。成功后 bump 刷新 refs、提示条说绑到了哪；失败把层关掉、
+         错误条说 git 的原话 —— 覆盖层把提示位也盖住了，留着层错误就看不见。 */
+      const upstreamOfBranch = function (branch, repo) {
+        /* 这个分支现在的上游，从树用的同一份 refs 数据里读（单仓库树是 refs，
+           多选分组树是 repoRefs 按仓库那几份）。读不到（还没读到 / 那份失败）返回
+           null —— 「取消跟踪」不禁用，让 git 用它的原话再挡一次。 */
+        const data = text(repo).length > 0 ? repoRefs[repo] : refs
+        if (data == null || data.ok !== true || !Array.isArray(data.local)) return null
+        for (let i = 0; i < data.local.length; i += 1) {
+          const row = data.local[i]
+          if (row != null && text(row.data) === branch) return text(row.upstream)
+        }
+        return ''
+      }
+      const ctxSetUpstream = function (name, repo, pick) {
+        if (busy === true) return
+        /* 多选分组里右键的分支要落回它自己的仓库（ctxBranchRemove 同一个算法）。 */
+        const scope = text(repo).length > 0 ? base(repo) : base(appliedRepo)
+        const payload = pick === null
+          ? { name: name, unset: true }
+          : { name: name, upstream: { remote: pick.remote, branch: pick.branch } }
+        setBusy(true)
+        rpc('git/branch-upstream', Object.assign({}, scope, payload), '修改跟踪分支失败').then(function () {
+          setBusy(false)
+          bump()
+          setUpstreamPick(null)
+          setOkNote(pick === null
+            ? '已取消 ' + name + ' 的上游跟踪'
+            : '已把 ' + name + ' 的上游设为 ' + pick.remote + '/' + pick.branch)
+        }, function (failure) {
+          setBusy(false)
+          bump()
+          setUpstreamPick(null)
+          setError(failureText(failure))
+        })
       }
 
       /* ── 多选的清空与修剪 ──
@@ -2868,6 +2915,19 @@
             })
           },
         }, '复制分支名称'),
+        /* 修改跟踪分支：只有本地分支（含 HEAD 组的行）有 —— 远程分支自己没有
+           「跟踪谁」这件事。打开远端分支选择层，菜单先收起。 */
+        ctxMenu.remote === true ? null : h('button', {
+          key: 'upstream', type: 'button', className: 'dsh-git-menu-item',
+          title: 'git branch --set-upstream-to=<远端>/<分支> ' + ctxMenu.name
+            + '（当前分支不在检出状态也可以改）',
+          disabled: busy === true,
+          onClick: function (event) {
+            stopEvent(event)
+            setCtxMenu(null)
+            setUpstreamPick({ name: ctxMenu.name, repo: ctxMenu.repo })
+          },
+        }, '修改跟踪分支…'),
         ctxMenu.remote === true ? null : h('div', { key: 'sep', className: 'dsh-git-menu-sep' }),
         ctxMenu.remote === true ? null
           : ctxForce === ctxMenu.name
@@ -2901,6 +2961,8 @@
                 }, '删除分支'),
       ]
       const ctxPos = ctxMenu === null ? { left: 0, top: 0 } : ctxMenuPos()
+      /* 选择层标题行里的「现在跟的是谁」：渲染期算一次，选择层开着时每帧都新鲜。 */
+      const upPickNow = upstreamPick === null ? null : upstreamOfBranch(upstreamPick.name, upstreamPick.repo)
 
       return h('div', popProps,
         h('div', { key: 'gn', className: 'dsh-git-grip dsh-git-grip-n', title: '拖动调整高度', onPointerDown: startDrag('n') }),
@@ -2951,6 +3013,38 @@
                   busy: busy === true,
                   onPick: function (match) { runOp('git/pull', { setUpstream: match }) },
                   onClose: function () { setPullPick(null) },
+                })))
+          : null,
+        /* 「修改跟踪分支」的选择层：形状与 pull 的上游选择同款（点外/Esc 关，列表
+           现读 git/refs、可搜索、点行即选中）。标题行下面一行说这个分支现在跟的是
+           谁，右边是「取消跟踪」—— 读不到上游信息时不禁用，git 的原话会再挡一次。
+           手输的兜底就是列表的搜索框：打字过滤、回车选高亮那一项，不用手拼完整
+           远端名。 */
+        upstreamPick !== null
+          ? h('div', {
+              key: 'upstreampick', className: 'dsh-git-qc-overlay',
+              onClick: function (event) { if (event != null && event.target === event.currentTarget) setUpstreamPick(null) },
+            },
+              h('div', { key: 'box', className: 'dsh-git-qc-box' },
+                h('div', { key: 'h', className: 'dsh-git-qc-head' },
+                  '修改「' + upstreamPick.name + '」跟踪的远端分支 —— 点击列表中的一项设为它的上游'),
+                h('div', { key: 'cur', className: 'dsh-git-qc-row' },
+                  h('span', { key: 't', className: 'dsh-git-qc-hint' },
+                    upPickNow === null ? '当前跟踪的上游：读取中…'
+                      : (upPickNow.length > 0 ? '当前跟踪：' + upPickNow : '这个分支还没有跟踪任何上游')),
+                  h('button', {
+                    key: 'unset', type: 'button', className: 'dsh-git-btn',
+                    title: 'git branch --unset-upstream ' + upstreamPick.name,
+                    disabled: busy === true,
+                    onClick: function () { ctxSetUpstream(upstreamPick.name, upstreamPick.repo, null) },
+                  }, '取消跟踪')),
+                h(RemotePickList, {
+                  key: 'pick', sessionId: sessionId,
+                  repo: text(upstreamPick.repo).length > 0 ? upstreamPick.repo : appliedRepo,
+                  busy: busy === true,
+                  pickTip: function (full) { return '把 ' + upstreamPick.name + ' 的上游设为 ' + full },
+                  onPick: function (match) { ctxSetUpstream(upstreamPick.name, upstreamPick.repo, match) },
+                  onClose: function () { setUpstreamPick(null) },
                 })))
           : null,
         /* 右键菜单：光标锚的浮层（position:fixed）。挂在面板根部 —— 与 ⋯/⚡ 的下拉
