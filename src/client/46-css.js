@@ -463,9 +463,9 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-cmdnote{flex:none;padding-top:5px;font-size:10px;color:var(--dsw-alias-label-secondary)}
 .dsh-git-cmdtrunc{flex:none;font-size:10px;color:var(--dsw-alias-state-warn-primary)}
 
-/* ── ⋯ / ⚡：提交历史工具条右端那两个下拉按钮与它们的浮层（78-actions.js）──
+/* ── ⚡：提交历史工具条右端那个下拉按钮与它的浮层（78-actions.js）──
     按钮的样子照 .dsh-git-tool 画（同尺寸、同圆角、同悬停），类名刻意分开：那个类
-    说的是「作用于选中提交的工具」，这两个是「打开一个菜单」。 */
+    说的是「作用于选中提交的工具」，这个是「打开一个菜单」。 */
 .dsh-git-acts{position:relative;display:inline-flex;gap:3px;flex:none}
 .dsh-git-acts-btn{display:inline-flex;align-items:center;justify-content:center;gap:3px;width:26px;height:26px;padding:0;border:1px solid transparent;border-radius:5px;background:0 0;color:var(--dsw-alias-label-primary);font-family:inherit;font-size:12px;line-height:16px;cursor:pointer;flex:none}
 .dsh-git-acts-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
@@ -485,19 +485,10 @@ textarea.dsh-git-input{resize:vertical}
 /* 快捷命令那行：名字 + 代值预览各占一行 —— 一行塞下两条信息时预览先被挤没。 */
 .dsh-git-menu-cmd{flex-direction:column;align-items:flex-start;gap:1px}
 .dsh-git-menu-cmd .dsh-git-menu-dim{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-/* 删除分支的二级列表：缩进 + 细线，长列表自己滚。 */
-.dsh-git-menu-sub{display:flex;flex-direction:column;max-height:220px;overflow:auto;margin:1px 0 1px 6px;padding-left:8px;border-left:1px solid var(--dsw-alias-border-l1)}
-.dsh-git-menu-branch .dsh-git-menu-dim{margin-left:auto;flex:none}
 
 /* Ctrl+点击挑进多选的提交行：左缘一道强调条 —— 选中行是整行底色，多选得在选中之外
     另有可区分的记号（两者可同时在一行上）。 */
 .dsh-git-crow-multi{box-shadow:inset 2px 0 0 var(--dsw-alias-state-warn-primary)}
-
-/* 压缩的内联表单：区间摘要独占一行，信息框（多行）在下面占满余宽。 */
-.dsh-git-prompt-squash{flex-wrap:wrap;align-items:flex-start;row-gap:4px}
-.dsh-git-prompt-squash .dsh-git-hint{flex:1 1 100%}
-.dsh-git-prompt-squash .dsh-git-clearable{flex:1 1 260px}
-.dsh-git-prompt-squash textarea.dsh-git-input{min-height:72px}
 
 /* 成功条：与 .dsh-git-error 同一个提示位、同一个密度，绿色系、等宽（多半是命令输出）。 */
 .dsh-git-oknote{flex:none;box-sizing:border-box;max-height:120px;overflow:auto;color:var(--dsw-alias-state-success-primary);background:var(--dsw-alias-bg-layer-2);border-bottom:1px solid var(--dsw-alias-border-l1);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}

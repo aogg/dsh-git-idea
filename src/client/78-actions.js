@@ -1,13 +1,14 @@
-    /* ── 「更多操作（⋯）」与「快捷命令（⚡）」：两个下拉、执行确认框、编辑器 ──
+    /* ── 「快捷命令（⚡）」：下拉、执行确认框、编辑器 ──
 
-        提交操作（拣选/还原/标签/分支）搬进提交行的右键菜单之后，提交历史的工具条上
-        只剩这两个开菜单的按钮（按钮本体在 80-panel.js 的 toolbar 里）。快捷命令的编
-        辑器是同一个组件的两处使用：面板里的覆盖层，和设置页（90-settings.js）里的
-        管理组 —— 片段共享作用域，直接引用，不需要再开一条通道。
+        提交操作（拣选/还原/标签/分支）住进了提交行的右键菜单，分支管理（复制/新建/
+        删除）住进了分支行的右键菜单 —— 提交历史的工具条上只剩这一个开菜单的按钮
+        （按钮本体在 80-panel.js 的 toolbar 里）。快捷命令的编辑器是同一个组件的两处
+        使用：面板里的覆盖层，和设置页（90-settings.js）里的管理组 —— 片段共享作用域，
+        直接引用，不需要再开一条通道。
 
         按钮的类名刻意不用 dsh-git-tool：样式照着它画（见 46-css.js），但那个类是
         「作用于选中提交的工具」（拣选/还原/标签/分支——它们现在住在提交行的右键
-        菜单里，同步组 ⟳⇣↓↑ 还在用）、测试套件也按个数认它 —— 新按钮是「打开一个
+        菜单里，同步组 ⟳⇣↓↑ 还在用）、测试套件也按个数认它 —— 这个按钮是「打开一个
         菜单」，不是「对选中项做事」，名字分开对两边都诚实。 */
 
     /* ── 变量代值 ──
@@ -163,8 +164,7 @@
        面板在 panelNode 的 document 上收捕获阶段的 pointerdown 与 Escape。boxes 是视为
        「里面」的节点盒（菜单自己 + 触发按钮）：按钮必须算里面，否则点它会先被这里关掉、
        随后的 click 又把它打开，菜单就永远关不上了。effect 只随 open 重挂，所以 onClose
-       里只允许调用稳定的 setState。Escape 有一个例外：焦点在**这份菜单自己的**文本框
-       里时，Escape 先归文本框（「新建分支」的输入行用它收起自己），这里不抢。 */
+       里只允许调用稳定的 setState。 */
     function useOutsideDismiss(open, onClose, boxes) {
       React.useEffect(function () {
         if (open !== true) return undefined
@@ -180,16 +180,7 @@
         }
         const onDown = function (event) { if (inside(event.target) !== true) onClose() }
         const onKey = function (event) {
-          if (event.key !== 'Escape') return
-          const target = event.target
-          const tag = target != null && typeof target.tagName === 'string' ? target.tagName : ''
-          if (tag === 'INPUT' || tag === 'TEXTAREA') {
-            for (let i = 0; i < boxes.length; i += 1) {
-              const node = boxes[i] != null ? boxes[i].node : null
-              if (node != null && typeof node.contains === 'function' && node.contains(target)) return
-            }
-          }
-          onClose()
+          if (event.key === 'Escape') onClose()
         }
         doc.addEventListener('pointerdown', onDown, true)
         doc.addEventListener('keydown', onKey, true)
@@ -198,232 +189,6 @@
           doc.removeEventListener('keydown', onKey, true)
         }
       }, [open])
-    }
-
-    /* ── ⋯ 菜单：压缩提交 + 删除提交 + 删除分支 ──
-
-       压缩/删除的区间由面板算（它才有图、单选和多选），这里只放入口；删除分支照
-       branchpicker 的成熟交互：-d 被拒（提交没合并到别处）才给出 -D，两段式确认。 */
-    function MoreActionsMenu(props) {
-      const [box] = React.useState(function () { return { node: null } })
-      const [delOpen, setDelOpen] = React.useState(false)
-      /* 两段式确认记的是「哪一行、哪一段」：'name' = 删除已 armed，'force:name' = 强删已 armed。 */
-      const [delArm, setDelArm] = React.useState('')
-      /* -d 被拒后为那个分支给出的「强制删除（-D）」通道；别的时候不出现。 */
-      const [delForce, setDelForce] = React.useState('')
-      const [delBusy, setDelBusy] = React.useState(false)
-      /* 复制分支名称的子菜单，与它的两个空态共用 locals（删除分支那份同一个来源）。 */
-      const [copyOpen, setCopyOpen] = React.useState(false)
-      /* 新建分支：子菜单里的输入行，回车提交；在飞的那一次不许重复提交。 */
-      const [newOpen, setNewOpen] = React.useState(false)
-      const [newName, setNewName] = React.useState('')
-      const [newBusy, setNewBusy] = React.useState(false)
-      useOutsideDismiss(props.open, props.onClose, [box, props.trigger])
-      if (props.open !== true) return null
-
-      const remove = function (name, force) {
-        if (delBusy === true || props.busy === true) return
-        setDelBusy(true)
-        rpc('git/branch-delete', Object.assign({}, props.reqBase, { name: name, force: force === true }), '删除分支失败')
-          .then(function () {
-            setDelBusy(false)
-            bumpData()
-            setDelArm('')
-            setDelForce('')
-            props.onNote('已删除分支 ' + name + (force === true ? '（强制 -D，未合并的提交已随分支丢弃）' : ''))
-            props.onClose()
-          }, function (failure) {
-            const detail = failureText(failure)
-            setDelBusy(false)
-            bumpData()
-            if (force !== true && detail.indexOf('not fully merged') >= 0) {
-              /* 和 branchpicker 同一句话：拒绝的原因说清楚，-D 的决定留给读者。 */
-              setDelForce(name)
-              setDelArm('')
-              props.onError('git 拒绝安全删除 ' + name + '：它的提交还没有合并到别处。')
-              return
-            }
-            props.onError(detail)
-          })
-      }
-
-      const locals = props.refs != null && props.refs.ok === true && Array.isArray(props.refs.local)
-        ? props.refs.local : null
-      const branchRows = []
-      if (locals == null) {
-        branchRows.push(h('div', { key: 'r:none', className: 'dsh-git-menu-dim dsh-git-menu-pad' }, '无法读取分支'))
-      } else if (locals.length === 0) {
-        branchRows.push(h('div', { key: 'r:none', className: 'dsh-git-menu-dim dsh-git-menu-pad' }, '这个仓库还没有本地分支'))
-      } else {
-        for (let i = 0; i < locals.length; i += 1) {
-          const name = text(locals[i].data)
-          if (name === props.current) {
-            /* 当前分支也列出来（看得见它为什么不能删），但禁用并说明。 */
-            branchRows.push(h('button', {
-              key: 'r:' + name, type: 'button', className: 'dsh-git-menu-item dsh-git-menu-branch',
-              disabled: true, title: '当前所在的分支，git 不删除自己',
-            }, name, h('span', { key: 'c', className: 'dsh-git-menu-dim' }, '当前分支')))
-            continue
-          }
-          if (delForce === name) {
-            const armed = delArm === 'force:' + name
-            branchRows.push(h('button', {
-              key: 'r:' + name, type: 'button',
-              className: 'dsh-git-menu-item dsh-git-menu-branch dsh-git-menu-danger',
-              title: armed ? 'git branch -D ' + name + ' —— 没合并的提交会随分支丢弃'
-                : 'git branch -d 被拒：这些提交还没有合并到别处，只有 -D 能删',
-              disabled: delBusy === true || props.busy === true,
-              onClick: function (event) {
-                stopEvent(event)
-                if (armed === true) remove(name, true)
-                else setDelArm('force:' + name)
-              },
-            }, armed ? '确认强制删除 ' + name : '强制删除（-D）'))
-            continue
-          }
-          if (delArm === name) {
-            branchRows.push(h('button', {
-              key: 'r:' + name, type: 'button',
-              className: 'dsh-git-menu-item dsh-git-menu-branch dsh-git-menu-danger',
-              title: 'git branch -d ' + name,
-              disabled: delBusy === true || props.busy === true,
-              onClick: function (event) { stopEvent(event); remove(name, false) },
-            }, '确认删除 ' + name))
-            continue
-          }
-          branchRows.push(h('button', {
-            key: 'r:' + name, type: 'button', className: 'dsh-git-menu-item dsh-git-menu-branch',
-            title: 'git branch -d ' + name + '（再点一次确认）',
-            disabled: delBusy === true || props.busy === true,
-            onClick: function (event) { stopEvent(event); setDelArm(name); setDelForce('') },
-          }, name, h('span', { key: 'a', className: 'dsh-git-menu-dim' }, '删除')))
-        }
-      }
-
-      /* ── 复制分支名称的子菜单：与删除分支同一份列表的画法，但每行都可点 ──
-         当前分支排最前（它才是最常要复制的那个名字）并带「当前分支」的灰字；点击只
-         写剪贴板。列表读不到时的空态照抄删除分支那两句。 */
-      const copyRows = []
-      if (locals == null) {
-        copyRows.push(h('div', { key: 'c:none', className: 'dsh-git-menu-dim dsh-git-menu-pad' }, '无法读取分支'))
-      } else if (locals.length === 0) {
-        copyRows.push(h('div', { key: 'c:none', className: 'dsh-git-menu-dim dsh-git-menu-pad' }, '这个仓库还没有本地分支'))
-      } else {
-        const orderedLocals = []
-        for (let i = 0; i < locals.length; i += 1) {
-          if (text(locals[i].data) === props.current) orderedLocals.unshift(locals[i])
-          else orderedLocals.push(locals[i])
-        }
-        for (let i = 0; i < orderedLocals.length; i += 1) {
-          const name = text(orderedLocals[i].data)
-          const isCurrent = name === props.current
-          copyRows.push(h('button', {
-            key: 'c:' + name, type: 'button', className: 'dsh-git-menu-item dsh-git-menu-branch',
-            title: '把 ' + name + ' 写进剪贴板',
-            onClick: function (event) {
-              stopEvent(event)
-              /* 关菜单在两条路里都要做：复制成了要收，复制不成也要收 —— 名字已经
-                  亮在提示条里，菜单再开着就挡住了它。 */
-              copyTextToClipboard(name, function () {
-                props.onNote('已复制分支名 ' + name)
-                props.onClose()
-              }, function () {
-                props.onNote('无法写入剪贴板，请手动复制分支名：' + name)
-                props.onClose()
-              })
-            },
-          }, name, isCurrent ? h('span', { key: 'c', className: 'dsh-git-menu-dim' }, '当前分支') : null))
-        }
-      }
-
-      /* 新建分支：不传 at，Host 从 HEAD 新建并切过去（branchpicker 的 submitNew
-         同一条 rpc）。成功的话这个名字已经是当前分支，菜单收掉、提示条说一声。 */
-      const createBranch = function () {
-        const name = newName.trim()
-        if (name.length === 0 || newBusy === true) return
-        setNewBusy(true)
-        rpc('git/branch-create', Object.assign({}, props.reqBase, { name: name }), '新建分支失败')
-          .then(function () {
-            setNewBusy(false)
-            bumpData()
-            props.onNote('已新建并切换到分支 ' + name)
-            props.onClose()
-          }, function (failure) {
-            const detail = failureText(failure)
-            setNewBusy(false)
-            bumpData()
-            props.onError(detail)
-          })
-      }
-
-      return h('div', { className: 'dsh-git-menu', ref: function (node) { box.node = node } },
-        h('button', {
-          key: 'squash', type: 'button', className: 'dsh-git-menu-item',
-          disabled: props.count < 2,
-          title: props.count >= 2
-            ? '把从 HEAD 到最旧所选的整段区间压成一个提交（soft reset 到最旧选中项的父提交，再提交；须在当前分支的无筛选视图里选）'
-            : 'Ctrl+点击提交行选择多个提交（至少 2 个，最新端要选到列表第一行的 HEAD）',
-          onClick: function (event) { stopEvent(event); if (props.count >= 2) props.onSquash() },
-        }, '压缩提交' + (props.count >= 2 ? '（已选 ' + String(props.count) + ' 个）' : '')),
-        /* 删除与压缩同一个区间语义（HEAD 到最旧所选的整段），差别只在 reset 的 soft/hard：
-           压缩把整段收进一个新提交，删除连提交带改动一起丢。生效集合比压缩宽一档 ——
-           没有多选时作用于单选那条（和左边那四个工具一致），所以 N≥1 就能点。 */
-        h('button', {
-          key: 'drop', type: 'button', className: 'dsh-git-menu-item',
-          disabled: props.dropCount < 1,
-          title: props.dropCount >= 1
-            ? '把从 HEAD 到最旧所选的整段区间连提交带改动一起从分支尖端丢弃（hard reset 到最旧选中项的父提交；改动不保留，须在当前分支的无筛选视图里选）'
-            : '先在历史里点选一个提交，或 Ctrl+点击 选一段（最新端要选到列表第一行的 HEAD）',
-          onClick: function (event) { stopEvent(event); if (props.dropCount >= 1) props.onDrop() },
-        }, '删除提交' + (props.dropCount >= 1 ? '（已选 ' + String(props.dropCount) + ' 个）' : '')),
-        h('div', { key: 's1', className: 'dsh-git-menu-sep' }),
-        h('button', {
-          key: 'copyh', type: 'button', className: 'dsh-git-menu-item',
-          title: '把某个本地分支的名字写进剪贴板',
-          onClick: function (event) {
-            stopEvent(event)
-            setCopyOpen(copyOpen !== true)
-            setDelOpen(false)
-            setNewOpen(false)
-          },
-        }, '复制分支名称' + (copyOpen ? ' ▴' : ' ▾')),
-        copyOpen === true ? h('div', { key: 'copy', className: 'dsh-git-menu-sub' }, copyRows) : null,
-        h('button', {
-          key: 'newh', type: 'button', className: 'dsh-git-menu-item',
-          title: '从 HEAD 新建一个分支并切过去',
-          onClick: function (event) {
-            stopEvent(event)
-            setNewOpen(newOpen !== true)
-            setNewName('')
-            setCopyOpen(false)
-            setDelOpen(false)
-          },
-        }, '新建分支' + (newOpen ? ' ▴' : ' ▾')),
-        newOpen === true ? h('div', { key: 'new', className: 'dsh-git-menu-sub' },
-          h('input', {
-            key: 'ni', className: 'dsh-git-input', autoFocus: true,
-            placeholder: '新分支名，例如 feature/login',
-            value: newName, disabled: newBusy === true,
-            onChange: function (event) { setNewName(event.target.value) },
-            onKeyDown: function (event) {
-              if (event.key === 'Enter') { event.preventDefault(); createBranch() }
-              if (event.key === 'Escape') { event.preventDefault(); setNewOpen(false) }
-            },
-          })) : null,
-        h('button', {
-          key: 'delh', type: 'button', className: 'dsh-git-menu-item',
-          title: '删除这个仓库的本地分支（当前分支除外）',
-          onClick: function (event) {
-            stopEvent(event)
-            setDelOpen(delOpen !== true)
-            setDelArm('')
-            setDelForce('')
-            setCopyOpen(false)
-            setNewOpen(false)
-          },
-        }, '删除分支' + (delOpen ? ' ▴' : ' ▾')),
-        delOpen === true ? h('div', { key: 'del', className: 'dsh-git-menu-sub' }, branchRows) : null,
-        delBusy === true ? h('div', { key: 'w', className: 'dsh-git-menu-dim dsh-git-menu-pad' }, '正在删除…') : null)
     }
 
     /* ── ⚡ 菜单：快捷命令列表 + 新建/管理 ── */
