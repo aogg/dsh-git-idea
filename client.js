@@ -1826,7 +1826,7 @@ return {
     }
     ctx.effect(function () {
       return styles.insert(`
-.dsh-git-chip{display:inline-flex;align-items:center;gap:6px;height:28px;max-width:200px;padding:0 10px;border:none;border-radius:8px;background:0 0;color:var(--dsw-alias-label-secondary);font-family:inherit;font-size:13px;font-weight:500;line-height:20px;cursor:pointer;flex:none}
+.dsh-git-chip{display:inline-flex;align-items:center;gap:6px;height:28px;max-width:264px;padding:0 10px;border:none;border-radius:8px;background:0 0;color:var(--dsw-alias-label-secondary);font-family:inherit;font-size:13px;font-weight:500;line-height:20px;cursor:pointer;flex:none}
 .dsh-git-chip:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dsh-git-chip-open{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .dsh-git-chip-repo{color:var(--dsw-alias-label-primary)}
@@ -1839,6 +1839,10 @@ return {
 .dsh-git-badge{display:inline-grid;place-items:center;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:var(--dsw-alias-brand-primary);color:#fff;font-size:10px;line-height:1;flex:none}
 /* 上一个测量值还在，新的还没回来：留个位置，但看得出来还没核对 */
 .dsh-git-badge-stale{opacity:.45}
+/* chip 上「字符 + 数字」的三小组（● 改动数、↓ 落后上游、↑ 领先上游）：组内贴得比
+   chip 本身的 6px 更紧（3px，同顶部同步组 tool 键 4px 一档），字符色跟随 chip 文字色。 */
+.dsh-git-chip-grp{display:inline-flex;align-items:center;gap:3px;flex:none}
+.dsh-git-chip-n{display:inline-grid;place-items:center;min-width:14px;height:14px;padding:0 3px;border-radius:999px;background:var(--dsw-alias-brand-primary);color:#fff;font-size:9px;line-height:1;flex:none}
 .dsh-git-pop{position:absolute;left:8px;right:8px;bottom:100%;margin-bottom:8px;z-index:30;pointer-events:auto;box-sizing:border-box;height:74vh;display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--dsw-alias-border-l1);border-radius:12px;background:var(--dsw-alias-bg-layer-1);box-shadow:var(--dsw-elevation-soft);color:var(--dsw-alias-label-primary);font-size:12px}
 .dsh-git-top{display:flex;align-items:center;gap:8px;row-gap:6px;flex-wrap:wrap;flex:none;padding:8px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);position:relative}
 .dsh-git-tabs{display:flex;gap:2px;flex:none}
@@ -10810,6 +10814,10 @@ textarea.dsh-git-input{resize:vertical}
       const record = treeRecord(repo)
       const known = record !== null
       const pending = record === null ? 0 : record.count
+      /* 上游读数来自挂载时那次快读（Host 的 readPanelIdentity 本来就带 ahead/behind）：
+         ↓/↑ 两组和 tooltip 那句话都用它。答复里没有（老版本、失败路径）就当 0，两组不画。 */
+      const ahead = typeof info.ahead === 'number' && isFinite(info.ahead) ? info.ahead : 0
+      const behind = typeof info.behind === 'number' && isFinite(info.behind) ? info.behind : 0
       /* 正在核对：这份读数该重新完整量一次，或者那一次正在飞（几秒）。 */
       const due = treeReadDue(repo) === true || treeCountReading(repo) === true
 
@@ -10978,22 +10986,26 @@ textarea.dsh-git-input{resize:vertical}
             /* 数字来自全局那一份读数，不是这一次读算出来的：快读（身份）根本不带工作区，
                它的「没有改动」意思是「没问过」。 */
             const pending = treeCount(repo)
+            const ahead = typeof data.ahead === 'number' && isFinite(data.ahead) ? data.ahead : 0
+            const behind = typeof data.behind === 'number' && isFinite(data.behind) ? data.behind : 0
             /* Kept outside React state because the hover card needs the count and
                hangs in a different subtree; a switch offer should not have to
                re-derive it with another read. */
-            chipInfos[sessionId] = { repo: repo, pending: pending }
+            chipInfos[sessionId] = { repo: repo, pending: pending, ahead: ahead, behind: behind }
             prefetchBranches(sessionId, repo.length > 0 ? repo : mine)
             chipLabels[sessionId] = {
               phase: 'repo',
               label: detached ? 'HEAD' : (branch.length > 0 ? branch : 'HEAD'),
               pending: pending,
+              ahead: ahead,
+              behind: behind,
               repo: repo,
               reason: '',
             }
           } else {
-            chipInfos[sessionId] = { repo: data != null ? text(data.repo) : '', pending: 0 }
+            chipInfos[sessionId] = { repo: data != null ? text(data.repo) : '', pending: 0, ahead: 0, behind: 0 }
             chipLabels[sessionId] = {
-              phase: 'none', label: null, pending: 0,
+              phase: 'none', label: null, pending: 0, ahead: 0, behind: 0,
               repo: data != null ? text(data.repo) : '',
               reason: data != null ? text(data.reason) : '',
             }
@@ -11062,7 +11074,7 @@ textarea.dsh-git-input{resize:vertical}
           prefetchBranches(sessionId, repoNow)
           refreshCount(repoNow)
         }).catch(function () {
-          if (alive === true) setInfo({ phase: 'none', label: null, pending: 0, repo: '', reason: '' })
+          if (alive === true) setInfo({ phase: 'none', label: null, pending: 0, ahead: 0, behind: 0, repo: '', reason: '' })
         })
         return function () { alive = false; if (stopFull !== null) stopFull() }
       }, [watched, repoVersion, isOpen, sessionId, reloadAt])
@@ -11080,6 +11092,7 @@ textarea.dsh-git-input{resize:vertical}
       let title = 'Git'
       if (info.phase === 'loading') title = 'Git'
       else if (isRepo) title = info.label + ' · ' + info.repo + ' · ' + count
+        + (ahead > 0 || behind > 0 ? ' · ' + trackTitle(ahead, behind) : '')
       else if (info.reason === 'missing') title = '目录不存在：' + where + ' —— 点击修改路径'
       else if (info.reason === 'file') title = '这不是一个目录：' + where + ' —— 点击修改路径'
       else if (info.reason === 'git-error') title = where + ' 读取失败 —— 点击查看原因'
@@ -11101,11 +11114,27 @@ textarea.dsh-git-input{resize:vertical}
         spin: switching !== null,
       })]
       if (isRepo) children.push(h('span', { className: 'dsh-git-chip-label', key: 'label' }, info.label))
+      /* 「字符 + 数字」的三小组都收进同一个 wrapper（dsh-git-chip-grp，组内 3px），
+         字符不带类、色随 chip 文字。改动数药丸及其变淡态原样照旧，只是前面多了 ●。 */
       if (isRepo && known === true && pending > 0) {
-        children.push(h('span', {
-          className: 'dsh-git-badge' + (due === true ? ' dsh-git-badge-stale' : ''),
-          key: 'badge',
-        }, String(pending)))
+        children.push(h('span', { className: 'dsh-git-chip-grp', key: 'pend' },
+          h('span', { key: 'pend-sym' }, '●'),
+          h('span', {
+            className: 'dsh-git-badge' + (due === true ? ' dsh-git-badge-stale' : ''),
+            key: 'badge',
+          }, String(pending))))
+      }
+      /* ↓/↑ 画的是快读带回来的上游读数：落后才画 ↓、领先才画 ↑，0 不占位 —— 没有上游
+         或 detached HEAD 时 Host 本来就回 0，自然藏起来。数字 99+ 封顶，同 50-log.js。 */
+      if (behind > 0) {
+        children.push(h('span', { className: 'dsh-git-chip-grp', key: 'behind' },
+          h('span', { key: 'behind-sym' }, '↓'),
+          h('span', { className: 'dsh-git-chip-n', key: 'behind-n' }, behind > 99 ? '99+' : String(behind))))
+      }
+      if (ahead > 0) {
+        children.push(h('span', { className: 'dsh-git-chip-grp', key: 'ahead' },
+          h('span', { key: 'ahead-sym' }, '↑'),
+          h('span', { className: 'dsh-git-chip-n', key: 'ahead-n' }, ahead > 99 ? '99+' : String(ahead))))
       }
 
       return h('button', {
