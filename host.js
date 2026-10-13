@@ -1647,10 +1647,22 @@ async function previousBranch(input) {
 /* desc 是「命令」页（77-cmdrec.js）给这次切换起的中文名，由 RPC 调用点（80-rpc.js）
    传入。这里不经 panelMutate —— 答复的形状（stashed/dirty/popConflict…）是客户端
    专门消费的 —— 所以它手里的四次变更 git 调用各自用 cmdrecGit 包上记录；开头那次
-   status 是读，不记。 */
-async function switchBranch(input, name, desc) {
+   status 是读，不记。
+
+   create（可选）是远程分支行的「签出」走的形状：'origin/feat/x' 这样一个
+   远端分支全名 —— 命令变成 `git switch -c <本地名> --track <全名>`，本地名由调用点
+   剥好（去掉远端前缀的那一段）。不用裸的 `git switch <remote>/<branch>` 是因为
+   DWIM 在「本地同名分支已存在」时的行为不明确（git switch 直接拒绝、git checkout
+   却悄悄切到已有的本地分支），显式 -c 让两边都是同一句看得懂的错。stash 兜底对
+   这条路同样成立 —— 签出前工作区是脏的照样先收再切。 */
+async function switchBranch(input, name, desc, create) {
   const args = argsFor(input)
   const requested = repoFrom(input, null)
+  const argvOf = function () {
+    return create != null
+      ? ['switch', '-c', name, '--track', create]
+      : ['switch', name]
+  }
   const finish = function (result, extra) {
     invalidateRepo(requested !== undefined ? requested : result.cwd)
     const out = extra == null ? {} : extra
@@ -1668,7 +1680,7 @@ async function switchBranch(input, name, desc) {
   }
 
   if (input == null || input.stash !== true) {
-    const moved = await mutate(['switch', name])
+    const moved = await mutate(argvOf())
     return finish(moved, { stashed: false, dirty: 0, popConflict: false })
   }
 
@@ -1689,7 +1701,7 @@ async function switchBranch(input, name, desc) {
     stashed = true
   }
 
-  const moved = await mutate(['switch', name])
+  const moved = await mutate(argvOf())
   if (moved.exitCode !== 0) {
     let restored = false
     let restoreError = ''
@@ -3784,6 +3796,23 @@ async function branchUpstreamRun(input) {
      说一遍，命令页之外读答复的人不用猜。 */
   return Object.assign({}, done, { setUpstream: { remote: remote, branch: upstream } })
 }
+
+/* ── git/branch-rename：重命名一个本地分支 ──
+ *
+ * { name: 旧名, to: 新名 } → git branch -m <旧> <新>。对当前分支同样成立：git 自己
+ * 会把 HEAD 与它写着的旧名一起改过去，不需要先切走。名字的清洗沿用 cleanRefHalf
+ * （80-rpc.js：trim、拒控制字符与前导 -，上限 300）—— 本地分支名与远端两半走同一
+ * 套，argv 是数组、不过 shell，要挡的是 git 自己会误读的形状。desc 固定「重命名
+ * 分支」，与 branch-delete / branch-upstream 一个先例：一件事在命令页里一个名字。
+ */
+async function branchRenameRun(input) {
+  const name = cleanRefHalf(input != null && isStr(input.name) ? input.name : '')
+  const to = cleanRefHalf(input != null && isStr(input.to) ? input.to : '')
+  if (name === null || to === null || name.length === 0 || to.length === 0) {
+    return { ok: false, error: 'bad-value', stderr: '重命名需要合法的旧名字与新名字：不能为空、不能以 - 开头、不能含控制字符' }
+  }
+  return panelMutate(input, ['branch', '-m', name, to], { desc: '重命名分支' })
+}
 /* Every request the Client can make, in one table. Each handler is registered
    through `ctx.effect` so it belongs to this fiber: stopping or updating the
    Package removes all of them, which is what makes the bridge's reload safe.
@@ -3969,6 +3998,24 @@ onRpc('git/commit', function (input) {
 onRpc('git/checkout', async function (input) {
   const name = input != null && isStr(input.name) ? input.name.trim() : ''
   if (name.length === 0) return { ok: false, error: 'a branch name is required' }
+  /* 远程分支行的「签出（检出为本地分支）」：name 是完整的远端分支短名
+     （origin/feat/x），第一段是远端名，其余是本地分支名。走 switchBranch 的
+     create 形状 → `git switch -c feat/x --track origin/feat/x`，与 git 自己的
+     DWIM（--guess 默认开）等价，但两件事被说死了：本地建的是什么名字、跟的是
+     哪一条 —— 本地同名分支已存在时 git 的拒绝（a branch named 'feat/x' already
+     exists）就是明确的错，原话会一路带到错误条。 */
+  if (input != null && input.asNewLocal === true) {
+    const slash = name.indexOf('/')
+    const remote = slash > 0 ? cleanRefHalf(name.slice(0, slash)) : ''
+    const branch = slash > 0 ? cleanRefHalf(name.slice(slash + 1)) : ''
+    if (remote === null || branch === null || remote.length === 0 || branch.length === 0) {
+      return {
+        ok: false, error: 'bad-value',
+        stderr: '签出远程分支需要一个完整的远端分支名（如 origin/feature）：远端名与远端分支名都不能为空、不能以 - 开头、不能含控制字符',
+      }
+    }
+    return await switchBranch(input, branch, '签出远程分支', name)
+  }
   /* `-` is git's own shorthand for the previous branch; resolve it here so the
      caller never has to know that the switcher's "previous" row and this
      argument are the same idea. */
@@ -4104,6 +4151,10 @@ onRpc('git/branch-delete', function (input) {
 /* 修改一个本地分支跟踪的远端分支（78-actions.js 的 branchUpstreamRun）：客户端分支
     行右键「修改跟踪分支…」的选择层发的就是这一条。 */
 onRpc('git/branch-upstream', function (input) { return branchUpstreamRun(input) })
+
+/* 重命名一个本地分支（78-actions.js 的 branchRenameRun）：客户端分支行右键
+    「重命名分支…」的输入框发的就是这一条（{name: 旧名, to: 新名}）。 */
+onRpc('git/branch-rename', function (input) { return branchRenameRun(input) })
 
 onRpc('git/tag', function (input) {
   const name = input != null && isStr(input.name) ? input.name.trim() : ''

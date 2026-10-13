@@ -1889,10 +1889,11 @@ return {
     }
 
     /* squeeze 把「自己没有叶子、只有唯一子目录」的目录链一路拼起来，
-       a/b/c/file.txt 就合成一行目录 a/b/c。这是 IDEA 分支树的画法 —— 分支名
-       自带 origin/feat/x 这样的层级，逐层展开会让只有目录没有分支的每一级都
-       白占一行。现在只有 RefTree（50-log.js 的分支分组树）还要它；文件列表
-       一律不用（flattenTree 的 squeezeOn 传 false），目录不许合并。 */
+       a/b/c/file.txt 就合成一行目录 a/b/c。曾经 RefTree（50-log.js 的分支分组树）
+       也用它压扁分支名的层级，分支树改按 PhpStorm 分组后（squeezeOn 传 false）它
+       再无调用方传 true —— 参数与函数留着：flattenTree 的形状不动，万一哪天又要
+       「目录链合一行」的画法，路还在。文件列表一律不用（squeezeOn 传 false），
+       目录不许合并。 */
     function squeeze(node) {
       let name = ''
       let target = node
@@ -1905,8 +1906,9 @@ return {
       return { name: name, target: target }
     }
 
-    /* squeezeOn === true 时目录链照旧压扁成一行（仅 RefTree 在用）；false 时
-       每一级目录独立成行、独立缩进，name 就是本级那一段。目录行的 path 仍由
+    /* squeezeOn === true 时目录链照旧压扁成一行（现在没有调用方在用）；false 时
+       每一级目录独立成行、独立缩进，name 就是本级那一段 —— 分支树（50-log.js）
+       与全部文件列表都是 false。目录行的 path 仍由
        prefix 逐层拼出，不压扁后同一棵树的键变细（多出中间层的键）：折叠表里
        旧存档的压扁键（如 @files/a/b/c）恰好等于新树最深那层目录的键，等于旧
        折叠状态自动落到最深一层，中间层一次性回到展开 —— 不做额外迁移。 */
@@ -2851,11 +2853,13 @@ textarea.dsh-git-input{resize:vertical}
                 onClick: function () { props.onSelect(selOf(name)) },
                 onDoubleClick: function () { props.onSelect(selOf(name)); props.onPickBranch(opts.repo, name) },
                 /* 右键：分支行的上下文菜单（复制分支名称 / 删除分支）。HEAD 组的行
-                   也是分支行 —— 它就是当前分支，菜单里的删除项由面板按名字置灰。 */
+                   也是分支行 —— 它就是当前分支，菜单里的删除项由面板按名字置灰；
+                   末位 true 告诉菜单「这一行是当前分支」：签出项由它置灰（多选分组
+                   里 currentName 是生效仓库的，认不得别的仓库的当前分支）。 */
                 onContextMenu: function (event) {
                   event.preventDefault()
                   event.stopPropagation()
-                  props.onBranchContext(name, 'head', opts.repo, event)
+                  props.onBranchContext(name, 'head', opts.repo, event, true)
                 },
               },
                 h('span', { className: 'dsh-git-tw' }, '★'),
@@ -2881,9 +2885,12 @@ textarea.dsh-git-input{resize:vertical}
              的删除不在这一棵树的手势里），本地的才有删除。 */
           const branchKind = key.indexOf('@remote:') === 0 ? 'remote' : 'local'
           const tree = buildTree(shown)
-          /* 末位 true：分支树保留压扁 —— 分支名自带层级（origin/feat/x），逐层
-             展开只会让只有目录没有分支的每一级白占一行（见 42-tree.js squeeze）。 */
-          const flat = flattenTree(tree, 2, keyOf(key), collapsed, [], keyOf(key), true)
+          /* 末位 false：分支树不再压扁 —— `feature/a`、`feature/b` 归到可折叠的
+             目录行 `feature`（treeDirRow 自带展开/收起与条数），叶子行只显示末段
+             名，tooltip 与上游小字仍按完整分支名（node.data）说。PhpStorm 的分支
+             树就是这么分组的；搜索时 collapsed 被上面的 NO_COLLAPSE 整棵强制展开，
+             目录不会藏住任何匹配结果。 */
+          const flat = flattenTree(tree, 2, keyOf(key), collapsed, [], keyOf(key), false)
           for (let i = 0; i < flat.length; i += 1) {
             const node = flat[i]
             if (node.kind === 'dir') {
@@ -2920,11 +2927,11 @@ textarea.dsh-git-input{resize:vertical}
                 onClick: function () { props.onSelect(selOf(branchName)) },
                 onDoubleClick: function () { props.onSelect(selOf(branchName)); props.onPickBranch(opts.repo, branchName) },
                 /* 右键：与 HEAD 组的行同一个约定（50-log.js 顶部那一处），菜单项按
-                   这一组是本地还是远程收放。 */
+                   这一组是本地还是远程收放；末位的 onHead 让「签出」在对的行上置灰。 */
                 onContextMenu: function (event) {
                   event.preventDefault()
                   event.stopPropagation()
-                  props.onBranchContext(branchName, branchKind, opts.repo, event)
+                  props.onBranchContext(branchName, branchKind, opts.repo, event, onHead)
                 },
               },
                 h('span', { className: 'dsh-git-tw' }),
@@ -8677,6 +8684,24 @@ textarea.dsh-git-input{resize:vertical}
           runOp('git/squash', squashPayload, function () { setMultiSel([]) })
           return
         }
+        /* 分支行右键菜单的两个输入框：「新建分支…」以右键那条为起点（prompt.at 钉着
+            它），确认即建好并切过去（git/branch-create 的 at 形状）；「重命名分支…」
+            的旧名钉在 prompt.name 上 —— 输入框改的只是 value，旧名不能跟着漂。两个
+            动作的仓库都随 prompt.repo 落回右键那一行自己的仓库（ctxRun 同一条路）。 */
+        if (kind === 'branch-at') {
+          setPrompt(null)
+          ctxRun('git/branch-create', { name: value, at: text(prompt.at) }, text(prompt.repo), '新建分支失败', function () {
+            setOkNote('已新建分支 ' + value + '（以 ' + text(prompt.at) + ' 为起点）并切了过去')
+          })
+          return
+        }
+        if (kind === 'branch-rename') {
+          setPrompt(null)
+          ctxRun('git/branch-rename', { name: text(prompt.name), to: value }, text(prompt.repo), '重命名分支失败', function () {
+            setOkNote('已把分支 ' + text(prompt.name) + ' 重命名为 ' + value)
+          })
+          return
+        }
         const at = selected !== null ? selected : ''
         setPrompt(null)
         if (kind === 'tag') runOp('git/tag', { name: value, at: at })
@@ -9159,11 +9184,14 @@ textarea.dsh-git-input{resize:vertical}
         })
       }, [openCommit])
 
-      const openBranchMenu = function (name, kind, repo, event) {
+      /* head（可选）：右键的这行是不是它所在仓库的当前分支。HEAD 组的行天然是，
+         「本地」组里由树按各仓库自己的 current 认（多选分组里生效仓库的 currentName
+         认不得别的仓库的当前分支）—— 签出项的置灰认它，不认名字巧不巧相同。 */
+      const openBranchMenu = function (name, kind, repo, event, head) {
         setCtxArm('')
         setCtxForce('')
         setCtxMenu({
-          kind: 'branch', name: name, remote: kind === 'remote', repo: text(repo),
+          kind: 'branch', name: name, remote: kind === 'remote', head: head === true, repo: text(repo),
           x: event != null && typeof event.clientX === 'number' ? event.clientX : 0,
           y: event != null && typeof event.clientY === 'number' ? event.clientY : 0,
         })
@@ -9237,6 +9265,100 @@ textarea.dsh-git-input{resize:vertical}
           bump()
           setUpstreamPick(null)
           setError(failureText(failure))
+        })
+      }
+
+      /* ── 分支行右键菜单的动作（签出 / 新建分支 / 推送 / 重命名 / 远程签出）──
+
+         与 ctxBranchRemove / ctxSetUpstream 同一条路：rpc 直发、仓库落在右键那一行
+         自己的仓库上（多选分组里每个仓库各是各的）、成功失败都 bump。菜单项的
+         onClick 先 setCtxMenu(null) 再进来 —— 动作没有两段式，错误条直接可见。
+         needFull 沿 runOpApply 的同一张表：签出会整棵改写工作区，要的是一次全树读。 */
+      const ctxRun = function (method, payload, repo, said, onOk) {
+        if (busy === true || ctxBusy === true) return
+        const scope = text(repo).length > 0 ? base(repo) : base(appliedRepo)
+        setBusy(true)
+        setArmed('')
+        setError(null)
+        setOkNote('')
+        panelBox.needFull = REWRITES_TREE.indexOf(method) >= 0
+        rpc(method, Object.assign({}, scope, payload), said).then(function (reply) {
+          setBusy(false)
+          bump()
+          if (typeof onOk === 'function') onOk(reply)
+        }, function (failure) {
+          setBusy(false)
+          bump()
+          setError(failureText(failure))
+        })
+      }
+
+      /* 签出本地分支：git switch <分支>。上游状态、菜单收放都不用这里管 ——
+         树的 ★ 与 tsub 小字跟着 bump 后的 refs 自己挪。 */
+      const ctxCheckout = function (name, repo) {
+        ctxRun('git/checkout', { name: name }, repo, '签出失败', function () {
+          setOkNote('已切到分支 ' + name)
+        })
+      }
+
+      /* 签出远程分支：本地名取去掉远端前缀的那一段（origin/feat/x → feat/x）。
+         本地同名分支已存在时不发请求 —— 直接说清楚去哪找那一行；refs 数据过期
+         漏了的话，git 自己的拒绝（a branch named 'feat/x' already exists）会把
+         原话带上错误条，两道都明确。 */
+      const ctxCheckoutRemote = function (name, repo) {
+        const slash = name.indexOf('/')
+        const local = slash > 0 ? name.slice(slash + 1) : name
+        const data = text(repo).length > 0 ? repoRefs[repo] : refs
+        if (data != null && data.ok === true && Array.isArray(data.local)) {
+          for (let i = 0; i < data.local.length; i += 1) {
+            const row = data.local[i]
+            if (row != null && text(row.data) === local) {
+              setError('本地已经有同名分支 ' + local + ' —— 要切过去请右键「本地」组里的那一行，那里才是已存在的分支')
+              return
+            }
+          }
+        }
+        ctxRun('git/checkout', { name: name, asNewLocal: true }, repo, '签出失败', function () {
+          setOkNote('已把 ' + name + ' 签出为本地分支 ' + local + '，并跟踪 ' + name)
+        })
+      }
+
+      /* 推送：有上游 → 按上游的远端 -u 重申着推（无害）；无上游 → 远端取 origin
+         （若存在）否则仓库唯一远端，同样 -u 推送并把上游绑过去（与「修改跟踪分支…」
+         呼应）。仓库没有远端、或多远端而分支没有上游时，不发请求 —— 这两件事
+         菜单替读者猜不出来，提示条把出路（「修改跟踪分支…」）指给他。远端清单从
+         树同源的那份 refs 数据里拿，不为这一次推送新发请求。 */
+      const ctxPush = function (name, repo) {
+        const data = text(repo).length > 0 ? repoRefs[repo] : refs
+        const upstream = upstreamOfBranch(name, repo)
+        /* null 是「refs 这份读数根本没读到」：上游与远端都无从判断，说清楚原因比
+           硬挑一个远端（可能挑错、还 -u 改绑）诚实。 */
+        if (upstream === null) {
+          setError('读不到分支数据，无法判断 ' + name + ' 的上游 —— 等分支列表读出来再推')
+          return
+        }
+        if (upstream.length > 0) {
+          const slash = upstream.indexOf('/')
+          const remote = slash > 0 ? upstream.slice(0, slash) : upstream
+          ctxRun('git/push', { setUpstream: true, remote: remote, branch: name }, repo, '推送失败', function () {
+            setOkNote('已推送 ' + name + ' 到 ' + upstream)
+          })
+          return
+        }
+        const remotes = data != null && data.ok === true && Array.isArray(data.remote) ? data.remote : []
+        let chosen = ''
+        for (let i = 0; i < remotes.length; i += 1) {
+          if (text(remotes[i].name) === 'origin') { chosen = 'origin'; break }
+        }
+        if (chosen.length === 0 && remotes.length === 1) chosen = text(remotes[0].name)
+        if (chosen.length === 0) {
+          setError(remotes.length === 0
+            ? '这个仓库没有配置远端，无法推送 ' + name
+            : '该分支没有上游，仓库有多个远端，请先用「修改跟踪分支…」指定远端')
+          return
+        }
+        ctxRun('git/push', { setUpstream: true, remote: chosen, branch: name }, repo, '推送失败', function () {
+          setOkNote('已推送 ' + name + ' 并绑定上游 ' + chosen + '/' + name)
         })
       }
 
@@ -10049,20 +10171,27 @@ textarea.dsh-git-input{resize:vertical}
               onClick: function () { setPrompt(null) },
             }, '取消'))
         : h('div', { className: 'dsh-git-prompt' },
-        h('span', { key: 'l', className: 'dsh-git-hint' }, prompt.kind === 'tag' ? '标签名' : '新分支名'),
+        h('span', { key: 'l', className: 'dsh-git-hint' },
+          prompt.kind === 'tag' ? '标签名'
+            : prompt.kind === 'branch-rename' ? '新名字'
+            : (prompt.kind === 'branch-at' ? '新分支名（起点 ' + text(prompt.at) + '）' : '新分支名')),
         clearable('i', h('input', {
           key: 'i', className: 'dsh-git-input', autoFocus: true, value: prompt.value,
           placeholder: prompt.kind === 'tag' ? '例如 v1.0.0' : '例如 feature/login',
-          onChange: function (event) { setPrompt({ kind: prompt.kind, value: event.target.value }) },
+          /* 这几种 prompt 身上带着动作要用的格子（起点分支 / 旧名 / 仓库）：输入与
+             清空只能换 value，其余字段一个都不能丢 —— 旧写法整包换掉（只留 kind），
+             在只有 kind+value 的年代无所谓，branch-at / branch-rename 进来后就会
+             把起点和旧名忘在第一次按键里。 */
+          onChange: function (event) { setPrompt(Object.assign({}, prompt, { value: event.target.value })) },
           onKeyDown: function (event) {
             if (event.key === 'Enter') submitPrompt()
             if (event.key === 'Escape') setPrompt(null)
           },
-        }), prompt.value.length > 0, function () { setPrompt({ kind: prompt.kind, value: '' }) }),
+        }), prompt.value.length > 0, function () { setPrompt(Object.assign({}, prompt, { value: '' })) }),
         h('button', {
           key: 'ok', type: 'button', className: 'dsh-git-btn dsh-git-primary',
           disabled: prompt.value.trim().length === 0, onClick: submitPrompt,
-        }, '创建'),
+        }, prompt.kind === 'branch-rename' ? '重命名' : '创建'),
         h('button', {
           key: 'no', type: 'button', className: 'dsh-git-btn',
           onClick: function () { setPrompt(null) },
@@ -10527,6 +10656,71 @@ textarea.dsh-git-input{resize:vertical}
           },
         }, '从这个提交新建分支…'),
       ] : [
+        /* ── 分支行右键菜单（PhpStorm 的分栏顺序：动作在上，元信息居中，破坏性在下）──
+
+           本地（含 HEAD 组的行）：签出 → 新建分支… → 推送 → 重命名分支… → 分隔线 →
+           复制分支名称 → 修改跟踪分支… → 分隔线 → 删除分支。远程行只有签出与复制 ——
+           远程分支没有「跟踪谁 / 重命名」这些本地才有的事；它的「签出」是 DWIM 的
+           显式形（git/checkout 的 asNewLocal）：建同名本地分支并建立跟踪。签出的
+           置灰认 ctxMenu.head（这一行是不是它所在仓库的当前分支 —— 多选分组里
+           生效仓库的 currentName 认不得别的仓库的当前分支）。 */
+        ctxMenu.remote === true
+          ? h('button', {
+              key: 'checkout', type: 'button', className: 'dsh-git-menu-item',
+              title: 'git switch -c <本地名> --track ' + ctxMenu.name
+                + ' —— 建同名本地分支（去掉远端前缀）并跟踪它',
+              disabled: busy === true,
+              onClick: function (event) {
+                stopEvent(event)
+                setCtxMenu(null)
+                ctxCheckoutRemote(ctxMenu.name, ctxMenu.repo)
+              },
+            }, '签出（检出为本地分支）')
+          : h('button', {
+              key: 'checkout', type: 'button', className: 'dsh-git-menu-item',
+              title: ctxMenu.head === true
+                ? '已经在这个分支上'
+                : 'git switch ' + ctxMenu.name + '：切到这个分支，工作区跟着变',
+              disabled: ctxMenu.head === true || busy === true,
+              onClick: function (event) {
+                stopEvent(event)
+                setCtxMenu(null)
+                ctxCheckout(ctxMenu.name, ctxMenu.repo)
+              },
+            }, '签出'),
+        ctxMenu.remote === true ? null : h('button', {
+          key: 'newat', type: 'button', className: 'dsh-git-menu-item',
+          title: '以 ' + ctxMenu.name + ' 为起点新建分支并切过去',
+          disabled: busy === true,
+          onClick: function (event) {
+            stopEvent(event)
+            setCtxMenu(null)
+            setPrompt({ kind: 'branch-at', value: '', at: ctxMenu.name, repo: ctxMenu.repo })
+          },
+        }, '新建分支…'),
+        ctxMenu.remote === true ? null : h('button', {
+          key: 'push', type: 'button', className: 'dsh-git-menu-item',
+          title: 'git push -u <远端> ' + ctxMenu.name
+            + '：有上游按上游的远端推；没有上游绑 origin（或唯一远端）推',
+          disabled: busy === true,
+          onClick: function (event) {
+            stopEvent(event)
+            setCtxMenu(null)
+            ctxPush(ctxMenu.name, ctxMenu.repo)
+          },
+        }, '推送'),
+        ctxMenu.remote === true ? null : h('button', {
+          key: 'rename', type: 'button', className: 'dsh-git-menu-item',
+          title: 'git branch -m ' + ctxMenu.name + ' <新名字>'
+            + '（当前分支也能改名，git 会把 HEAD 一起改过去）',
+          disabled: busy === true,
+          onClick: function (event) {
+            stopEvent(event)
+            setCtxMenu(null)
+            setPrompt({ kind: 'branch-rename', value: ctxMenu.name, name: ctxMenu.name, repo: ctxMenu.repo })
+          },
+        }, '重命名分支…'),
+        h('div', { key: 'sep1', className: 'dsh-git-menu-sep' }),
         h('button', {
           key: 'copy', type: 'button', className: 'dsh-git-menu-item',
           title: '把 ' + ctxMenu.name + ' 写进剪贴板',
@@ -10553,7 +10747,7 @@ textarea.dsh-git-input{resize:vertical}
             setUpstreamPick({ name: ctxMenu.name, repo: ctxMenu.repo })
           },
         }, '修改跟踪分支…'),
-        ctxMenu.remote === true ? null : h('div', { key: 'sep', className: 'dsh-git-menu-sep' }),
+        ctxMenu.remote === true ? null : h('div', { key: 'sep2', className: 'dsh-git-menu-sep' }),
         ctxMenu.remote === true ? null
           : ctxForce === ctxMenu.name
             ? h('button', {
