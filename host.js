@@ -3746,6 +3746,44 @@ async function stashRun(input, desc) {
   const said = message.length > 0 ? ['-m', message] : []
   return panelMutate(input, ['stash', 'push'].concat(said, ['--'], paths), { desc: desc })
 }
+
+/* ── git/branch-upstream：改一个本地分支跟踪的远端分支 ──
+ *
+ * 两种形状，客户端的「修改跟踪分支…」选择层（80-panel.js）各发一种：
+ *   { branch, upstream: { remote, branch } } → git branch --set-upstream-to=<r>/<b> <本地分支>
+ *   { branch, unset: true }                  → git branch --unset-upstream <本地分支>
+ *
+ * git 对非当前分支同样接受 --set-upstream-to（改的只是那条 branch.<name>.remote /
+ * merge 配置），所以从分支树右键任何本地分支都能改，不需要先检出。名字的清洗沿用
+ * git/pull 绑定上游那一条（80-rpc.js 的 cleanRefHalf：trim、去控制字符、拒前导 -），
+ * 本地分支名与远端两半走同一套 —— argv 是数组、不过 shell，要挡的是 git 自己会误读
+ * 的形状。desc 不由调用点传入（同文件其余动作的约定）而在这里按形状定 —— 与
+ * git/pull 在 80-rpc.js 里内联「绑定上游」/「拉取」是同一个先例：两种形状是两件事，
+ * 命令页里要认得出是哪一件。 */
+async function branchUpstreamRun(input) {
+  const name = cleanRefHalf(input != null && isStr(input.branch) ? input.branch : '')
+  if (name === null || name.length === 0) {
+    return { ok: false, error: 'bad-value', stderr: '需要一个合法的本地分支名：不能为空、不能以 - 开头、不能含控制字符' }
+  }
+  if (input != null && input.unset === true) {
+    return panelMutate(input, ['branch', '--unset-upstream', name], { desc: '取消跟踪分支' })
+  }
+  const setup = input != null && input.upstream != null && typeof input.upstream === 'object' && !Array.isArray(input.upstream)
+    ? input.upstream : null
+  if (setup == null) {
+    return { ok: false, error: 'bad-value', stderr: '要给出要跟踪的远端分支（upstream: {remote, branch}），或者 unset: true 取消跟踪' }
+  }
+  const remote = cleanRefHalf(setup.remote)
+  const upstream = cleanRefHalf(setup.branch)
+  if (remote === null || upstream === null || remote.length === 0 || upstream.length === 0) {
+    return { ok: false, error: 'bad-value', stderr: '绑定上游需要合法的远端名与远端分支名：不能为空、不能以 - 开头、不能含控制字符' }
+  }
+  const done = await panelMutate(input, ['branch', '--set-upstream-to=' + remote + '/' + upstream, name], { desc: '修改跟踪分支' })
+  if (done.ok !== true) return done
+  /* 成功答复带上绑的是哪一对：客户端的提示条从参数里也拼得出同一句，答复自己
+     说一遍，命令页之外读答复的人不用猜。 */
+  return Object.assign({}, done, { setUpstream: { remote: remote, branch: upstream } })
+}
 /* Every request the Client can make, in one table. Each handler is registered
    through `ctx.effect` so it belongs to this fiber: stopping or updating the
    Package removes all of them, which is what makes the bridge's reload safe.
@@ -4062,6 +4100,10 @@ onRpc('git/branch-delete', function (input) {
   const force = input != null && input.force === true
   return panelMutate(input, ['branch', force ? '-D' : '-d', name], { desc: '删除分支' })
 })
+
+/* 修改一个本地分支跟踪的远端分支（78-actions.js 的 branchUpstreamRun）：客户端分支
+    行右键「修改跟踪分支…」的选择层发的就是这一条。 */
+onRpc('git/branch-upstream', function (input) { return branchUpstreamRun(input) })
 
 onRpc('git/tag', function (input) {
   const name = input != null && isStr(input.name) ? input.name.trim() : ''
