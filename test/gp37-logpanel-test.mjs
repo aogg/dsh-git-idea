@@ -280,7 +280,14 @@ const ok = (label, value) => console.log('  ' + (value ? '✓' : '✗') + ' ' + 
 const sourceCss = fs.readFileSync(process.env.GP_SRC || new URL('../client.js', import.meta.url).pathname, 'utf8')
 
 const treeRows = (t) => collect(t).filter((n) => typeof n.props.className === 'string' && n.props.className.split(' ').indexOf('dsh-git-trow') >= 0)
-const trowWith = (t, label) => treeRows(t).find((n) => textOf(n) === label)
+/* 分支行不再是名字独占一行：名字与「跟踪的上游」小字包在同一个纵列里（tmain/tsub），
+   整行的 textOf 因此是「名字 + 上游小字」，不再等于分支名 —— 按名字那一格（tname）
+   比对；HEAD 组的行名字前带 ★ 记号（在 tname 外面），比对前先剥掉。 */
+const tnameOf = (row) => { const n = byClass(row, 'dsh-git-tname')[0]; return n === undefined ? '' : textOf(n) }
+const trowWith = (t, label) => {
+  const bare = label.charAt(0) === '★' ? label.slice(1) : label
+  return treeRows(t).find((n) => tnameOf(n) === bare)
+}
 const graphCalls = () => calls.filter((c) => c.method === 'git/graph')
 const lastGraph = () => graphCalls()[graphCalls().length - 1]
 
@@ -930,8 +937,10 @@ host.call = moreSavedCall
 
 /* ── 分支行的右键菜单 ──
 
-   本地 = 复制分支名称 + 分隔线 + 删除分支（两段式确认，-d 被拒才给 -D）；远程 =
-   仅复制；HEAD 组的行也是分支行，它就是当前分支，删除项由面板按名字置灰。 */
+   本地 = 复制分支名称 + 修改跟踪分支… + 分隔线 + 删除分支（两段式确认，-d 被拒才给
+   -D）；远程 = 仅复制（远端分支没有「跟踪谁」这件事，新项与分隔线都不给）；HEAD 组
+   的行也是分支行，它就是当前分支，删除项由面板按名字置灰。菜单项一律按文案找：
+   按钮下标会随菜单加项漂移，按文字定位才钉得住「点的是删除」。 */
 console.log('')
 console.log('== 分支行右键：本地=复制+删除（两段式），远程=仅复制 ==')
 const brSavedCall = host.call
@@ -960,16 +969,25 @@ const openBranchCtx = async (label) => {
   await wait(15)
   brTree = await settle('pop')
 }
-/* HEAD 组的行（★main）：当前分支 —— 复制在、删除也在但置灰 */
+/* HEAD 组的行（★main）：当前分支 —— 复制在、修改跟踪分支…在、删除也在但置灰 */
 await openBranchCtx('★main')
 let brMenu = byClass(brTree, 'dsh-git-menu')[0]
 let brItems = brMenu === undefined ? [] : buttons(brMenu)
-ok('HEAD 组的行也是分支行：复制分支名称 + 删除分支', brItems.length === 2
-  && textOf(brItems[0]) === '复制分支名称' && textOf(brItems[1]) === '删除分支')
-ok('当前分支的删除项置灰（title 说 git 不删除自己）', brItems[1].props.disabled === true
-  && String(brItems[1].props.title).indexOf('不删除自己') >= 0)
+const brItem = (label) => brItems.find((b) => textOf(b) === label)
+ok('HEAD 组的行也是分支行：复制分支名称 + 修改跟踪分支… + 删除分支', brItems.length === 3
+  && textOf(brItems[0]) === '复制分支名称' && textOf(brItems[1]) === '修改跟踪分支…'
+  && textOf(brItems[2]) === '删除分支')
+ok('当前分支的删除项置灰（title 说 git 不删除自己）', brItem('删除分支') !== undefined
+  && brItem('删除分支').props.disabled === true
+  && String(brItem('删除分支').props.title).indexOf('不删除自己') >= 0)
+/* 新项的位置用子元素顺序钉死：复制(0) → 修改跟踪分支…(1) → 分隔线(2) → 删除(3) */
+const brKids = brMenu === undefined ? [] : (Array.isArray(brMenu.props.children) ? brMenu.props.children : [brMenu.props.children])
+const brKidText = (i) => (brKids[i] == null || brKids[i].props === undefined ? '' : textOf(brKids[i]))
+const brKidClass = (i) => (brKids[i] == null || brKids[i].props === undefined || typeof brKids[i].props.className !== 'string' ? '' : brKids[i].props.className)
+ok('修改跟踪分支… 在「复制分支名称」之后、分隔线之前',
+  brKidText(1) === '修改跟踪分支…' && brKidClass(2).indexOf('dsh-git-menu-sep') >= 0)
 ok('复制和删除之间有分隔线', byClass(brMenu, 'dsh-git-menu-sep').length === 1)
-brItems[0].props.onClick({ stopPropagation() {} })
+brItem('复制分支名称').props.onClick({ stopPropagation() {} })
 await wait(15)
 brTree = await settle('pop')
 ok('右键复制同样落到提示条（菜单收起）', textOf(byClass(brTree, 'dsh-git-oknote')[0]).indexOf('请手动复制分支名：main') >= 0
@@ -978,15 +996,16 @@ ok('右键复制同样落到提示条（菜单收起）', textOf(byClass(brTree,
 /* 普通本地分支：两段式删除，第二段才发 -d */
 await openBranchCtx('stable')
 brItems = buttons(byClass(brTree, 'dsh-git-menu')[0])
-ok('普通本地分支的删除项可用', brItems.length === 2 && brItems[1].props.disabled !== true)
-brItems[1].props.onClick({ stopPropagation() {} })
+ok('普通本地分支的删除项可用', brItems.length === 3 && brItem('删除分支') !== undefined
+  && brItem('删除分支').props.disabled !== true)
+brItem('删除分支').props.onClick({ stopPropagation() {} })
 await wait(15)
 brTree = await settle('pop')
 const armItems = buttons(byClass(brTree, 'dsh-git-menu')[0])
-ok('第一段只武装：按钮换成「确认删除 stable」，rpc 还没发', armItems.length === 2
-  && textOf(armItems[1]) === '确认删除 stable')
+ok('第一段只武装：按钮换成「确认删除 stable」，rpc 还没发', armItems.length === 3
+  && textOf(armItems[2]) === '确认删除 stable')
 const delMark = calls.length
-armItems[1].props.onClick({ stopPropagation() {} })
+armItems.find((b) => textOf(b) === '确认删除 stable').props.onClick({ stopPropagation() {} })
 await wait(20)
 brTree = await settle('pop')
 const delCalls = calls.slice(delMark).filter((c) => c.method === 'git/branch-delete')
@@ -1008,23 +1027,23 @@ host.call = function (method, args) {
 }
 await openBranchCtx('feature')
 brItems = buttons(byClass(brTree, 'dsh-git-menu')[0])
-brItems[1].props.onClick({ stopPropagation() {} })
+brItem('删除分支').props.onClick({ stopPropagation() {} })
 await wait(15)
 brTree = await settle('pop')
-buttons(byClass(brTree, 'dsh-git-menu')[0])[1].props.onClick({ stopPropagation() {} })
+buttons(byClass(brTree, 'dsh-git-menu')[0]).find((b) => textOf(b) === '确认删除 feature').props.onClick({ stopPropagation() {} })
 await wait(20)
 brTree = await settle('pop')
 const forceItems = buttons(byClass(brTree, 'dsh-git-menu')[0])
 ok('-d 被拒（not fully merged）：菜单里出现「强制删除（-D）」，错误条说了原因',
-  forceItems.length === 2 && textOf(forceItems[1]) === '强制删除（-D）'
+  forceItems.length === 3 && textOf(forceItems[2]) === '强制删除（-D）'
   && textOf(byClass(brTree, 'dsh-git-error')[0]).indexOf('还没有合并到别处') >= 0)
-forceItems[1].props.onClick({ stopPropagation() {} })
+forceItems.find((b) => textOf(b) === '强制删除（-D）').props.onClick({ stopPropagation() {} })
 await wait(15)
 brTree = await settle('pop')
 const armForceItems = buttons(byClass(brTree, 'dsh-git-menu')[0])
-ok('-D 也要再确认一次（按钮换成「确认强制删除 feature」）', armForceItems.length === 2
-  && textOf(armForceItems[1]) === '确认强制删除 feature')
-armForceItems[1].props.onClick({ stopPropagation() {} })
+ok('-D 也要再确认一次（按钮换成「确认强制删除 feature」）', armForceItems.length === 3
+  && textOf(armForceItems[2]) === '确认强制删除 feature')
+armForceItems.find((b) => textOf(b) === '确认强制删除 feature').props.onClick({ stopPropagation() {} })
 await wait(20)
 brTree = await settle('pop')
 const forceCalls = calls.filter((c) => c.method === 'git/branch-delete' && c.args.force === true)
@@ -1046,8 +1065,9 @@ brTree = await settle('pop')
 await openBranchCtx('origin/ro')
 const roMenu = byClass(brTree, 'dsh-git-menu')[0]
 const roItems = roMenu === undefined ? [] : buttons(roMenu)
-ok('远程分支行只有「复制分支名称」一项（没有分隔线与删除）', roItems.length === 1
-  && textOf(roItems[0]) === '复制分支名称' && byClass(roMenu, 'dsh-git-menu-sep').length === 0)
+ok('远程分支行只有「复制分支名称」一项（没有修改跟踪分支…、没有分隔线与删除）', roItems.length === 1
+  && textOf(roItems[0]) === '复制分支名称' && byClass(roMenu, 'dsh-git-menu-sep').length === 0
+  && roItems.every((b) => textOf(b).indexOf('修改跟踪分支') < 0))
 roItems[0].props.onClick({ stopPropagation() {} })
 await wait(15)
 brTree = await settle('pop')
