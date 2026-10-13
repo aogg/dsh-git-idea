@@ -136,7 +136,7 @@
 .dsh-git-crow-sel:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dsh-git-subject{flex:1;overflow:hidden;text-overflow:ellipsis}
 .dsh-git-author{flex:none;width:84px;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-secondary);font-size:11px}
-.dsh-git-date{flex:none;width:82px;text-align:right;color:var(--dsw-alias-label-secondary);font-size:11px}
+.dsh-git-date{flex:none;width:112px;text-align:right;color:var(--dsw-alias-label-secondary);font-size:11px}
 .dsh-git-refs{display:flex;gap:4px;flex:none;max-width:240px;overflow:hidden}
 .dsh-git-ref{border-radius:999px;padding:0 6px;font-size:10px;line-height:16px;font-weight:600;white-space:nowrap}
 .dsh-git-ref-head{background:var(--dsw-alias-brand-primary);color:#fff}

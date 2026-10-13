@@ -19,19 +19,43 @@
       return ''
     }
 
+    /* git 给的是带时区偏移的 ISO 串（%aI），new Date 解析成绝对时刻后按浏览器
+       本地时区显示 —— 原来按字符串切片取年月日，作者时区和本地不同时会把
+       「今天」认错。解析不出来回退 text(iso)，让原串自己说话。 */
+    function parseDate(iso) {
+      if (typeof iso !== 'string' || iso.length < 16) return null
+      const at = new Date(iso)
+      return isNaN(at.getTime()) ? null : at
+    }
+
+    /* 列上的时刻都精确到分钟：今天/昨天按本地零点算天数差（保持原语义），
+       今年更早给「MM-DD HH:mm」，跨年带上年份才读得懂 —— 和 57-cmdlog.js 的
+       cmdClock 是同一个约定，两位数补零也照它写。 */
     function relativeDate(iso) {
-      if (typeof iso !== 'string' || iso.length < 16) return text(iso)
-      const year = parseInt(iso.slice(0, 4), 10)
-      const month = parseInt(iso.slice(5, 7), 10)
-      const day = parseInt(iso.slice(8, 10), 10)
-      const clock = iso.slice(11, 16)
+      const at = parseDate(iso)
+      if (at === null) return text(iso)
+      const two = function (n) { return (n < 10 ? '0' : '') + String(n) }
+      const clock = two(at.getHours()) + ':' + two(at.getMinutes())
       const now = new Date()
       const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-      const that = new Date(year, month - 1, day)
+      const that = new Date(at.getFullYear(), at.getMonth(), at.getDate())
       const days = Math.round((today.getTime() - that.getTime()) / 86400000)
       if (days === 0) return '今天 ' + clock
       if (days === 1) return '昨天 ' + clock
-      return iso.slice(0, 10)
+      const day = two(at.getMonth() + 1) + '-' + two(at.getDate())
+      return at.getFullYear() === now.getFullYear()
+        ? day + ' ' + clock
+        : String(at.getFullYear()) + '-' + day + ' ' + clock
+    }
+
+    /* 行悬浮提示用的完整时刻（到分钟）：列上省掉的部分总得有个地方看得见。
+       解析失败返回空串，调用方就不加这一行。 */
+    function fullDate(iso) {
+      const at = parseDate(iso)
+      if (at === null) return ''
+      const two = function (n) { return (n < 10 ? '0' : '') + String(n) }
+      return String(at.getFullYear()) + '-' + two(at.getMonth() + 1) + '-' + two(at.getDate())
+        + ' ' + two(at.getHours()) + ':' + two(at.getMinutes())
     }
 
     function statusClass(status) {

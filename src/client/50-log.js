@@ -75,6 +75,9 @@
     function CommitRow(props) {
       const commit = props.commit
       const refs = splitRefs(commit.refs)
+      /* 悬浮提示第三行给完整时刻（40-format.js 的 fullDate）：列上只到
+         「今天 HH:mm」这一层，哪一分钟提交的要看这里。 */
+      const when = fullDate(commit.date)
       const chips = []
       for (let k = 0; k < refs.length; k += 1) {
         chips.push(h('span', { className: 'dsh-git-ref dsh-git-ref-' + refKind(refs[k]), key: 'r' + k }, refs[k]))
@@ -83,7 +86,7 @@
         className: 'dsh-git-crow'
           + (props.selected === true ? ' dsh-git-crow-sel' : '')
           + (props.multi === true ? ' dsh-git-crow-multi' : ''),
-        title: commit.hash + '\n' + commit.subject,
+        title: commit.hash + '\n' + commit.subject + (when.length > 0 ? '\n' + when : ''),
         /* 事件一起回给面板：Ctrl/Cmd+点击是「挑进/移出多选」，普通点击照旧单选 ——
            区分只在这一层做，行自己不解读修饰键。 */
         onClick: function (event) { props.onPick(commit.hash, event) },
