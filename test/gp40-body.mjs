@@ -315,11 +315,11 @@ await wait(10)
 const cleared = await settle()
 ok('清除后分支又都回来了', pick(cleared, 'dsh-git-tname').map(textOf).join(',').indexOf('stable') >= 0)
 
-/* 工具栏：筛选在左、开菜单的 ⋯/⚡ 在右，中间夹着 IDEA 的 .* 和 Cc */
+/* 工具栏：筛选在左、开菜单的 ⚡ 在右，中间夹着 IDEA 的 .* 和 Cc */
 const bar = byClass(cleared, 'dsh-git-tools')[0]
 const nodes = collect(bar)
 const indexOfClass = (cls) => nodes.findIndex((n) => typeof n.props.className === 'string' && n.props.className.split(' ').indexOf(cls) >= 0)
-ok('搜索框在最前，开菜单的 ⋯/⚡ 最后（IDEA 的顺序）', indexOfClass('dsh-git-logsearch') < indexOfClass('dsh-git-lf') && indexOfClass('dsh-git-lf') < indexOfClass('dsh-git-acts'))
+ok('搜索框在最前，开菜单的 ⚡ 最后（IDEA 的顺序）', indexOfClass('dsh-git-logsearch') < indexOfClass('dsh-git-lf') && indexOfClass('dsh-git-lf') < indexOfClass('dsh-git-acts'))
 const flags = pick(bar, 'dsh-git-lf-flag')
 const flagOn = (b) => String(b.props.className).indexOf('dsh-git-lf-on') >= 0
 ok('搜索框旁边是 .* 和 Cc 两个开关', flags.length === 2 && textOf(flags[0]) === '.*' && textOf(flags[1]) === 'Cc')
