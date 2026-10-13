@@ -1,6 +1,6 @@
     ctx.effect(function () {
       return styles.insert(`
-.dsh-git-chip{display:inline-flex;align-items:center;gap:6px;height:28px;max-width:200px;padding:0 10px;border:none;border-radius:8px;background:0 0;color:var(--dsw-alias-label-secondary);font-family:inherit;font-size:13px;font-weight:500;line-height:20px;cursor:pointer;flex:none}
+.dsh-git-chip{display:inline-flex;align-items:center;gap:6px;height:28px;max-width:264px;padding:0 10px;border:none;border-radius:8px;background:0 0;color:var(--dsw-alias-label-secondary);font-family:inherit;font-size:13px;font-weight:500;line-height:20px;cursor:pointer;flex:none}
 .dsh-git-chip:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dsh-git-chip-open{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .dsh-git-chip-repo{color:var(--dsw-alias-label-primary)}
@@ -13,6 +13,10 @@
 .dsh-git-badge{display:inline-grid;place-items:center;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:var(--dsw-alias-brand-primary);color:#fff;font-size:10px;line-height:1;flex:none}
 /* 上一个测量值还在，新的还没回来：留个位置，但看得出来还没核对 */
 .dsh-git-badge-stale{opacity:.45}
+/* chip 上「字符 + 数字」的三小组（● 改动数、↓ 落后上游、↑ 领先上游）：组内贴得比
+   chip 本身的 6px 更紧（3px，同顶部同步组 tool 键 4px 一档），字符色跟随 chip 文字色。 */
+.dsh-git-chip-grp{display:inline-flex;align-items:center;gap:3px;flex:none}
+.dsh-git-chip-n{display:inline-grid;place-items:center;min-width:14px;height:14px;padding:0 3px;border-radius:999px;background:var(--dsw-alias-brand-primary);color:#fff;font-size:9px;line-height:1;flex:none}
 .dsh-git-pop{position:absolute;left:8px;right:8px;bottom:100%;margin-bottom:8px;z-index:30;pointer-events:auto;box-sizing:border-box;height:74vh;display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--dsw-alias-border-l1);border-radius:12px;background:var(--dsw-alias-bg-layer-1);box-shadow:var(--dsw-elevation-soft);color:var(--dsw-alias-label-primary);font-size:12px}
 .dsh-git-top{display:flex;align-items:center;gap:8px;row-gap:6px;flex-wrap:wrap;flex:none;padding:8px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);position:relative}
 .dsh-git-tabs{display:flex;gap:2px;flex:none}

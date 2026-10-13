@@ -139,6 +139,10 @@
       const record = treeRecord(repo)
       const known = record !== null
       const pending = record === null ? 0 : record.count
+      /* 上游读数来自挂载时那次快读（Host 的 readPanelIdentity 本来就带 ahead/behind）：
+         ↓/↑ 两组和 tooltip 那句话都用它。答复里没有（老版本、失败路径）就当 0，两组不画。 */
+      const ahead = typeof info.ahead === 'number' && isFinite(info.ahead) ? info.ahead : 0
+      const behind = typeof info.behind === 'number' && isFinite(info.behind) ? info.behind : 0
       /* 正在核对：这份读数该重新完整量一次，或者那一次正在飞（几秒）。 */
       const due = treeReadDue(repo) === true || treeCountReading(repo) === true
 
@@ -307,22 +311,26 @@
             /* 数字来自全局那一份读数，不是这一次读算出来的：快读（身份）根本不带工作区，
                它的「没有改动」意思是「没问过」。 */
             const pending = treeCount(repo)
+            const ahead = typeof data.ahead === 'number' && isFinite(data.ahead) ? data.ahead : 0
+            const behind = typeof data.behind === 'number' && isFinite(data.behind) ? data.behind : 0
             /* Kept outside React state because the hover card needs the count and
                hangs in a different subtree; a switch offer should not have to
                re-derive it with another read. */
-            chipInfos[sessionId] = { repo: repo, pending: pending }
+            chipInfos[sessionId] = { repo: repo, pending: pending, ahead: ahead, behind: behind }
             prefetchBranches(sessionId, repo.length > 0 ? repo : mine)
             chipLabels[sessionId] = {
               phase: 'repo',
               label: detached ? 'HEAD' : (branch.length > 0 ? branch : 'HEAD'),
               pending: pending,
+              ahead: ahead,
+              behind: behind,
               repo: repo,
               reason: '',
             }
           } else {
-            chipInfos[sessionId] = { repo: data != null ? text(data.repo) : '', pending: 0 }
+            chipInfos[sessionId] = { repo: data != null ? text(data.repo) : '', pending: 0, ahead: 0, behind: 0 }
             chipLabels[sessionId] = {
-              phase: 'none', label: null, pending: 0,
+              phase: 'none', label: null, pending: 0, ahead: 0, behind: 0,
               repo: data != null ? text(data.repo) : '',
               reason: data != null ? text(data.reason) : '',
             }
@@ -391,7 +399,7 @@
           prefetchBranches(sessionId, repoNow)
           refreshCount(repoNow)
         }).catch(function () {
-          if (alive === true) setInfo({ phase: 'none', label: null, pending: 0, repo: '', reason: '' })
+          if (alive === true) setInfo({ phase: 'none', label: null, pending: 0, ahead: 0, behind: 0, repo: '', reason: '' })
         })
         return function () { alive = false; if (stopFull !== null) stopFull() }
       }, [watched, repoVersion, isOpen, sessionId, reloadAt])
@@ -409,6 +417,7 @@
       let title = 'Git'
       if (info.phase === 'loading') title = 'Git'
       else if (isRepo) title = info.label + ' · ' + info.repo + ' · ' + count
+        + (ahead > 0 || behind > 0 ? ' · ' + trackTitle(ahead, behind) : '')
       else if (info.reason === 'missing') title = '目录不存在：' + where + ' —— 点击修改路径'
       else if (info.reason === 'file') title = '这不是一个目录：' + where + ' —— 点击修改路径'
       else if (info.reason === 'git-error') title = where + ' 读取失败 —— 点击查看原因'
@@ -430,11 +439,27 @@
         spin: switching !== null,
       })]
       if (isRepo) children.push(h('span', { className: 'dsh-git-chip-label', key: 'label' }, info.label))
+      /* 「字符 + 数字」的三小组都收进同一个 wrapper（dsh-git-chip-grp，组内 3px），
+         字符不带类、色随 chip 文字。改动数药丸及其变淡态原样照旧，只是前面多了 ●。 */
       if (isRepo && known === true && pending > 0) {
-        children.push(h('span', {
-          className: 'dsh-git-badge' + (due === true ? ' dsh-git-badge-stale' : ''),
-          key: 'badge',
-        }, String(pending)))
+        children.push(h('span', { className: 'dsh-git-chip-grp', key: 'pend' },
+          h('span', { key: 'pend-sym' }, '●'),
+          h('span', {
+            className: 'dsh-git-badge' + (due === true ? ' dsh-git-badge-stale' : ''),
+            key: 'badge',
+          }, String(pending))))
+      }
+      /* ↓/↑ 画的是快读带回来的上游读数：落后才画 ↓、领先才画 ↑，0 不占位 —— 没有上游
+         或 detached HEAD 时 Host 本来就回 0，自然藏起来。数字 99+ 封顶，同 50-log.js。 */
+      if (behind > 0) {
+        children.push(h('span', { className: 'dsh-git-chip-grp', key: 'behind' },
+          h('span', { key: 'behind-sym' }, '↓'),
+          h('span', { className: 'dsh-git-chip-n', key: 'behind-n' }, behind > 99 ? '99+' : String(behind))))
+      }
+      if (ahead > 0) {
+        children.push(h('span', { className: 'dsh-git-chip-grp', key: 'ahead' },
+          h('span', { key: 'ahead-sym' }, '↑'),
+          h('span', { className: 'dsh-git-chip-n', key: 'ahead-n' }, ahead > 99 ? '99+' : String(ahead))))
       }
 
       return h('button', {
