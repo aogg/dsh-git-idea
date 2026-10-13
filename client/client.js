@@ -2438,9 +2438,9 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-cmdnote{flex:none;padding-top:5px;font-size:10px;color:var(--dsw-alias-label-secondary)}
 .dsh-git-cmdtrunc{flex:none;font-size:10px;color:var(--dsw-alias-state-warn-primary)}
 
-/* ── ⋯ / ⚡：提交历史工具条右端那两个下拉按钮与它们的浮层（78-actions.js）──
+/* ── ⚡：提交历史工具条右端那个下拉按钮与它的浮层（78-actions.js）──
     按钮的样子照 .dsh-git-tool 画（同尺寸、同圆角、同悬停），类名刻意分开：那个类
-    说的是「作用于选中提交的工具」，这两个是「打开一个菜单」。 */
+    说的是「作用于选中提交的工具」，这个是「打开一个菜单」。 */
 .dsh-git-acts{position:relative;display:inline-flex;gap:3px;flex:none}
 .dsh-git-acts-btn{display:inline-flex;align-items:center;justify-content:center;gap:3px;width:26px;height:26px;padding:0;border:1px solid transparent;border-radius:5px;background:0 0;color:var(--dsw-alias-label-primary);font-family:inherit;font-size:12px;line-height:16px;cursor:pointer;flex:none}
 .dsh-git-acts-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
@@ -2460,19 +2460,10 @@ textarea.dsh-git-input{resize:vertical}
 /* 快捷命令那行：名字 + 代值预览各占一行 —— 一行塞下两条信息时预览先被挤没。 */
 .dsh-git-menu-cmd{flex-direction:column;align-items:flex-start;gap:1px}
 .dsh-git-menu-cmd .dsh-git-menu-dim{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-/* 删除分支的二级列表：缩进 + 细线，长列表自己滚。 */
-.dsh-git-menu-sub{display:flex;flex-direction:column;max-height:220px;overflow:auto;margin:1px 0 1px 6px;padding-left:8px;border-left:1px solid var(--dsw-alias-border-l1)}
-.dsh-git-menu-branch .dsh-git-menu-dim{margin-left:auto;flex:none}
 
 /* Ctrl+点击挑进多选的提交行：左缘一道强调条 —— 选中行是整行底色，多选得在选中之外
     另有可区分的记号（两者可同时在一行上）。 */
 .dsh-git-crow-multi{box-shadow:inset 2px 0 0 var(--dsw-alias-state-warn-primary)}
-
-/* 压缩的内联表单：区间摘要独占一行，信息框（多行）在下面占满余宽。 */
-.dsh-git-prompt-squash{flex-wrap:wrap;align-items:flex-start;row-gap:4px}
-.dsh-git-prompt-squash .dsh-git-hint{flex:1 1 100%}
-.dsh-git-prompt-squash .dsh-git-clearable{flex:1 1 260px}
-.dsh-git-prompt-squash textarea.dsh-git-input{min-height:72px}
 
 /* 成功条：与 .dsh-git-error 同一个提示位、同一个密度，绿色系、等宽（多半是命令输出）。 */
 .dsh-git-oknote{flex:none;box-sizing:border-box;max-height:120px;overflow:auto;color:var(--dsw-alias-state-success-primary);background:var(--dsw-alias-bg-layer-2);border-bottom:1px solid var(--dsw-alias-border-l1);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
@@ -6925,16 +6916,17 @@ textarea.dsh-git-input{resize:vertical}
         foot.length > 0 ? h('div', { key: 'f', className: 'dsh-git-bs-foot' }, foot) : null)
     }
 
-    /* ── 「更多操作（⋯）」与「快捷命令（⚡）」：两个下拉、执行确认框、编辑器 ──
+    /* ── 「快捷命令（⚡）」：下拉、执行确认框、编辑器 ──
 
-        提交操作（拣选/还原/标签/分支）搬进提交行的右键菜单之后，提交历史的工具条上
-        只剩这两个开菜单的按钮（按钮本体在 80-panel.js 的 toolbar 里）。快捷命令的编
-        辑器是同一个组件的两处使用：面板里的覆盖层，和设置页（90-settings.js）里的
-        管理组 —— 片段共享作用域，直接引用，不需要再开一条通道。
+        提交操作（拣选/还原/标签/分支）住进了提交行的右键菜单，分支管理（复制/新建/
+        删除）住进了分支行的右键菜单 —— 提交历史的工具条上只剩这一个开菜单的按钮
+        （按钮本体在 80-panel.js 的 toolbar 里）。快捷命令的编辑器是同一个组件的两处
+        使用：面板里的覆盖层，和设置页（90-settings.js）里的管理组 —— 片段共享作用域，
+        直接引用，不需要再开一条通道。
 
         按钮的类名刻意不用 dsh-git-tool：样式照着它画（见 46-css.js），但那个类是
         「作用于选中提交的工具」（拣选/还原/标签/分支——它们现在住在提交行的右键
-        菜单里，同步组 ⟳⇣↓↑ 还在用）、测试套件也按个数认它 —— 新按钮是「打开一个
+        菜单里，同步组 ⟳⇣↓↑ 还在用）、测试套件也按个数认它 —— 这个按钮是「打开一个
         菜单」，不是「对选中项做事」，名字分开对两边都诚实。 */
 
     /* ── 变量代值 ──
@@ -7090,8 +7082,7 @@ textarea.dsh-git-input{resize:vertical}
        面板在 panelNode 的 document 上收捕获阶段的 pointerdown 与 Escape。boxes 是视为
        「里面」的节点盒（菜单自己 + 触发按钮）：按钮必须算里面，否则点它会先被这里关掉、
        随后的 click 又把它打开，菜单就永远关不上了。effect 只随 open 重挂，所以 onClose
-       里只允许调用稳定的 setState。Escape 有一个例外：焦点在**这份菜单自己的**文本框
-       里时，Escape 先归文本框（「新建分支」的输入行用它收起自己），这里不抢。 */
+       里只允许调用稳定的 setState。 */
     function useOutsideDismiss(open, onClose, boxes) {
       React.useEffect(function () {
         if (open !== true) return undefined
@@ -7107,16 +7098,7 @@ textarea.dsh-git-input{resize:vertical}
         }
         const onDown = function (event) { if (inside(event.target) !== true) onClose() }
         const onKey = function (event) {
-          if (event.key !== 'Escape') return
-          const target = event.target
-          const tag = target != null && typeof target.tagName === 'string' ? target.tagName : ''
-          if (tag === 'INPUT' || tag === 'TEXTAREA') {
-            for (let i = 0; i < boxes.length; i += 1) {
-              const node = boxes[i] != null ? boxes[i].node : null
-              if (node != null && typeof node.contains === 'function' && node.contains(target)) return
-            }
-          }
-          onClose()
+          if (event.key === 'Escape') onClose()
         }
         doc.addEventListener('pointerdown', onDown, true)
         doc.addEventListener('keydown', onKey, true)
@@ -7125,232 +7107,6 @@ textarea.dsh-git-input{resize:vertical}
           doc.removeEventListener('keydown', onKey, true)
         }
       }, [open])
-    }
-
-    /* ── ⋯ 菜单：压缩提交 + 删除提交 + 删除分支 ──
-
-       压缩/删除的区间由面板算（它才有图、单选和多选），这里只放入口；删除分支照
-       branchpicker 的成熟交互：-d 被拒（提交没合并到别处）才给出 -D，两段式确认。 */
-    function MoreActionsMenu(props) {
-      const [box] = React.useState(function () { return { node: null } })
-      const [delOpen, setDelOpen] = React.useState(false)
-      /* 两段式确认记的是「哪一行、哪一段」：'name' = 删除已 armed，'force:name' = 强删已 armed。 */
-      const [delArm, setDelArm] = React.useState('')
-      /* -d 被拒后为那个分支给出的「强制删除（-D）」通道；别的时候不出现。 */
-      const [delForce, setDelForce] = React.useState('')
-      const [delBusy, setDelBusy] = React.useState(false)
-      /* 复制分支名称的子菜单，与它的两个空态共用 locals（删除分支那份同一个来源）。 */
-      const [copyOpen, setCopyOpen] = React.useState(false)
-      /* 新建分支：子菜单里的输入行，回车提交；在飞的那一次不许重复提交。 */
-      const [newOpen, setNewOpen] = React.useState(false)
-      const [newName, setNewName] = React.useState('')
-      const [newBusy, setNewBusy] = React.useState(false)
-      useOutsideDismiss(props.open, props.onClose, [box, props.trigger])
-      if (props.open !== true) return null
-
-      const remove = function (name, force) {
-        if (delBusy === true || props.busy === true) return
-        setDelBusy(true)
-        rpc('git/branch-delete', Object.assign({}, props.reqBase, { name: name, force: force === true }), '删除分支失败')
-          .then(function () {
-            setDelBusy(false)
-            bumpData()
-            setDelArm('')
-            setDelForce('')
-            props.onNote('已删除分支 ' + name + (force === true ? '（强制 -D，未合并的提交已随分支丢弃）' : ''))
-            props.onClose()
-          }, function (failure) {
-            const detail = failureText(failure)
-            setDelBusy(false)
-            bumpData()
-            if (force !== true && detail.indexOf('not fully merged') >= 0) {
-              /* 和 branchpicker 同一句话：拒绝的原因说清楚，-D 的决定留给读者。 */
-              setDelForce(name)
-              setDelArm('')
-              props.onError('git 拒绝安全删除 ' + name + '：它的提交还没有合并到别处。')
-              return
-            }
-            props.onError(detail)
-          })
-      }
-
-      const locals = props.refs != null && props.refs.ok === true && Array.isArray(props.refs.local)
-        ? props.refs.local : null
-      const branchRows = []
-      if (locals == null) {
-        branchRows.push(h('div', { key: 'r:none', className: 'dsh-git-menu-dim dsh-git-menu-pad' }, '无法读取分支'))
-      } else if (locals.length === 0) {
-        branchRows.push(h('div', { key: 'r:none', className: 'dsh-git-menu-dim dsh-git-menu-pad' }, '这个仓库还没有本地分支'))
-      } else {
-        for (let i = 0; i < locals.length; i += 1) {
-          const name = text(locals[i].data)
-          if (name === props.current) {
-            /* 当前分支也列出来（看得见它为什么不能删），但禁用并说明。 */
-            branchRows.push(h('button', {
-              key: 'r:' + name, type: 'button', className: 'dsh-git-menu-item dsh-git-menu-branch',
-              disabled: true, title: '当前所在的分支，git 不删除自己',
-            }, name, h('span', { key: 'c', className: 'dsh-git-menu-dim' }, '当前分支')))
-            continue
-          }
-          if (delForce === name) {
-            const armed = delArm === 'force:' + name
-            branchRows.push(h('button', {
-              key: 'r:' + name, type: 'button',
-              className: 'dsh-git-menu-item dsh-git-menu-branch dsh-git-menu-danger',
-              title: armed ? 'git branch -D ' + name + ' —— 没合并的提交会随分支丢弃'
-                : 'git branch -d 被拒：这些提交还没有合并到别处，只有 -D 能删',
-              disabled: delBusy === true || props.busy === true,
-              onClick: function (event) {
-                stopEvent(event)
-                if (armed === true) remove(name, true)
-                else setDelArm('force:' + name)
-              },
-            }, armed ? '确认强制删除 ' + name : '强制删除（-D）'))
-            continue
-          }
-          if (delArm === name) {
-            branchRows.push(h('button', {
-              key: 'r:' + name, type: 'button',
-              className: 'dsh-git-menu-item dsh-git-menu-branch dsh-git-menu-danger',
-              title: 'git branch -d ' + name,
-              disabled: delBusy === true || props.busy === true,
-              onClick: function (event) { stopEvent(event); remove(name, false) },
-            }, '确认删除 ' + name))
-            continue
-          }
-          branchRows.push(h('button', {
-            key: 'r:' + name, type: 'button', className: 'dsh-git-menu-item dsh-git-menu-branch',
-            title: 'git branch -d ' + name + '（再点一次确认）',
-            disabled: delBusy === true || props.busy === true,
-            onClick: function (event) { stopEvent(event); setDelArm(name); setDelForce('') },
-          }, name, h('span', { key: 'a', className: 'dsh-git-menu-dim' }, '删除')))
-        }
-      }
-
-      /* ── 复制分支名称的子菜单：与删除分支同一份列表的画法，但每行都可点 ──
-         当前分支排最前（它才是最常要复制的那个名字）并带「当前分支」的灰字；点击只
-         写剪贴板。列表读不到时的空态照抄删除分支那两句。 */
-      const copyRows = []
-      if (locals == null) {
-        copyRows.push(h('div', { key: 'c:none', className: 'dsh-git-menu-dim dsh-git-menu-pad' }, '无法读取分支'))
-      } else if (locals.length === 0) {
-        copyRows.push(h('div', { key: 'c:none', className: 'dsh-git-menu-dim dsh-git-menu-pad' }, '这个仓库还没有本地分支'))
-      } else {
-        const orderedLocals = []
-        for (let i = 0; i < locals.length; i += 1) {
-          if (text(locals[i].data) === props.current) orderedLocals.unshift(locals[i])
-          else orderedLocals.push(locals[i])
-        }
-        for (let i = 0; i < orderedLocals.length; i += 1) {
-          const name = text(orderedLocals[i].data)
-          const isCurrent = name === props.current
-          copyRows.push(h('button', {
-            key: 'c:' + name, type: 'button', className: 'dsh-git-menu-item dsh-git-menu-branch',
-            title: '把 ' + name + ' 写进剪贴板',
-            onClick: function (event) {
-              stopEvent(event)
-              /* 关菜单在两条路里都要做：复制成了要收，复制不成也要收 —— 名字已经
-                  亮在提示条里，菜单再开着就挡住了它。 */
-              copyTextToClipboard(name, function () {
-                props.onNote('已复制分支名 ' + name)
-                props.onClose()
-              }, function () {
-                props.onNote('无法写入剪贴板，请手动复制分支名：' + name)
-                props.onClose()
-              })
-            },
-          }, name, isCurrent ? h('span', { key: 'c', className: 'dsh-git-menu-dim' }, '当前分支') : null))
-        }
-      }
-
-      /* 新建分支：不传 at，Host 从 HEAD 新建并切过去（branchpicker 的 submitNew
-         同一条 rpc）。成功的话这个名字已经是当前分支，菜单收掉、提示条说一声。 */
-      const createBranch = function () {
-        const name = newName.trim()
-        if (name.length === 0 || newBusy === true) return
-        setNewBusy(true)
-        rpc('git/branch-create', Object.assign({}, props.reqBase, { name: name }), '新建分支失败')
-          .then(function () {
-            setNewBusy(false)
-            bumpData()
-            props.onNote('已新建并切换到分支 ' + name)
-            props.onClose()
-          }, function (failure) {
-            const detail = failureText(failure)
-            setNewBusy(false)
-            bumpData()
-            props.onError(detail)
-          })
-      }
-
-      return h('div', { className: 'dsh-git-menu', ref: function (node) { box.node = node } },
-        h('button', {
-          key: 'squash', type: 'button', className: 'dsh-git-menu-item',
-          disabled: props.count < 2,
-          title: props.count >= 2
-            ? '把从 HEAD 到最旧所选的整段区间压成一个提交（soft reset 到最旧选中项的父提交，再提交；须在当前分支的无筛选视图里选）'
-            : 'Ctrl+点击提交行选择多个提交（至少 2 个，最新端要选到列表第一行的 HEAD）',
-          onClick: function (event) { stopEvent(event); if (props.count >= 2) props.onSquash() },
-        }, '压缩提交' + (props.count >= 2 ? '（已选 ' + String(props.count) + ' 个）' : '')),
-        /* 删除与压缩同一个区间语义（HEAD 到最旧所选的整段），差别只在 reset 的 soft/hard：
-           压缩把整段收进一个新提交，删除连提交带改动一起丢。生效集合比压缩宽一档 ——
-           没有多选时作用于单选那条（和左边那四个工具一致），所以 N≥1 就能点。 */
-        h('button', {
-          key: 'drop', type: 'button', className: 'dsh-git-menu-item',
-          disabled: props.dropCount < 1,
-          title: props.dropCount >= 1
-            ? '把从 HEAD 到最旧所选的整段区间连提交带改动一起从分支尖端丢弃（hard reset 到最旧选中项的父提交；改动不保留，须在当前分支的无筛选视图里选）'
-            : '先在历史里点选一个提交，或 Ctrl+点击 选一段（最新端要选到列表第一行的 HEAD）',
-          onClick: function (event) { stopEvent(event); if (props.dropCount >= 1) props.onDrop() },
-        }, '删除提交' + (props.dropCount >= 1 ? '（已选 ' + String(props.dropCount) + ' 个）' : '')),
-        h('div', { key: 's1', className: 'dsh-git-menu-sep' }),
-        h('button', {
-          key: 'copyh', type: 'button', className: 'dsh-git-menu-item',
-          title: '把某个本地分支的名字写进剪贴板',
-          onClick: function (event) {
-            stopEvent(event)
-            setCopyOpen(copyOpen !== true)
-            setDelOpen(false)
-            setNewOpen(false)
-          },
-        }, '复制分支名称' + (copyOpen ? ' ▴' : ' ▾')),
-        copyOpen === true ? h('div', { key: 'copy', className: 'dsh-git-menu-sub' }, copyRows) : null,
-        h('button', {
-          key: 'newh', type: 'button', className: 'dsh-git-menu-item',
-          title: '从 HEAD 新建一个分支并切过去',
-          onClick: function (event) {
-            stopEvent(event)
-            setNewOpen(newOpen !== true)
-            setNewName('')
-            setCopyOpen(false)
-            setDelOpen(false)
-          },
-        }, '新建分支' + (newOpen ? ' ▴' : ' ▾')),
-        newOpen === true ? h('div', { key: 'new', className: 'dsh-git-menu-sub' },
-          h('input', {
-            key: 'ni', className: 'dsh-git-input', autoFocus: true,
-            placeholder: '新分支名，例如 feature/login',
-            value: newName, disabled: newBusy === true,
-            onChange: function (event) { setNewName(event.target.value) },
-            onKeyDown: function (event) {
-              if (event.key === 'Enter') { event.preventDefault(); createBranch() }
-              if (event.key === 'Escape') { event.preventDefault(); setNewOpen(false) }
-            },
-          })) : null,
-        h('button', {
-          key: 'delh', type: 'button', className: 'dsh-git-menu-item',
-          title: '删除这个仓库的本地分支（当前分支除外）',
-          onClick: function (event) {
-            stopEvent(event)
-            setDelOpen(delOpen !== true)
-            setDelArm('')
-            setDelForce('')
-            setCopyOpen(false)
-            setNewOpen(false)
-          },
-        }, '删除分支' + (delOpen ? ' ▴' : ' ▾')),
-        delOpen === true ? h('div', { key: 'del', className: 'dsh-git-menu-sub' }, branchRows) : null,
-        delBusy === true ? h('div', { key: 'w', className: 'dsh-git-menu-dim dsh-git-menu-pad' }, '正在删除…') : null)
     }
 
     /* ── ⚡ 菜单：快捷命令列表 + 新建/管理 ── */
@@ -7675,11 +7431,10 @@ textarea.dsh-git-input{resize:vertical}
 
     /* ── 右键菜单（ContextMenu）：提交行与分支行共用的一块浮层 ──
 
-       与 ⋯/⚡ 两个下拉不同，它锚的是**光标**而不是触发按钮，所以没有「触发按钮也算
+       与 ⚡ 下拉不同，它锚的是**光标**而不是触发按钮，所以没有「触发按钮也算
        里面」这回事：点在菜单外（document 捕获阶段的 pointerdown）、Escape、滚动、
        resize 都关。开合走 78-actions.js 的 useOutsideDismiss（它管前两样）；滚动与
-       resize 在这里补 —— 菜单自己内部（长分支列表的子菜单）的滚动不算滚走，否则
-       子菜单根本没法用滚轮读。 */
+       resize 在这里补 —— 菜单自己内部的滚动不算滚走，长菜单才读得下去。 */
     function ContextMenu(props) {
       const [box] = React.useState(function () { return { node: null } })
       useOutsideDismiss(props.open, props.onClose, [box])
@@ -8016,13 +7771,13 @@ textarea.dsh-git-input{resize:vertical}
          挑进/移出这份集合；拣选/还原/标签/分支按钮仍作用于单选那条。存的是 hash 数组，
          顺序跟着图走（图重读后会按眼前的列表修剪一次）。 */
       const [multiSel, setMultiSel] = React.useState([])
-      /* ⋯（更多操作）/ ⚡（快捷命令）两个下拉的开合：null = 都关着。 */
+      /* ⚡（快捷命令）下拉的开合：null = 关着。 */
       const [menuOpen, setMenuOpen] = React.useState(null)
       /* ── 右键菜单（提交行 / 分支行共用）──
 
          ctxMenu 存 {kind, x, y, …}：kind='commit' 带 hash（动作目标就是右键那一条，
          与 Ctrl 多选无关）；kind='branch' 带名字、是否远程、属于哪个仓库。arm/force
-         是分支删除的两段式确认（语义照 ⋯ 菜单的删除分支），busy 是它在飞的那一下。 */
+         是分支删除的两段式确认（-d 被拒才给 -D），busy 是它在飞的那一下。 */
       const [ctxMenu, setCtxMenu] = React.useState(null)
       const [ctxArm, setCtxArm] = React.useState('')
       const [ctxForce, setCtxForce] = React.useState('')
@@ -8034,9 +7789,8 @@ textarea.dsh-git-input{resize:vertical}
       /* 绿色成功条（快捷命令的输出、删除分支的结果句）：和 error 同一个提示位，下一次
          操作开始时一起清掉 —— 提示位的规矩是一次只说一件事。 */
       const [okNote, setOkNote] = React.useState('')
-      /* 两个下拉按钮的节点盒：「点外面关掉」要把触发按钮算在里面（见 78-actions.js
+      /* 下拉按钮的节点盒：「点外面关掉」要把触发按钮算在里面（见 78-actions.js
          的 useOutsideDismiss），否则点按钮会先被关一次、又被 click 开一次。 */
-      const [moreBox] = React.useState(function () { return { node: null } })
       const [quickBox] = React.useState(function () { return { node: null } })
       const [needsUpstream, setNeedsUpstream] = React.useState(false)
       /* pull 的上游选择层：null 是关着，非 null（{}）是开着 —— 开着时正文上面盖一层
@@ -8489,20 +8243,16 @@ textarea.dsh-git-input{resize:vertical}
       }, [bell])
 
       /* 哪些操作能把整棵树改掉：切分支、pull、merge/cherry-pick/revert（开始、继续、
-         跳过、中止都算）、压缩（soft reset 把 HEAD 挪到段首的父提交、索引变成整段的
-         合计）和删除（hard reset 把整段连提交带改动一起丢）会重写工作区/引用，它们的
-         答案必须是一次全树读。别的（提交、暂存、取消
-         暂存、fetch、push、tag、建/删分支）只动索引或引用 —— 那里用屏上那些路径确认
-         就够了。真机上量到的是：一次全树读 8–10s，而且这期间整条 RPC 通道都被它占着，
-         为一次「提交」让读者等十秒、十秒内点什么都要排队，是没有道理的。 */
-      const REWRITES_TREE = ['git/checkout', 'git/pull', 'git/sequence', 'git/init', 'git/squash', 'git/drop']
+         跳过、中止都算）会重写工作区/引用，它们的答案必须是一次全树读。别的（提交、
+         暂存、取消暂存、fetch、push、tag、建/删分支）只动索引或引用 —— 那里用屏上
+         那些路径确认就够了。真机上量到的是：一次全树读 8–10s，而且这期间整条 RPC
+         通道都被它占着，为一次「提交」让读者等十秒、十秒内点什么都要排队，是没有
+         道理的。 */
+      const REWRITES_TREE = ['git/checkout', 'git/pull', 'git/sequence', 'git/init']
 
       /* One path for every panel operation. A failed operation still re-reads,
          because the failures that matter — a conflicting cherry-pick, merge or
-         revert — leave the repository in a different state than they found it.
-         onOk（可选）只在成功后跑一次：压缩/删除用它清空多选 —— 失败时选择要留着好
-         重试；host 那份 ok:true 的答复作为参数传给它，删除要从里面读 preHead 给出
-         找回通道。 */
+         revert — leave the repository in a different state than they found it. */
       /* ── pull 的上游兜底 ──
 
          这个分支还没有 upstream 时，pull 本来只会以 git 的「no tracking
@@ -8510,7 +8260,7 @@ textarea.dsh-git-input{resize:vertical}
          带 setUpstream 直接跑（Host 先 set-upstream-to 再 pull）；查不到 → 打开
          选择层（pullPick），一条 pull 都不发。其余情况 —— 已有 upstream、
          detached、分支未出生、refs 读不动 —— 照旧原样发 pull，行为一字不变。 */
-      const runOpApply = function (method, payload, onOk) {
+      const runOpApply = function (method, payload) {
         if (busy) return
         setBusy(true)
         setArmed('')
@@ -8527,7 +8277,6 @@ textarea.dsh-git-input{resize:vertical}
             setOkNote('已绑定上游 ' + text(reply.setUpstream.remote) + '/' + text(reply.setUpstream.branch) + ' 并拉取')
             setPullPick(null)
           }
-          if (typeof onOk === 'function') onOk(reply)
           bump()
         }, function (failure) {
           setBusy(false)
@@ -8559,12 +8308,12 @@ textarea.dsh-git-input{resize:vertical}
 
       /* 判断本身只吃一份 refs 答复：refs 还没读到过（首帧、刚换仓库、上次读失败）
          时由 runOp 先补一次读再进来，别因为缓存未到就弹层。 */
-      const decidePull = function (refsData, payload, onOk) {
+      const decidePull = function (refsData, payload) {
         const current = refsData != null && refsData.ok === true && Array.isArray(refsData.current) && refsData.current.length > 0
           ? text(refsData.current[0]) : ''
         /* detached：refs.current 空、work.detached 是 true —— 两道都挡。 */
         if (work == null || work.ok !== true || work.detached === true || current.length === 0) {
-          runOpApply('git/pull', payload, onOk)
+          runOpApply('git/pull', payload)
           return
         }
         /* 未出生分支（unborn）：refs.current 说得出名字，但 refs/heads 里没有它 ——
@@ -8574,23 +8323,23 @@ textarea.dsh-git-input{resize:vertical}
         for (let i = 0; i < local.length; i += 1) {
           if (text(local[i].data) === current) { born = true; break }
         }
-        if (born !== true) { runOpApply('git/pull', payload, onOk); return }
+        if (born !== true) { runOpApply('git/pull', payload); return }
         const match = upstreamMatchInRefs(refsData, current)
         if (match != null) {
-          runOpApply('git/pull', Object.assign({}, payload == null ? {} : payload, { setUpstream: match }), onOk)
+          runOpApply('git/pull', Object.assign({}, payload == null ? {} : payload, { setUpstream: match }))
           return
         }
         setPullPick({})
       }
 
-      const runOp = function (method, payload, onOk) {
+      const runOp = function (method, payload) {
         if (method !== 'git/pull' || (payload != null && payload.setUpstream != null)) {
-          runOpApply(method, payload, onOk)
+          runOpApply(method, payload)
           return
         }
         /* work 还没读到（面板首帧）：上游未知，照旧直接 pull —— 别在旧数据上猜。 */
         if (work == null || work.ok !== true || text(work.upstream).length > 0) {
-          runOpApply(method, payload, onOk)
+          runOpApply(method, payload)
           return
         }
         /* refs 还没读到过（或上次读失败）：先读一次再判断（别弹空窗）；读不动就按
@@ -8598,13 +8347,13 @@ textarea.dsh-git-input{resize:vertical}
         if (refs == null || refs.ok !== true) {
           callHost('git/refs', base(appliedRepo)).then(function (data) {
             setRefs(data)
-            decidePull(data, payload, onOk)
+            decidePull(data, payload)
           }, function () {
-            runOpApply(method, payload, onOk)
+            runOpApply(method, payload)
           })
           return
         }
-        decidePull(refs, payload, onOk)
+        decidePull(refs, payload)
       }
 
       const startDrag = function (axis) {
@@ -8656,34 +8405,8 @@ textarea.dsh-git-input{resize:vertical}
       const submitPrompt = function () {
         if (prompt == null) return
         const kind = prompt.kind
-        /* 删除提交没有输入框（改动一并丢弃，没有可填的东西），必须先于「空值即返回」
-           走。载荷与压缩同款：base 是最旧所选的父提交，expect 是删除前的 HEAD。成功后
-           多选清空（这一段已经不存在了），并从答复的 preHead 里给出 30 天的找回通道。 */
-        if (kind === 'drop') {
-          const dropPayload = { base: text(prompt.base) }
-          if (text(prompt.expect).length > 0) dropPayload.expect = text(prompt.expect)
-          const count = typeof prompt.count === 'number' && prompt.count > 0 ? prompt.count : 1
-          setPrompt(null)
-          runOp('git/drop', dropPayload, function (reply) {
-            setMultiSel([])
-            const preHead = reply != null && typeof reply.preHead === 'string' ? reply.preHead : ''
-            setOkNote(preHead.length > 0
-              ? '已删除 ' + String(count) + ' 个提交；30 天内可 git reset --hard ' + preHead.slice(0, 12) + ' 找回'
-              : '已删除 ' + String(count) + ' 个提交（改动一并丢弃）')
-          })
-          return
-        }
         const value = prompt.value.trim()
         if (value.length === 0) return
-        /* 压缩走自己的载荷：base 是最旧选中项的父提交，expect 是压缩前的 HEAD（防呆，
-           见 host 78-actions.js 的顺序）。成功后多选清空 —— 这一段已经不存在了。 */
-        if (kind === 'squash') {
-          const squashPayload = { base: text(prompt.base), message: value }
-          if (text(prompt.expect).length > 0) squashPayload.expect = text(prompt.expect)
-          setPrompt(null)
-          runOp('git/squash', squashPayload, function () { setMultiSel([]) })
-          return
-        }
         /* 分支行右键菜单的两个输入框：「新建分支…」以右键那条为起点（prompt.at 钉着
             它），确认即建好并切过去（git/branch-create 的 at 形状）；「重命名分支…」
             的旧名钉在 prompt.name 上 —— 输入框改的只是 value，旧名不能跟着漂。两个
@@ -9197,9 +8920,9 @@ textarea.dsh-git-input{resize:vertical}
         })
       }
 
-      /* 分支行的删除：两段式确认的语义与 ⋯ 菜单的 remove() 逐字对齐 —— -d 被拒
-         （提交没合并到别处）才给出 -D，-D 也要再确认一次。成功后关菜单、提示条说
-         一声；失败菜单留着（强制删除那一项要在这里出现）。 */
+      /* 分支行的删除：两段式确认 —— -d 被拒（提交没合并到别处）才给出 -D，-D
+         也要再确认一次。成功后关菜单、提示条说一声；失败菜单留着（强制删除
+         那一项要在这里出现）。 */
       const ctxBranchRemove = function (name, force) {
         if (ctxBusy === true || busy === true) return
         setCtxBusy(true)
@@ -9365,12 +9088,12 @@ textarea.dsh-git-input{resize:vertical}
       /* ── 多选的清空与修剪 ──
 
          多选是「对着眼前这份列表」选出来的：分支范围、筛选、搜索一变，所选的那段就
-         不再是眼前这段；仓库切换、⟳、切页签、压缩完成各自在自己的路径上清（applyRepo /
-         refresh / 下面这个 tab effect / submitPrompt 的 onOk）。 */
+         不再是眼前这段；仓库切换、⟳、切页签各自在自己的路径上清（applyRepo /
+         refresh / 下面这个 tab effect）。 */
       React.useEffect(function () { setMultiSel([]) }, [activeRef, allRefs, search, regexSearch, caseSensitive, author, datePreset, pathFilter])
       React.useEffect(function () { setMultiSel([]) }, [tab])
-      /* 图重读之后把多选里已不在列表上的提交剪掉：角标和「压缩已选 N 个」说的都得是
-         眼前真实存在的行，顺序也顺手换成图上的顺序（{hashes} 变量按它代值）。 */
+      /* 图重读之后把多选里已不在列表上的提交剪掉：多选高亮与 {hashes} 变量代值说的
+         都得是眼前真实存在的行，顺序也顺手换成图上的顺序（{hashes} 变量按它代值）。 */
       React.useEffect(function () {
         if (multiSel.length === 0) return
         if (graph == null || graph.ok !== true || !Array.isArray(graph.commits)) return
@@ -9383,93 +9106,6 @@ textarea.dsh-git-input{resize:vertical}
           return keep.length === previous.length ? previous : keep
         })
       }, [graph])
-
-      /* ── 压缩入口（⋯ 菜单点「压缩提交」后走到这里）──
-
-         区间按**图上的顺序**算（多选记录的是点击顺序，而压缩语义是「最旧到最新这一整
-         段」）：soft reset 的落点是最旧选中项的父提交，防呆的 expect 是压缩前的 HEAD。
-         reset --soft 只会落在当前 HEAD 上，所以段的新端必须是 HEAD —— 两道门：
-         筛过的列表（分支范围、搜索、作者、日期、路径）第一行未必是 HEAD，expect 也
-         无从比对，要求在当前分支的无筛选视图里选；无筛选视图的列表第一行就是 HEAD，
-         所选最新一条必须是它 —— 否则真正被压掉的区间（一直到 HEAD）比提示里说的那段
-         更长，中间隔着的一段是压不掉的。 */
-      const openSquash = function () {
-        const scoped = allRefs || activeRef.length > 0 || search.length > 0 || author.length > 0
-          || datePreset !== 'all' || pathFilter.length > 0
-        if (scoped) {
-          setError('压缩要对着当前分支的完整历史选：先清掉分支范围、筛选与搜索，再从列表第一行（HEAD）开始 Ctrl+点击选起')
-          return
-        }
-        const commits = graph != null && graph.ok === true && Array.isArray(graph.commits) ? graph.commits : []
-        const spots = []
-        for (let i = 0; i < commits.length; i += 1) {
-          if (multiSel.indexOf(text(commits[i].hash)) >= 0) spots.push(i)
-        }
-        if (spots.length < 2) return
-        if (spots[0] !== 0) {
-          setError('压缩区间的最新端必须是 HEAD（列表第一行）：把第一行也 Ctrl+点击 选进来再压 —— 列表中间的一段压不掉')
-          return
-        }
-        const newest = commits[spots[0]]
-        const oldest = commits[spots[spots.length - 1]]
-        const parents = Array.isArray(oldest.parents) ? oldest.parents : []
-        if (parents.length === 0 || text(parents[0]).length === 0) {
-          setError('所选最旧的那个提交（' + text(oldest.short) + '）没有父提交 —— 仓库的第一个提交压不进任何区间')
-          return
-        }
-        const count = spots[spots.length - 1] - spots[0] + 1
-        /* 预填：最新一条的 subject 起头，下面缩进列出段内各条 subject，可编辑。 */
-        const lines = [text(newest.subject)]
-        for (let i = spots[0] + 1; i <= spots[spots.length - 1]; i += 1) {
-          lines.push('* ' + text(commits[i].subject))
-        }
-        setPrompt({
-          kind: 'squash', value: lines.join('\n'), base: text(parents[0]),
-          expect: text(commits[0].hash),
-          hint: '将 ' + text(oldest.short) + '…' + text(newest.short) + ' 共 ' + String(count) + ' 个提交压缩为 1 个',
-        })
-      }
-
-      /* ── 删除入口（⋯ 菜单点「删除提交」后走到这里）──
-
-         门卫与压缩完全同款：reset --hard 同样只会落在当前 HEAD 上，段的新端必须是
-         HEAD，防呆的 expect 同样要对着无筛选视图的列表第一行。差别有两处：生效集合
-         比压缩宽一档 —— 没有多选时作用于单选那条（和拣选/还原/标签/分支四个工具
-         一致）；语义更狠 —— reset --hard 连段里的改动一起丢，所以确认文案必须说清
-         「改动一并丢弃」。 */
-      const openDrop = function () {
-        const scoped = allRefs || activeRef.length > 0 || search.length > 0 || author.length > 0
-          || datePreset !== 'all' || pathFilter.length > 0
-        if (scoped) {
-          setError('删除要对着当前分支的完整历史选：先清掉分支范围、筛选与搜索，再从列表第一行（HEAD）开始选 —— Ctrl+点击选段，或单选第一行')
-          return
-        }
-        const commits = graph != null && graph.ok === true && Array.isArray(graph.commits) ? graph.commits : []
-        const picked = multiSel.length > 0 ? multiSel
-          : (selected !== null && text(selected).length > 0 ? [text(selected)] : [])
-        const spots = []
-        for (let i = 0; i < commits.length; i += 1) {
-          if (picked.indexOf(text(commits[i].hash)) >= 0) spots.push(i)
-        }
-        if (spots.length < 1) return
-        if (spots[0] !== 0) {
-          setError('删除区间的最新端必须是 HEAD（列表第一行）：把第一行也选进来再删 —— 列表中间的一段删不掉，从 HEAD 到所选的整段都会被丢弃')
-          return
-        }
-        const newest = commits[spots[0]]
-        const oldest = commits[spots[spots.length - 1]]
-        const parents = Array.isArray(oldest.parents) ? oldest.parents : []
-        if (parents.length === 0 || text(parents[0]).length === 0) {
-          setError('所选最旧的那个提交（' + text(oldest.short) + '）没有父提交 —— 仓库的第一个提交删不掉（它前面没有可停留的位置）')
-          return
-        }
-        const count = spots[spots.length - 1] - spots[0] + 1
-        setPrompt({
-          kind: 'drop', value: '', base: text(parents[0]),
-          expect: text(commits[0].hash), count: count,
-          hint: '将 ' + text(oldest.short) + '…' + text(newest.short) + ' 共 ' + String(count) + ' 个提交删除（改动一并丢弃）',
-        })
-      }
 
       const toggle = function (path) {
         setCollapsed(function (previous) {
@@ -9775,9 +9411,6 @@ textarea.dsh-git-input{resize:vertical}
       const commitCount = graph != null && graph.ok === true ? graph.commits.length : 0
       const selectedCommit = selected !== null ? text(selected) : ''
       const canAct = repoOk && busy !== true && selectedCommit.length > 0
-      /* 删除提交的生效集合条数：多选优先（跟压缩一样按段走）；没有多选时作用于单选
-         那条（跟左边四个工具一致）。菜单项的角标与禁用态说的都是这个数。 */
-      const dropCount = multiSel.length > 0 ? multiSel.length : (selectedCommit.length > 0 ? 1 : 0)
       const currentName = refs != null && refs.ok === true && refs.current.length > 0 ? refs.current[0] : ''
       const ahead = work != null && work.ok === true ? work.ahead : 0
       const behind = work != null && work.ok === true ? work.behind : 0
@@ -10061,22 +9694,9 @@ textarea.dsh-git-input{resize:vertical}
         h('span', { key: 'grow', className: 'dsh-git-grow' }),
         h('span', { key: 'sep', className: 'dsh-git-tsep' }),
         /* 拣选/还原/标签/分支那四个「作用于选中提交」的图标键不在这里了：它们搬进了
-           提交行的右键菜单（对右键那条生效，见 ContextMenu），工具条只留过滤器和
-           右边那两个开菜单的按钮。title 同步这一句 —— 不说「删除分支」一项它自己，
-           说了四项里的三样，读者才知道每一项去哪找。 */
+           提交行的右键菜单（对右键那条生效，见 ContextMenu），分支的复制/新建/删除
+           也住进了分支行的右键菜单 —— 工具条只留过滤器和右边这个开菜单的按钮。 */
         h('span', { key: 'acts', className: 'dsh-git-acts' },
-          h('button', {
-            key: 'more', type: 'button',
-            className: 'dsh-git-acts-btn' + (menuOpen === 'more' ? ' dsh-git-acts-btn-on' : ''),
-            title: '更多操作：压缩提交（Ctrl+点击多选）、删除提交、复制/新建/删除分支',
-            disabled: !repoOk,
-            ref: function (node) { moreBox.node = node },
-            onClick: function (event) {
-              stopEvent(event)
-              setMenuOpen(menuOpen === 'more' ? null : 'more')
-            },
-          }, '⋯',
-            multiSel.length > 0 ? h('span', { key: 'b', className: 'dsh-git-tool-badge' }, String(multiSel.length)) : null),
           h('button', {
             key: 'quick', type: 'button',
             className: 'dsh-git-acts-btn' + (menuOpen === 'quick' ? ' dsh-git-acts-btn-on' : ''),
@@ -10088,21 +9708,6 @@ textarea.dsh-git-input{resize:vertical}
               setMenuOpen(menuOpen === 'quick' ? null : 'quick')
             },
           }, '⚡'),
-          menuOpen === 'more'
-            ? h(MoreActionsMenu, {
-                key: 'm', open: true,
-                onClose: function () { setMenuOpen(null) },
-                trigger: moreBox,
-                count: multiSel.length,
-                dropCount: dropCount,
-                onSquash: function () { setMenuOpen(null); openSquash() },
-                onDrop: function () { setMenuOpen(null); openDrop() },
-                reqBase: base(appliedRepo),
-                refs: refs, current: currentName, busy: busy,
-                onNote: function (said) { setOkNote(said) },
-                onError: function (said) { setError(said) },
-              })
-            : null,
           menuOpen === 'quick'
             ? h(QuickCommandsMenu, {
                 key: 'q', open: true,
@@ -10122,54 +9727,9 @@ textarea.dsh-git-input{resize:vertical}
           title: String(commitCount) + (hasFilter ? ' 条匹配当前筛选' : ' 条提交'),
         }, String(commitCount)))
 
-      /* 压缩的内联表单：提示行说清区间（abc…def 共 N 个 → 1 个），下面是多行的提交信息
-         （预填：最新 subject 起头 + 段内各条缩进列出，可编辑）。Enter 确认、Shift+Enter
-         换行、Esc 取消 —— 信息本来就是多行的，Enter 直接确认与单行 prompt 一个手感。
-         删除是它的无输入款（见下面 drop 分支的注释），两种都从 ⋯ 菜单进来。 */
-      const editSquashPrompt = function (value) {
-        setPrompt({ kind: 'squash', value: value, base: prompt.base, expect: prompt.expect, hint: prompt.hint })
-      }
-      const promptRow = prompt === null ? null : prompt.kind === 'squash'
-        ? h('div', { className: 'dsh-git-prompt dsh-git-prompt-squash' },
-            h('span', { key: 'l', className: 'dsh-git-hint' }, text(prompt.hint)),
-            clearable('m', h('textarea', {
-              key: 'm', className: 'dsh-git-input', autoFocus: true, rows: 4, value: prompt.value,
-              placeholder: '压缩后的提交信息（Enter 压缩，Shift+Enter 换行）',
-              onChange: function (event) { editSquashPrompt(event.target.value) },
-              onKeyDown: function (event) {
-                if (event.key === 'Enter' && event.shiftKey !== true) { event.preventDefault(); submitPrompt() }
-                if (event.key === 'Escape') setPrompt(null)
-              },
-            }), prompt.value.length > 0, function () { editSquashPrompt('') }, 'dsh-git-clearable-area'),
-            h('button', {
-              key: 'ok', type: 'button', className: 'dsh-git-btn dsh-git-primary',
-              disabled: prompt.value.trim().length === 0, onClick: submitPrompt,
-            }, '压缩'),
-            h('button', {
-              key: 'no', type: 'button', className: 'dsh-git-btn',
-              onClick: function () { setPrompt(null) },
-            }, '取消'))
-        : prompt.kind === 'drop'
-        /* 删除的确认：没有输入框（改动一并丢弃，没有可填的东西），只有提示行 + 删除 +
-           取消。Enter/Esc 挂在容器上、autoFocus 聚焦「删除」按钮 —— 键从焦点冒泡上来
-           （QuickCommandConfirm 无输入时同一做法），键盘路径与有输入框的 prompt 一个
-           手感，确认按钮本身就是 danger 色。 */
-        ? h('div', {
-            className: 'dsh-git-prompt',
-            onKeyDown: function (event) {
-              if (event.key === 'Enter') { event.preventDefault(); submitPrompt() }
-              if (event.key === 'Escape') { event.preventDefault(); setPrompt(null) }
-            },
-          },
-            h('span', { key: 'l', className: 'dsh-git-hint' }, text(prompt.hint)),
-            h('button', {
-              key: 'ok', type: 'button', className: 'dsh-git-btn dsh-git-danger',
-              autoFocus: true, onClick: submitPrompt,
-            }, '删除'),
-            h('button', {
-              key: 'no', type: 'button', className: 'dsh-git-btn',
-              onClick: function () { setPrompt(null) },
-            }, '取消'))
+      /* 内联输入行：打标签 / 从提交新建分支（提交行右键）、以某分支为起点新建分支 /
+         重命名分支（分支行右键）共用这一行。Enter 确认、Esc 取消。 */
+      const promptRow = prompt === null ? null
         : h('div', { className: 'dsh-git-prompt' },
         h('span', { key: 'l', className: 'dsh-git-hint' },
           prompt.kind === 'tag' ? '标签名'
@@ -10866,7 +10426,7 @@ textarea.dsh-git-input{resize:vertical}
                   onClose: function () { setUpstreamPick(null) },
                 })))
           : null,
-        /* 右键菜单：光标锚的浮层（position:fixed）。挂在面板根部 —— 与 ⋯/⚡ 的下拉
+        /* 右键菜单：光标锚的浮层（position:fixed）。挂在面板根部 —— 与 ⚡ 的下拉
             不同它不属于任何一格，开关只随 ctxMenu。 */
         ctxMenu !== null
           ? h(ContextMenu, {
