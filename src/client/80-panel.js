@@ -1417,14 +1417,25 @@
         let lastVh = NaN
         let lastCeiling = NaN
         const readAnchor = function () {
-          const box = panelAnchorBox(nodeBox.node)
+          /* 跳出主对话（floated）后，面板本体住进了 body 级浮层，offsetParent 是
+             浮层自己，量它就成了「以视口为锚」。改量入口探针（GitPopover 留在槽位
+             里的那只 1×1 盒）：它的 offsetParent 还是输入框卡片，和旧面板量到的是
+             同一个锚。穿过 anchorBox 读 .node，首帧 ref 没回来就先按面板自己量。 */
+          const probeNow = props.floated === true && props.anchorBox != null
+            ? props.anchorBox.node : null
+          const box = panelAnchorBox(probeNow != null ? probeNow : nodeBox.node)
           const top = box == null ? NaN : parseFloat(box.top)
           const vh = view != null ? parseFloat(view.innerHeight) : NaN
           if (!isFinite(top)) return
           /* 真实上界：会话滚动体（或任何会裁竖向溢出的祖先）的可见上沿。量不到
-             （没有布局的环境、祖先全不裁）时是 null，钳制按 0 —— 即视口上沿。 */
-          const ceiling = clipCeiling(nodeBox.node, view)
-          const ceilingNum = isFinite(ceiling) ? ceiling : NaN
+             （没有布局的环境、祖先全不裁）时是 null，钳制按 0 —— 即视口上沿。
+             浮层路径没有滚动体祖先，唯一的界就是视口上沿：这格直接空着（NaN），
+             与「量不到」同义。 */
+          let ceilingNum = NaN
+          if (props.floated !== true) {
+            const ceiling = clipCeiling(nodeBox.node, view)
+            ceilingNum = isFinite(ceiling) ? ceiling : NaN
+          }
           /* 「上次」是 NaN 的第一帧必须判成动过 —— 比较式 `Math.abs(x - NaN) > 1`
              恒为 false，把第一帧也算「没动」的话，一次都不会 setState，钳制就永远
              不生效（15ab5a3 正是栽在这里：锚点从没写进 state，hero 相位照旧显示
@@ -2731,7 +2742,50 @@
           + (switcher === 'panel' ? ' dsh-git-pop-overflow' : ''),
         ref: function (node) { panelNode = node; nodeBox.node = node },
       }
-      if (size.w > 0) popProps.style = { width: size.w + 'px', left: '50%', right: 'auto', transform: 'translateX(-50%)' }
+      if (props.floated === true) {
+        /* ── 跳出主对话：视口坐标定位（16-portal.js 的 body 级浮层）──
+
+           老几何原句照搬，只是包含块从输入区槽位换成了视口大小的浮层：底边钉在
+           锚点（输入框卡片）上沿之上 8px（= bottom:100% + margin-bottom:8px）、
+           水平贴着锚点居中（= translateX(-50%)）。宽度不再受主对话约束 ——
+           better-sidebar 把主对话压窄也压不到面板：拖过的记忆宽度优先（钳进视口），
+           没拖过 = 锚点宽 - 16（老 left:8/right:8 的自然宽），下限 GIT_FLOAT_MIN_W。
+           两端一律收进视口 8px；不写 transform（右键菜单那套「面板带 transform 时
+           坐标换算」就不用走）。 */
+        const probeNow = props.anchorBox != null ? props.anchorBox.node : null
+        const measureFrom = probeNow != null ? probeNow : nodeBox.node
+        const view = gitFloatViewportOf(measureFrom)
+        const box = panelAnchorBox(measureFrom)
+        const vw = view != null ? view.vw : NaN
+        const vh = view != null ? view.vh : NaN
+        const anchorTop = box != null && isFinite(parseFloat(box.top)) ? parseFloat(box.top) : NaN
+        const anchorLeft = box != null && isFinite(parseFloat(box.left)) ? parseFloat(box.left) : NaN
+        const anchorW = box != null && isFinite(parseFloat(box.width)) ? parseFloat(box.width) : NaN
+        let w = size.w > 0
+          ? size.w
+          : (isFinite(anchorW) ? Math.max(anchorW - 16, GIT_FLOAT_MIN_W) : GIT_FLOAT_MIN_W)
+        if (isFinite(vw)) w = Math.min(w, Math.max(vw - 16, 280))
+        let left = NaN
+        if (isFinite(vw)) {
+          if (isFinite(anchorLeft) && isFinite(anchorW)) {
+            left = anchorLeft + (anchorW - w) / 2
+            if (left + w > vw - 8) left = vw - 8 - w
+            if (left < 8) left = 8
+          } else {
+            left = (vw - w) / 2
+          }
+        }
+        const bottom = isFinite(vh)
+          ? (isFinite(anchorTop) ? Math.max(0, vh - anchorTop + PANEL_ANCHOR_GAP) : 8)
+          : NaN
+        const floatStyle = { right: 'auto', margin: '0px' }
+        if (isFinite(w)) floatStyle.width = String(Math.round(w)) + 'px'
+        if (isFinite(left)) floatStyle.left = String(Math.round(left)) + 'px'
+        if (isFinite(bottom)) floatStyle.bottom = String(Math.round(bottom)) + 'px'
+        popProps.style = floatStyle
+      } else if (size.w > 0) {
+        popProps.style = { width: size.w + 'px', left: '50%', right: 'auto', transform: 'translateX(-50%)' }
+      }
       /* 高度：记忆的 size.h（没有就是默认 74vh）是「期望」，实际渲染时再被「锚点
          上沿之上的可见空间」钳一道 —— 只改这一个 style，size / panelSize 的记忆语义
          完全不动，空间恢复后自然回到期望值（拖拽记下的期望高度也照此被钳制但不丢）。

@@ -248,6 +248,19 @@ textarea.dsh-git-input{resize:vertical}
    above the composer when the chip is hovered. The layer wrapper generates no
    box, so the panel still positions itself against the slot's own container. */
 .dsh-git-layer{display:contents}
+/* ── body 级浮层（16-portal.js）──
+   弹层「跳出主对话的框」的落点：portal 挂到 body 的视口定点层，主对话的宽度与
+   overflow 从此与它无关。宽高写死 100vw/100vh 而不是 inset:0 —— 页面级 transform/
+   filter（玻璃皮肤）会把 fixed 的 inset 尺寸换成祖先 padding 盒、层塌成 0
+   （better-sidebar 在 [data-dsh-panel-host] 上踩过并在注释里记下的同一个坑）。
+   z-index 95 的上下文（实测 better-sidebar 源码，只读参考）：它的 body 级侧栏宿主
+   [data-dsh-panel-host] 是 25（格内 40/90 都被罩住）、它 portal 到 body 的浮窗/
+   锚定卡是 90、DSH 的 ui-cordis 插件面板是 30，应用的对话框栈在 100+ —— 95 压过
+   侧栏一切常驻面，又不挡应用自己的对话框。overflow:hidden 只防浮层把 document 撑出
+   滚动区；pointer-events:none 让空层不挡点击 —— 面板自带 pointer-events:auto，
+   悬停卡片在这里补一句。 */
+.dsh-git-float{position:fixed;left:0;top:0;right:0;height:100vh;overflow:hidden;pointer-events:none;z-index:95}
+.dsh-git-float .dsh-git-switch{pointer-events:auto}
 .dsh-git-branch-chip{display:inline-flex;align-items:center;gap:4px;max-width:220px;flex:none;padding:2px 8px;border-radius:999px;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-primary);font-size:11px;line-height:16px;cursor:pointer;font-family:inherit}
 .dsh-git-branch-chip:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dsh-git-branch-chip-on{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}

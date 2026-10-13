@@ -8,8 +8,19 @@
       /* 分支卡片上那个「几个改动」也来自全局那一份读数：同一个数字在面板、chip 和这张
          卡片上必须是同一个。 */
       useTreeVersion()
-      /* 悬停卡片的高度上界（像素，null = 不钳）。卡片和面板挂在同一个锚点上、同样
-         bottom:100% 向上生长，hero 相位（新会话输入框居中）时卡片顶同样会被会话
+      /* ── 跳出主对话的框（16-portal.js）──
+
+         有 portal 就把面板和悬停卡片整体搬进 body 级浮层：渲染与定位都不再受主对话
+         容器的宽度/overflow 约束，better-sidebar 把主对话压多窄都裁不到它们。槽位里
+         只留一只 1×1 的定位探针（floated 探锚）—— 它的 offsetParent 还是输入框卡片，
+         面板和卡片照旧「贴着输入框向上长」，只是包含块换成了视口。没有 portal
+         （bridge、单测的迷你 React）escape 为 null：下面每一步都按旧路走，渲染结果
+         和从前一字不差。 */
+      const escape = gitFloatEscape()
+      const floated = escape != null
+      const [probeBox] = React.useState(function () { return { node: null } })
+      /* 悬停卡片的高度上界（像素，null = 不钳）。卡片和面板挂在同一个锚点上、
+         同样 bottom:100% 向上生长，hero 相位（新会话输入框居中）时卡片顶同样会被会话
          滚动体裁掉 —— 面板是靠钳高度让列表少显示几行，卡片同款：把量到的可见空间
          写成 maxHeight，让卡片里的分支列表（本来就是滚动容器）自己缩、自己滚。
          打开那一刻量一次（useLayoutEffect + setState 发生在绘制前，不会闪一帧自然
@@ -27,12 +38,15 @@
           setHoverCap(function (previous) { return previous === null ? previous : null })
           return undefined
         }
-        /* 量的是 chip 的定位祖先（panelAnchorBox 通用：offsetParent 的 rect）：chip
-           挂在输入框卡片里、卡片就是定位祖先，卡片上沿 == overlayAnchor（卡片顶的
-           零高锚点）的上沿 == 卡片和悬停卡片共同的锚点上沿。从 chip 量而不是从面板
+        /* 量的是锚点的上沿。浮层路径量入口探针：面板 display:none 也量得到，而且它
+           是本挂载自己的节点，不像全局 chipNode 会被别的会话指走；旧路沿用 chip ——
+           chip 挂在输入框卡片里、卡片就是定位祖先，卡片上沿 == overlayAnchor（卡片顶
+           的零高锚点）的上沿 == 卡片和悬停卡片共同的锚点上沿。从 chip 量而不是从面板
            量，是因为悬停恰恰发生在面板 display:none 的时候——隐藏元素的 offsetParent
            是 null，量不出锚点；chip 永远在屏。 */
-        const from = chipNode != null ? chipNode : panelNode
+        const probeNow = floated === true ? probeBox.node : null
+        const from = probeNow != null ? probeNow
+          : (chipNode != null ? chipNode : panelNode)
         const doc = from != null ? from.ownerDocument : null
         const view = doc != null ? doc.defaultView : null
         /* 没有布局的环境（测试、连 rAF 都没有）不钳：卡片按 CSS 的自然高度走。 */
@@ -40,9 +54,14 @@
         const anchorBox = panelAnchorBox(from)
         const anchorTop = anchorBox != null ? parseFloat(anchorBox.top) : NaN
         if (!isFinite(anchorTop)) return undefined
-        const ceiling = clipCeiling(from, view)
-        const room = anchorTop - PANEL_ANCHOR_GAP - PANEL_ANCHOR_SAFETY
-          - (ceiling != null && isFinite(ceiling) ? ceiling : 0)
+        /* 浮层路径唯一的上界是视口上沿（0）：body 级浮层不吃会话滚动体的裁剪，
+           clipCeiling 沿 chip 祖先量出来的那道滚动体上沿对它不再成立。 */
+        let ceiling = 0
+        if (floated !== true) {
+          const measured = clipCeiling(from, view)
+          ceiling = measured != null && isFinite(measured) ? measured : 0
+        }
+        const room = anchorTop - PANEL_ANCHOR_GAP - PANEL_ANCHOR_SAFETY - ceiling
         if (!isFinite(room)) return undefined
         setHoverCap(room >= SWITCH_MIN_ROOM ? Math.floor(room) : null)
         return undefined
@@ -94,37 +113,89 @@
       /* display:contents so the wrapper adds no box: the panel keeps positioning
          itself against the same ancestor it always did, and the hover card is an
          absolutely positioned sibling that cannot push it around. */
+
+      /* 悬停卡片的浮层定位：老 CSS（.dsh-git-switch-hover）的 bottom:100% +
+         margin-bottom:8px + left:8px 换成视口坐标的同一句几何 —— 底边钉在锚点
+         （输入框卡片）上沿之上 8px、左缘从锚点左缘 +8 出发；宽度 456 的上限从
+         「卡片宽 - 16」改成按视口算，主对话被 better-sidebar 压窄也不压卡片，两端
+         收进视口 8px。锚点量不到（没有布局的极端环境）时贴视口左下，至少完整可见。 */
+      let switchStyle = hoverCap !== null ? { maxHeight: hoverCap + 'px' } : undefined
+      if (floated === true) {
+        const probeNow = probeBox.node
+        const view = gitFloatViewportOf(probeNow != null ? probeNow : chipNode)
+        const anchorBox = probeNow != null ? panelAnchorBox(probeNow) : null
+        const style = Object.assign(
+          { position: 'absolute', margin: '0px', right: 'auto', bottom: 'auto' },
+          switchStyle !== null && switchStyle !== undefined ? switchStyle : {})
+        if (view != null) {
+          const width = Math.min(456, Math.max(view.vw - 16, 280))
+          style.width = Math.round(width) + 'px'
+          let left = 8
+          if (anchorBox != null && isFinite(parseFloat(anchorBox.left))) {
+            left = parseFloat(anchorBox.left) + 8
+            if (left + width > view.vw - 8) left = view.vw - 8 - width
+            if (left < 8) left = 8
+          } else if (anchorBox == null) {
+            left = (view.vw - width) / 2
+          }
+          style.left = String(Math.round(left)) + 'px'
+          const anchorTop = anchorBox != null && isFinite(parseFloat(anchorBox.top))
+            ? parseFloat(anchorBox.top) : NaN
+          style.bottom = String(Math.round(isFinite(anchorTop)
+            ? Math.max(0, view.vh - anchorTop + PANEL_ANCHOR_GAP) : 8)) + 'px'
+        }
+        switchStyle = style
+      }
+
+      const panelEl = h(GitPanel, {
+        key: 'panel', sessionId: props.sessionId, active: isOpen, ready: everOpened,
+        /* 本页有没有会话状态可听（useSession 这类 props）：bridge 版没有，配置页
+           拿这句话代替开关的 hint。只看 props 的存在与否，不在这里调 hook —— 真
+           的听在 chip 那边（92-chip.js）。 */
+        sessionAware: typeof props.useSession === 'function',
+        /* 跳出主对话的两句交接：floated 告诉面板按视口坐标摆自己；anchorBox 是
+           槽位里那只探针的节点盒（对象身份稳定，面板在测量与渲染时穿过它读
+           .node，永远拿到当前那只 —— 首帧 ref 还没回来也不碍事）。 */
+        floated: floated === true,
+        anchorBox: probeBox,
+      })
+      const switchEl = mode === 'hover' && isOpen !== true
+        ? h('div', {
+            key: 'switch',
+            className: 'dsh-git-switch dsh-git-switch-hover'
+              + (hoverCap !== null ? ' dsh-git-switch-cap' : ''),
+            /* 实测的可见空间（见上面的 useLayoutEffect）：卡片从下往上生长，
+              maxHeight 收的是它自己的顶。配套的 .dsh-git-switch-cap 让分支列表
+              吃掉余下高度自己滚（46-css.js）。浮层路径这里还带整套视口定位。 */
+            style: switchStyle,
+            ref: function (node) { switcherNode = node },
+            onPointerEnter: function () { clearHoverTimer() },
+            onPointerLeave: function () { hoverCloseSoon() },
+          }, h(BranchPicker, {
+            sessionId: props.sessionId,
+            repo: chipInfoFor(props.sessionId).repo.length > 0
+              ? chipInfoFor(props.sessionId).repo
+              : sessionRepo(props.sessionId),
+            mode: 'hover',
+            dirty: treeCount(chipInfoFor(props.sessionId).repo.length > 0
+              ? chipInfoFor(props.sessionId).repo
+              : sessionRepo(props.sessionId)),
+            onDone: function () { setSwitchMode(null) },
+            onClose: function () { setSwitchMode(null) },
+          }))
+        : null
+
+      if (floated !== true) return h('div', { className: 'dsh-git-layer' }, panelEl, switchEl)
+      /* 浮层路径：面板和卡片搬进 body 级浮层；探针留在槽位里当锚 —— 它必须还在
+         主对话的框里，量出来的才是输入框的位置。 */
       return h('div', { className: 'dsh-git-layer' },
-        h(GitPanel, {
-          key: 'panel', sessionId: props.sessionId, active: isOpen, ready: everOpened,
-          /* 本页有没有会话状态可听（useSession 这类 props）：bridge 版没有，配置页
-             拿这句话代替开关的 hint。只看 props 的存在与否，不在这里调 hook —— 真
-             的听在 chip 那边（92-chip.js）。 */
-          sessionAware: typeof props.useSession === 'function',
+        h('div', {
+          key: 'probe',
+          ref: function (node) { probeBox.node = node },
+          style: {
+            position: 'absolute', left: '0px', top: '0px',
+            width: '1px', height: '1px', pointerEvents: 'none',
+          },
         }),
-        mode === 'hover' && isOpen !== true
-          ? h('div', {
-              key: 'switch',
-              className: 'dsh-git-switch dsh-git-switch-hover'
-                + (hoverCap !== null ? ' dsh-git-switch-cap' : ''),
-              /* 实测的可见空间（见上面的 useLayoutEffect）：卡片从下往上生长，
-                maxHeight 收的是它自己的顶。配套的 .dsh-git-switch-cap 让分支列表
-                吃掉余下高度自己滚（46-css.js）。 */
-              style: hoverCap !== null ? { maxHeight: hoverCap + 'px' } : undefined,
-              ref: function (node) { switcherNode = node },
-              onPointerEnter: function () { clearHoverTimer() },
-              onPointerLeave: function () { hoverCloseSoon() },
-            }, h(BranchPicker, {
-              sessionId: props.sessionId,
-              repo: chipInfoFor(props.sessionId).repo.length > 0
-                ? chipInfoFor(props.sessionId).repo
-                : sessionRepo(props.sessionId),
-              mode: 'hover',
-              dirty: treeCount(chipInfoFor(props.sessionId).repo.length > 0
-                ? chipInfoFor(props.sessionId).repo
-                : sessionRepo(props.sessionId)),
-              onDone: function () { setSwitchMode(null) },
-              onClose: function () { setSwitchMode(null) },
-            }))
-          : null)
+        escape.portal([panelEl, switchEl], escape.host))
     }
