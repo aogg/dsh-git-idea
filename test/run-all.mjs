@@ -33,9 +33,10 @@ const COUNTING = [
   'gp50-client-test.mjs',
   'gp51-client-test.mjs',
   'gp52-complete-badge-test.mjs',
+  'gp53-client-test.mjs',
 ]
 /* Suites that report by exit code and print their own lines. */
-const PROSE = ['gp34a-host-test.mjs', 'gp34d-config-test.mjs', 'gp34e-bridge-test.mjs', 'gp45-host-test.mjs', 'gp48-safedir-host-test.mjs', 'gp49-host-test.mjs', 'gp50-host-test.mjs', 'gp51-host-test.mjs']
+const PROSE = ['gp34a-host-test.mjs', 'gp34d-config-test.mjs', 'gp34e-bridge-test.mjs', 'gp45-host-test.mjs', 'gp48-safedir-host-test.mjs', 'gp49-host-test.mjs', 'gp50-host-test.mjs', 'gp51-host-test.mjs', 'gp53-host-test.mjs']
 
 /* ── GP_FRESH：不落仓库产物也做回归 ──
 
@@ -67,7 +68,7 @@ function run(file) {
      的含义就是「要测的那份源码」）。 */
   const env = Object.assign({}, process.env)
   if (FRESH) {
-    env.GP_SRC = file === 'gp34a-host-test.mjs' || file === 'gp34d-config-test.mjs' || file === 'gp45-host-test.mjs' || file === 'gp48-safedir-host-test.mjs' || file === 'gp49-host-test.mjs' || file === 'gp50-host-test.mjs' || file === 'gp51-host-test.mjs'
+    env.GP_SRC = file === 'gp34a-host-test.mjs' || file === 'gp34d-config-test.mjs' || file === 'gp45-host-test.mjs' || file === 'gp48-safedir-host-test.mjs' || file === 'gp49-host-test.mjs' || file === 'gp50-host-test.mjs' || file === 'gp51-host-test.mjs' || file === 'gp53-host-test.mjs'
       ? freshHost : freshClient
   }
   const result = spawnSync(process.execPath, [path.join(HERE, file)], { encoding: 'utf8', env: env })
