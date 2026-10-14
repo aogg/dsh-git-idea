@@ -296,3 +296,141 @@ async function projectConfigSave(input) {
   const after = await projectConfigSnapshotFrom(input, target, true)
   return Object.assign({ written: setKeys, unset: unsetKeys }, after)
 }
+
+/* ─────────────── 远端：面板「配置」页的第四组 ───────────────
+
+   「提交身份」「换行符」两组管 .git/config 里的键，远端其实也是同一个文件里的东西
+   （[remote "origin"] url = …），但它有自己的专用命令（git remote add / set-url /
+   remove），会把 fetchurl、pushurl、mirror 一起收拾好 —— 让读者直接改 config 文本
+   等于要他先懂这些。所以读写都走 `git remote`：读是 `git remote -v`，写是三条子命令。
+
+   读法的分界照 projectConfigSnapshot（上一节）：repoFrom / argsAt / insideRepo ——
+   不知道是哪个仓库（会话没有工作区）时绝不去问「此刻生效的那份」，`git remote -v`
+   按当前目录回答，而当前目录是 dsh 进程自己的目录。 */
+
+/* `origin\thttps://… (fetch)` 一行拆成名字与地址：末尾的 (fetch)/(push) 是 git 自己
+   写死的标记，掐掉之后剩下的「名字 + 一段空白 + 地址」从第一段空白切成两半。同一个
+   远端占两行（fetch 一行 push 一行，配过多条 pushurl 的还会更多），按名字合并成
+   一条记录。 */
+function parseRemotes(out) {
+  const list = []
+  const seen = {}
+  const lines = out.split('\n')
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i].replace(/\s+$/, '')
+    if (line.length === 0) continue
+    const isFetch = line.slice(-8) === ' (fetch)'
+    const isPush = line.slice(-7) === ' (push)'
+    if (isFetch !== true && isPush !== true) continue
+    const rest = line.slice(0, line.length - (isFetch ? 8 : 7))
+    const gap = rest.search(/\s/)
+    if (gap < 0) continue
+    const name = rest.slice(0, gap)
+    const url = rest.slice(gap).replace(/^\s+/, '')
+    if (name.length === 0 || url.length === 0) continue
+    let row = seen[name]
+    if (row === undefined) {
+      row = { name: name, url: '', pushUrl: '' }
+      seen[name] = row
+      list.push(row)
+    }
+    if (isFetch) row.url = url
+    else row.pushUrl = url
+  }
+  /* push 与 fetch 相同时 pushUrl 给空串：界面只在真的不同时才多说一句。 */
+  for (let i = 0; i < list.length; i += 1) {
+    if (list[i].pushUrl === list[i].url) list[i].pushUrl = ''
+  }
+  return list
+}
+
+async function remotesSnapshot(input) {
+  const target = repoFrom(input, null)
+  if (target === undefined) {
+    return { ok: true, repo: null, insideRepo: false, remotes: [] }
+  }
+  const listed = await gitC(argsAt(input, target), ['remote', '-v'], null, {})
+  if (listed.exitCode !== 0) {
+    /* 不在仓库里不算失败，算「这一组没得管」（ok:true + insideRepo:false + 空表）：
+       gitC 固定 LC_ALL=C（10-shell.js），git 那句 not a git repository 认得出来。
+       其余的失败（沙箱拒了、git 缺了）才照失败答，原话带给界面。 */
+    if (listed.stderr.indexOf('not a git repository') >= 0) {
+      return { ok: true, repo: target, insideRepo: false, remotes: [] }
+    }
+    return { ok: false, repo: target, insideRepo: false, error: 'remote-failed', stderr: listed.stderr, stdout: listed.stdout, noGit: gitMissing(listed) }
+  }
+  return { ok: true, repo: target, insideRepo: true, remotes: parseRemotes(listed.stdout) }
+}
+
+/* 远端名与地址即将成为一条 git 命令的参数。argv 是数组、不过 shell（panelMutate），
+   切不开命令；要挡的是 git 自己会误读的形状 —— 控制字符与前导 -（cleanIdentValue
+   的同一套规矩，见本文件上面），上限分别放宽到远端名与 URL 该有的长度。名字另外拒
+   一切空白：它要进 config 当节名（remote.<name>.*），git 自己也不收带空白的名字。 */
+function cleanRemoteName(value) {
+  const raw = isStr(value) ? value : ''
+  const trimmed = raw.trim().slice(0, 300)
+  if (trimmed.length === 0) return ''
+  if (/[\u0000-\u001f\u007f]/.test(trimmed)) return null
+  if (/\s/.test(trimmed)) return null
+  if (trimmed.charAt(0) === '-') return null
+  return trimmed
+}
+
+function cleanRemoteUrl(value) {
+  const raw = isStr(value) ? value : ''
+  const trimmed = raw.trim().slice(0, 2000)
+  if (trimmed.length === 0) return ''
+  if (/[\u0000-\u001f\u007f]/.test(trimmed)) return null
+  if (trimmed.charAt(0) === '-') return null
+  return trimmed
+}
+
+/* 一次一个动作：add = git remote add，setUrl = git remote set-url，remove = git
+   remote remove。三条都走 panelMutate —— 远端表是仓库自己的东西，fetch / pull /
+   push 都吃它，与 stage / pull 同一条变更路（进「命令」页、失效读缓存），这点和
+   project-config-save「不进命令页」不同。写完读回来而不是回显输入（projectConfigSave
+   的同一个原则）：git 怎么记下的、此刻清单里还有谁，以答复里那份重新读出的表为准。 */
+async function remotesSave(input) {
+  const target = repoFrom(input, null)
+  if (target === undefined) {
+    return { ok: false, error: 'no-path', stderr: '不知道该改哪个仓库：这个会话没有工作区，也没有指定路径' }
+  }
+  const shape = function (key) {
+    const one = input != null && input[key] != null && typeof input[key] === 'object' && !Array.isArray(input[key]) ? input[key] : null
+    return one
+  }
+  const add = shape('add')
+  const setUrl = shape('setUrl')
+  const remove = shape('remove')
+  const given = (add !== null ? 1 : 0) + (setUrl !== null ? 1 : 0) + (remove !== null ? 1 : 0)
+  if (given !== 1) {
+    return { ok: false, error: 'bad-request', stderr: 'add / setUrl / remove 三个动作一次只能给一个' }
+  }
+  const kind = add !== null ? 'add' : (setUrl !== null ? 'setUrl' : 'remove')
+  const holder = kind === 'add' ? add : (kind === 'setUrl' ? setUrl : remove)
+  const name = cleanRemoteName(holder != null ? holder.name : '')
+  if (name === null) {
+    return { ok: false, error: 'bad-value', stderr: '远端名不能有空白和控制字符，也不能以 - 开头' }
+  }
+  if (name.length === 0) {
+    return { ok: false, error: 'bad-value', stderr: '远端名不能为空' }
+  }
+  let url = ''
+  if (kind !== 'remove') {
+    const clean = cleanRemoteUrl(holder != null ? holder.url : '')
+    if (clean === null) {
+      return { ok: false, error: 'bad-value', stderr: '地址不能有控制字符，也不能以 - 开头' }
+    }
+    if (clean.length === 0) {
+      return { ok: false, error: 'bad-value', stderr: '地址不能为空' }
+    }
+    url = clean
+  }
+  const argv = kind === 'add' ? ['remote', 'add', name, url]
+    : (kind === 'setUrl' ? ['remote', 'set-url', name, url] : ['remote', 'remove', name])
+  const said = kind === 'add' ? '添加远端' : (kind === 'setUrl' ? '修改远端地址' : '删除远端')
+  const done = await panelMutate(input, argv, { desc: said })
+  if (done.ok !== true) return done
+  const after = await remotesSnapshot({ repo: target, sessionId: input != null ? input.sessionId : undefined })
+  return Object.assign({ action: kind, name: name }, after)
+}

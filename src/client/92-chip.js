@@ -225,13 +225,20 @@
               }
               const detail = commandDetail(result)
               /* 「还没有上游」是一次能自己走完的失败：设置里开了自动设上游、refs 又
-                 答得出 remote 与当前分支时，按 runOp 的老路补一次 setUpstream:true 的
-                 推送；问过这一次就到头。 */
+                 答得出当前分支时，按面板 runOp 的老路补一次 setUpstream:true 的
+                 推送；问过这一次就到头。远端不取 refs.remote[0]：ctxPush 的同一条
+                 规则（guessPushRemote，origin 优先 → 唯一远端 → 都不满足就不猜）
+                 —— 多远端而无 origin 时补推会把上游绑到读者没挑过的远端，原因
+                 写进「最近一次自动推送」，不推。 */
               if (setUpstream !== true && pluginConfig.pushSetUpstream === true && detail.indexOf('upstream') >= 0) {
                 callHost('git/refs', payload).then(function (refs) {
-                  const remote = refs != null && refs.ok === true && Array.isArray(refs.remote) && refs.remote.length > 0 ? text(refs.remote[0].name) : ''
+                  const remote = guessPushRemote(refs)
                   const branch = refs != null && refs.ok === true && Array.isArray(refs.current) && refs.current.length > 0 ? text(refs.current[0]) : ''
-                  if (remote.length === 0 || branch.length === 0) { noted(false, detail); return }
+                  if (remote.length === 0) {
+                    noted(false, '没有自动设上游：仓库有多个远端且没有 origin —— 在面板里用分支行右键「修改跟踪分支…」指定后再推')
+                    return
+                  }
+                  if (branch.length === 0) { noted(false, detail); return }
                   tryPush(Object.assign({}, payload, { setUpstream: true, remote: remote, branch: branch }), true)
                 }, function (refsFailure) { noted(false, failureText(refsFailure)) })
                 return

@@ -236,6 +236,10 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-set-check{display:inline-flex;align-items:center;gap:6px;font-size:12px;cursor:pointer}
 .dsh-git-set-hint{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary)}
 .dsh-git-set-group{margin-top:6px;padding-top:10px;border-top:1px solid var(--dsw-alias-border-l1);font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary)}
+/* 「远端」组的地址文本（80-panel.js GitConfigPane）：URL 常比名字长得多，吃掉行内
+    剩余宽度、可断行 —— 断不开的长地址会把行尾那排按钮挤出面板。等宽字体与分支名、
+    提交哈希同一习惯。 */
+.dsh-git-set-url{flex:1 1 200px;min-width:0;word-break:break-all;font-family:ui-monospace,monospace}
 .dsh-git-hidden{display:none}
 /* Only while the header's switcher is open: the card hangs off the header and
    must be allowed past the panel's own clip, or a panel dragged short enough

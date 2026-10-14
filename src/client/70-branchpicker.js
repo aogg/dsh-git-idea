@@ -70,6 +70,29 @@
       return fallback
     }
 
+    /* ── 推送兜底时替读者挑远端 ──
+
+       「这个分支还没有上游」要把推送做完（push -u）就得有个远端名。挑的规矩只有
+       一条，右键推送（80-panel.js 的 ctxPush）先立的，三处兜底共用：有 origin 用
+       origin；仓库恰好只有一个远端就用它；两个都不满足 —— 不猜。多远端而没有
+       origin 时替读者挑一个，等于把「推到哪儿」从他手里拿走，-u 还会把上游一并绑
+       到他没想过的远端，所以返回空串，由调用方把「修改跟踪分支…」这条出路说出来。
+
+       data 是 git/refs 的答复；读不到（null / ok:false / 表是空的不是）同样返回
+       空串 —— 手头没数据时猜，比不猜更糟。 */
+    function guessPushRemote(data) {
+      if (data == null || data.ok !== true || !Array.isArray(data.remote)) return ''
+      const names = []
+      for (let i = 0; i < data.remote.length; i += 1) {
+        const name = data.remote[i] != null ? text(data.remote[i].name) : ''
+        if (name.length > 0) names.push(name)
+      }
+      for (let i = 0; i < names.length; i += 1) {
+        if (names[i] === 'origin') return 'origin'
+      }
+      return names.length === 1 ? names[0] : ''
+    }
+
     /* ── 远端分支选择列表（pull 绑定上游的第二步）──
 
        两处用它：面板的覆盖层（80-panel.js）与分支卡内嵌。数据现读 git/refs ——

@@ -76,6 +76,14 @@ onRpc('git/project-config', function (input) { return projectConfigSnapshot(inpu
 
 onRpc('git/project-config-save', function (input) { return projectConfigSave(input) })
 
+/* 远端（74-identity.js）：读一条 `git remote -v`；写是 add / set-url / remove 三条
+    子命令，走 panelMutate 进「命令」页 —— 远端表是 fetch / pull / push 都吃的仓库
+    自家数据，与 stage / pull 同一条变更路（project-config-save「设置类动作不进命令
+    页」是另一性质）。成功答复带重新读出的远端表（读回来而不是回显输入）。 */
+onRpc('git/remotes', function (input) { return remotesSnapshot(input) })
+
+onRpc('git/remotes-save', function (input) { return remotesSave(input) })
+
 /* Never cached: its whole purpose is to observe change. `paths` narrows the
    working-tree half of the signature to what is on screen — see watchCommand for
    what a whole-tree status costs on a slow mount. */
