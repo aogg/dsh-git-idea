@@ -2301,6 +2301,11 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-set-check{display:inline-flex;align-items:center;gap:6px;font-size:12px;cursor:pointer}
 .dsh-git-set-hint{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary)}
 .dsh-git-set-group{margin-top:6px;padding-top:10px;border-top:1px solid var(--dsw-alias-border-l1);font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary)}
+/* 「远端」组头（80-panel.js GitConfigPane）：组头原本只是一行字，现在行尾要挂一枚
+    ⟳ 图标键（同款 .dsh-git-tool-ico 画法，这一页不新造按钮长相）—— 标题吃剩余
+    宽度、键贴行尾；26px 的方块比组头字高一点，align-items 居中后仍是同一行。 */
+.dsh-git-set-group-row{display:flex;align-items:center;gap:8px}
+.dsh-git-set-group-row > span{flex:1 1 auto;min-width:0}
 /* 「远端」组的地址文本（80-panel.js GitConfigPane）：URL 常比名字长得多，吃掉行内
     剩余宽度、可断行 —— 断不开的长地址会把行尾那排按钮挤出面板。等宽字体与分支名、
     提交哈希同一习惯。 */
@@ -7619,6 +7624,9 @@ textarea.dsh-git-input{resize:vertical}
       const [editRemote, setEditRemote] = React.useState(null)
       const [editUrl, setEditUrl] = React.useState('')
       const [armRemote, setArmRemote] = React.useState('')
+      /* 组头 ⟳ 那次重读的在飞标记，与 busy 分开：busy 说的是「在写 .git/config」，
+         重读只是读，不该顺带把整页输入禁掉 —— 禁的只有这枚键自己。 */
+      const [remoteRefreshing, setRemoteRefreshing] = React.useState(false)
       const [busy, setBusy] = React.useState(false)
       const [note, setNote] = React.useState('')
       const [problem, setProblem] = React.useState('')
@@ -7643,18 +7651,33 @@ textarea.dsh-git-input{resize:vertical}
 
       /* 远端清单单独读（Host 每次都真跑 git remote -v，不进缓存）：失败落在这个组
          自己的说明行里（「远端列表没读出来：…」），不去占页面底部那条 problem ——
-         那条是身份/换行符写失败的位置，两组互不遮蔽。 */
+         那条是身份/换行符写失败的位置，两组互不遮蔽。读法只有一份（readRemotes），
+         挂载与组头的 ⟳（remoteReload）各自发起：只读且幂等，答复按落地顺序覆盖，
+         正好是「最后一次读算数」。 */
+      const readRemotes = function (land) {
+        callHost('git/remotes', request()).then(land, function (failure) {
+          land({ ok: false, stderr: failureText(failure) })
+        })
+      }
       React.useEffect(function () {
         let alive = true
-        callHost('git/remotes', request()).then(function (data) {
-          if (alive !== true) return
-          setRemoteSnap(data)
-        }, function (failure) {
-          if (alive !== true) return
-          setRemoteSnap({ ok: false, stderr: failureText(failure) })
-        })
+        readRemotes(function (snap) { if (alive === true) setRemoteSnap(snap) })
         return function () { alive = false }
       }, [sessionId])
+
+      /* 组头的 ⟳：只重发上面那次读。busy 期间禁用 —— 同一页可能正在写 .git/config，
+         先让写动作把话（note/problem）说完。它自己也不碰那两条：note/problem 是写
+         动作的位置，一次刷新不该把它们抹掉。宿主还是旧版时它会一直失败（10-state.js
+         的 HOST_NOT_READY 重试耗尽原话，见 remoteHostOld），灰字说明行把出路讲清；
+         哪天重启了 DSH 加载了新版宿主，点它就能把清单读出来。 */
+      const remoteReload = function () {
+        if (busy === true || remoteRefreshing === true) return
+        setRemoteRefreshing(true)
+        readRemotes(function (snap) {
+          setRemoteSnap(snap)
+          setRemoteRefreshing(false)
+        })
+      }
 
       const configOf = function (key) {
         const one = snap != null && snap.config != null ? snap.config[key] : null
@@ -7892,16 +7915,27 @@ textarea.dsh-git-input{resize:vertical}
                 }, '删除'))))
       }
 
-      /* 组头的说明行：读不出来、不是仓库、空表、正常，四种各说各的话。 */
+      /* 宿主还没加载新版的那一种失败：git/remotes 这条路由在旧宿主进程里不存在，
+         callHost 把 10-state.js HOST_NOT_READY 重试耗尽后的原话（is not registered
+         原样带回）抛到这里 —— 它与这个仓库、与 git 都无关，甩原文只会把读者引去查
+         仓库；照上面 insideRepo:false 那行灰字的说法讲出路（重启 DSH 加载新版宿主，
+         回来点组头的 ⟳ 重读一次），不带错误原文。其余失败（git 真的失败了）照旧
+         给原文。 */
+      const remoteHostOld = remoteSnap != null && remoteSnap.ok !== true
+        && text(remoteSnap.stderr).indexOf(HOST_NOT_READY) >= 0
+
+      /* 组头的说明行：宿主旧版、读不出来、不是仓库、空表、正常，各说各的话。 */
       const remoteGroupHint = remoteSnap == null
         ? '正在读取…'
-        : (remoteSnap.ok !== true
-          ? '远端列表没读出来：' + (text(remoteSnap.stderr).length > 0 ? text(remoteSnap.stderr) : 'git remote -v 失败')
-          : (remoteInside !== true
-            ? '这个会话的工作区还不是 Git 仓库 —— 远端加不了也改不了'
-            : (remotes.length === 0
-              ? '还没有配置任何远端 —— 添加一个之后，fetch / pull / push 与分支树的「远程」分组才有内容'
-              : 'fetch / pull / push 推向谁、分支树「远程」分组里有什么，都跟着这份清单走；名字之外每个远端还各有 push 地址')))
+        : (remoteHostOld === true
+          ? '远端管理要在重启 DSH、加载新版宿主之后才生效 —— 现在运行的宿主进程还是旧版，读不到远端清单；重启 DSH 后回到这里点组头的 ⟳ 重读一次'
+          : (remoteSnap.ok !== true
+            ? '远端列表没读出来：' + (text(remoteSnap.stderr).length > 0 ? text(remoteSnap.stderr) : 'git remote -v 失败')
+            : (remoteInside !== true
+              ? '这个会话的工作区还不是 Git 仓库 —— 远端加不了也改不了'
+              : (remotes.length === 0
+                ? '还没有配置任何远端 —— 添加一个之后，fetch / pull / push 与分支树的「远程」分组才有内容'
+                : 'fetch / pull / push 推向谁、分支树「远程」分组里有什么，都跟着这份清单走；名字之外每个远端还各有 push 地址'))))
 
       const rNameDraft = rName.trim()
       const rUrlDraft = rUrl.trim()
@@ -7993,7 +8027,18 @@ textarea.dsh-git-input{resize:vertical}
           h('span', { className: 'dsh-git-set-hint' },
             localKeys.length > 0 ? '本项目覆盖了：' + localKeys.join('、') : '本项目没有覆盖任何键')),
 
-        h('div', { className: 'dsh-git-set-group' }, '远端（这个仓库的 remote 清单）'),
+        /* 组头行：标题吃剩余宽度，⟳ 贴行尾。不管读数成没成、宿主新不新版它都在 ——
+           宿主旧版时它就是重启 DSH 之后的那把重试钥匙（remoteReload）；busy 或自己
+           在飞时禁用。画法用差异头部同款的图标键（.dsh-git-tool-ico，55-diff.js 的
+           diffIconButton 同一套类），这一页不新造按钮长相。 */
+        h('div', { className: 'dsh-git-set-group dsh-git-set-group-row' },
+          h('span', null, '远端（这个仓库的 remote 清单）'),
+          h('button', {
+            type: 'button', className: 'dsh-git-tool dsh-git-tool-ico',
+            disabled: busy || remoteRefreshing,
+            title: '重新读取远端清单（git remote -v，不进缓存）—— 宿主旧版时报错属预期，重启 DSH 后这里能把清单读出来',
+            onClick: function () { remoteReload() },
+          }, '⟳')),
         h('div', { className: 'dsh-git-set-hint' }, remoteGroupHint),
 
         remoteRows,
