@@ -2128,6 +2128,10 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-set-check{display:inline-flex;align-items:center;gap:6px;font-size:12px;cursor:pointer}
 .dsh-git-set-hint{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary)}
 .dsh-git-set-group{margin-top:6px;padding-top:10px;border-top:1px solid var(--dsw-alias-border-l1);font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary)}
+/* 「远端」组的地址文本（80-panel.js GitConfigPane）：URL 常比名字长得多，吃掉行内
+    剩余宽度、可断行 —— 断不开的长地址会把行尾那排按钮挤出面板。等宽字体与分支名、
+    提交哈希同一习惯。 */
+.dsh-git-set-url{flex:1 1 200px;min-width:0;word-break:break-all;font-family:ui-monospace,monospace}
 .dsh-git-hidden{display:none}
 /* Only while the header's switcher is open: the card hangs off the header and
    must be allowed past the panel's own clip, or a panel dragged short enough
@@ -6051,6 +6055,29 @@ textarea.dsh-git-input{resize:vertical}
       return fallback
     }
 
+    /* ── 推送兜底时替读者挑远端 ──
+
+       「这个分支还没有上游」要把推送做完（push -u）就得有个远端名。挑的规矩只有
+       一条，右键推送（80-panel.js 的 ctxPush）先立的，三处兜底共用：有 origin 用
+       origin；仓库恰好只有一个远端就用它；两个都不满足 —— 不猜。多远端而没有
+       origin 时替读者挑一个，等于把「推到哪儿」从他手里拿走，-u 还会把上游一并绑
+       到他没想过的远端，所以返回空串，由调用方把「修改跟踪分支…」这条出路说出来。
+
+       data 是 git/refs 的答复；读不到（null / ok:false / 表是空的不是）同样返回
+       空串 —— 手头没数据时猜，比不猜更糟。 */
+    function guessPushRemote(data) {
+      if (data == null || data.ok !== true || !Array.isArray(data.remote)) return ''
+      const names = []
+      for (let i = 0; i < data.remote.length; i += 1) {
+        const name = data.remote[i] != null ? text(data.remote[i].name) : ''
+        if (name.length > 0) names.push(name)
+      }
+      for (let i = 0; i < names.length; i += 1) {
+        if (names[i] === 'origin') return 'origin'
+      }
+      return names.length === 1 ? names[0] : ''
+    }
+
     /* ── 远端分支选择列表（pull 绑定上游的第二步）──
 
        两处用它：面板的覆盖层（80-panel.js）与分支卡内嵌。数据现读 git/refs ——
@@ -7363,8 +7390,9 @@ textarea.dsh-git-input{resize:vertical}
 
        设置页那份提交身份管的是机器（`--global` 可选），而面板属于会话、常常开在别
        的仓库上 —— 这里要的是另一件事：只看、只写**当前这个项目**的 .git/config。
-       git 自己管换行符的两个键（core.autocrlf / core.eol）是同一性质，三个分组都在
-       这一页里；样式复用设置页那套 dsh-git-set-*。 */
+       git 自己管换行符的两个键（core.autocrlf / core.eol）是同一性质；远端表也长在
+       .git/config 里，只是它走 git remote 自己的三条子命令（74-identity.js）。四个
+       分组都在这一页里；样式复用设置页那套 dsh-git-set-*。 */
 
     /* ── 右键菜单（ContextMenu）：提交行与分支行共用的一块浮层 ──
 
@@ -7408,6 +7436,16 @@ textarea.dsh-git-input{resize:vertical}
       const [snap, setSnap] = React.useState(null)
       const [name, setName] = React.useState('')
       const [email, setEmail] = React.useState('')
+      /* 「远端」组的另一份读数（git/remotes）：身份/换行符的快照里没有它，单独问。
+         rName/rUrl 是添加区的两个草稿框；editRemote/editUrl 是行内「改地址」的那一格
+         （null = 没有行在编辑）；armRemote 记着删除按钮已上膛的那一行（再点一次才是
+         git remote remove）。 */
+      const [remoteSnap, setRemoteSnap] = React.useState(null)
+      const [rName, setRName] = React.useState('')
+      const [rUrl, setRUrl] = React.useState('')
+      const [editRemote, setEditRemote] = React.useState(null)
+      const [editUrl, setEditUrl] = React.useState('')
+      const [armRemote, setArmRemote] = React.useState('')
       const [busy, setBusy] = React.useState(false)
       const [note, setNote] = React.useState('')
       const [problem, setProblem] = React.useState('')
@@ -7426,6 +7464,21 @@ textarea.dsh-git-input{resize:vertical}
         }, function (failure) {
           if (alive !== true) return
           setProblem(failureText(failure))
+        })
+        return function () { alive = false }
+      }, [sessionId])
+
+      /* 远端清单单独读（Host 每次都真跑 git remote -v，不进缓存）：失败落在这个组
+         自己的说明行里（「远端列表没读出来：…」），不去占页面底部那条 problem ——
+         那条是身份/换行符写失败的位置，两组互不遮蔽。 */
+      React.useEffect(function () {
+        let alive = true
+        callHost('git/remotes', request()).then(function (data) {
+          if (alive !== true) return
+          setRemoteSnap(data)
+        }, function (failure) {
+          if (alive !== true) return
+          setRemoteSnap({ ok: false, stderr: failureText(failure) })
         })
         return function () { alive = false }
       }, [sessionId])
@@ -7531,6 +7584,155 @@ textarea.dsh-git-input{resize:vertical}
               : '未配置')))
       }
 
+      /* ── 「远端」组 ──
+
+         三个动作各是各的 payload（Host 一次只收一个：add / setUrl / remove）。成功
+         答复带的是 Host 重新读出的远端表 —— 照它重画（读回来而不是回显输入，与身份
+         /换行符两组同一条原则），提示行的地址也从表里取（git 此刻的答案，不是打进去
+         的那串）；然后 props.onChanged() 把面板整体刷新一遍 —— 分支树的「远程」分组
+         跟着变。 */
+      const remoteInside = remoteSnap != null && remoteSnap.ok === true && remoteSnap.insideRepo === true
+      const remotes = remoteSnap != null && remoteSnap.ok === true && Array.isArray(remoteSnap.remotes) ? remoteSnap.remotes : []
+      const remoteUrlNow = function (result, name) {
+        const list = result != null && Array.isArray(result.remotes) ? result.remotes : []
+        for (let i = 0; i < list.length; i += 1) {
+          if (list[i] != null && text(list[i].name) === name) return text(list[i].url)
+        }
+        return ''
+      }
+      const runRemote = function (payload, onOk) {
+        if (busy) return
+        setBusy(true)
+        setNote('')
+        setProblem('')
+        const body = request()
+        Object.assign(body, payload)
+        callHost('git/remotes-save', body).then(function (result) {
+          setBusy(false)
+          if (result == null || result.ok !== true) {
+            setProblem(commandDetail(result) || '远端操作失败')
+            return
+          }
+          setRemoteSnap(result)
+          setEditRemote(null)
+          setEditUrl('')
+          setArmRemote('')
+          if (typeof onOk === 'function') onOk(result)
+          if (typeof props.onChanged === 'function') props.onChanged()
+        }, function (failure) {
+          setBusy(false)
+          setProblem(failureText(failure))
+        })
+      }
+      const remoteAdd = function () {
+        const wanted = { name: rName.trim(), url: rUrl.trim() }
+        if (wanted.name.length === 0 || wanted.url.length === 0) return
+        runRemote({ add: wanted }, function (result) {
+          setRName('')
+          setRUrl('')
+          /* 可连续添加：框一清就能添下一个；提示行带上 git 记下的地址。 */
+          const now = remoteUrlNow(result, wanted.name)
+          setNote('已添加远端 ' + wanted.name + (now.length > 0 ? ' → ' + now : ''))
+        })
+      }
+      const remoteSetUrl = function (name) {
+        const wanted = editUrl.trim()
+        if (name.length === 0 || wanted.length === 0) return
+        runRemote({ setUrl: { name: name, url: wanted } }, function (result) {
+          const now = remoteUrlNow(result, name)
+          setNote('已把远端 ' + name + ' 的地址改为 ' + (now.length > 0 ? now : wanted))
+        })
+      }
+      const remoteRemove = function (name) {
+        if (name.length === 0) return
+        runRemote({ remove: { name: name } }, function () {
+          setNote('已删除远端 ' + name)
+        })
+      }
+      const remoteEditStart = function (name, url) {
+        setArmRemote('')
+        setEditRemote(name)
+        setEditUrl(url)
+      }
+      const remoteEditStop = function () {
+        setEditRemote(null)
+        setEditUrl('')
+      }
+
+      /* 远端每一行的画法：名字 + fetch 地址（push 不同才一并显示）。改地址是行内
+         编辑（回车保存、Esc 退出，不弹层 —— 这一页没有弹层的先例）；删除两段式
+         确认，第二次点才是 git remote remove（78-actions.js 删快捷命令同款 arm）。
+         不是仓库时全部按钮禁用，说明行解释为什么。 */
+      const remoteRows = []
+      for (let i = 0; i < remotes.length; i += 1) {
+        const one = remotes[i]
+        const remoteName = one != null ? text(one.name) : ''
+        if (remoteName.length === 0) continue
+        const fetchUrl = one != null ? text(one.url) : ''
+        const pushUrl = one != null ? text(one.pushUrl) : ''
+        const editing = editRemote === remoteName
+        remoteRows.push(h('div', { className: 'dsh-git-set-row', key: remoteName },
+          h('span', { className: 'dsh-git-set-label', title: remoteName }, remoteName),
+          editing
+            ? h('input', {
+                className: 'dsh-git-input dsh-git-set-input', autoFocus: true,
+                placeholder: '新地址（URL）', value: editUrl, disabled: busy,
+                onChange: function (event) { setEditUrl(event.target.value) },
+                onKeyDown: function (event) {
+                  if (event.key === 'Enter') remoteSetUrl(remoteName)
+                  if (event.key === 'Escape') remoteEditStop()
+                },
+              })
+            : h('span', { className: 'dsh-git-set-hint dsh-git-set-url', title: fetchUrl },
+                fetchUrl.length > 0 ? fetchUrl + (pushUrl.length > 0 ? '（push：' + pushUrl + '）' : '') : '（没有地址）'),
+          editing
+            ? h('button', {
+                key: 'save', type: 'button', className: 'dsh-git-btn dsh-git-primary',
+                disabled: busy || editUrl.trim().length === 0,
+                title: 'git remote set-url ' + remoteName + ' <地址>',
+                onClick: function () { remoteSetUrl(remoteName) },
+              }, '保存')
+            : h('button', {
+                key: 'edit', type: 'button', className: 'dsh-git-btn',
+                disabled: busy || remoteInside !== true,
+                title: '改这个远端的地址（git remote set-url）',
+                onClick: function () { remoteEditStart(remoteName, fetchUrl) },
+              }, '改地址'),
+          editing
+            ? h('button', {
+                key: 'cancel', type: 'button', className: 'dsh-git-btn',
+                disabled: busy,
+                onClick: function () { remoteEditStop() },
+              }, '取消')
+            : (armRemote === remoteName
+              ? h('button', {
+                  key: 'del', type: 'button', className: 'dsh-git-btn dsh-git-danger',
+                  disabled: busy || remoteInside !== true,
+                  title: '再点一次确认删除（git remote remove ' + remoteName + '）',
+                  onClick: function () { remoteRemove(remoteName) },
+                }, '确认删除')
+              : h('button', {
+                  key: 'del', type: 'button', className: 'dsh-git-btn',
+                  disabled: busy || remoteInside !== true,
+                  title: '删除这个远端（git remote remove ' + remoteName + '）—— 删除前会先确认一次',
+                  onClick: function () { remoteEditStop(); setArmRemote(remoteName) },
+                }, '删除'))))
+      }
+
+      /* 组头的说明行：读不出来、不是仓库、空表、正常，四种各说各的话。 */
+      const remoteGroupHint = remoteSnap == null
+        ? '正在读取…'
+        : (remoteSnap.ok !== true
+          ? '远端列表没读出来：' + (text(remoteSnap.stderr).length > 0 ? text(remoteSnap.stderr) : 'git remote -v 失败')
+          : (remoteInside !== true
+            ? '这个会话的工作区还不是 Git 仓库 —— 远端加不了也改不了'
+            : (remotes.length === 0
+              ? '还没有配置任何远端 —— 添加一个之后，fetch / pull / push 与分支树的「远程」分组才有内容'
+              : 'fetch / pull / push 推向谁、分支树「远程」分组里有什么，都跟着这份清单走；名字之外每个远端还各有 push 地址')))
+
+      const rNameDraft = rName.trim()
+      const rUrlDraft = rUrl.trim()
+
       const sessionHint = props.sessionAware === true
         ? '会话跑完那一刻自动做一次 ⟳ 级别的整棵树刷新：chip 的分支名/改动数、变更/历史页跟着更新，命令页若开着也重读 —— 刚被会话新建的文件只有全树读能看见，这正是它该刷的时机。'
         : '当前环境不支持会话状态监听（bridge 版没有会话状态的 props），这两条开关不起作用。'
@@ -7617,6 +7819,37 @@ textarea.dsh-git-input{resize:vertical}
           }, '清掉本项目覆盖，用回全局'),
           h('span', { className: 'dsh-git-set-hint' },
             localKeys.length > 0 ? '本项目覆盖了：' + localKeys.join('、') : '本项目没有覆盖任何键')),
+
+        h('div', { className: 'dsh-git-set-group' }, '远端（这个仓库的 remote 清单）'),
+        h('div', { className: 'dsh-git-set-hint' }, remoteGroupHint),
+
+        remoteRows,
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '新远端'),
+          h('input', {
+            className: 'dsh-git-input dsh-git-set-input',
+            placeholder: '名字（如 origin / upstream）',
+            value: rName,
+            disabled: busy || remoteInside !== true,
+            onChange: function (event) { setRName(event.target.value) },
+            onKeyDown: function (event) { if (event.key === 'Enter') remoteAdd() },
+          }),
+          h('input', {
+            className: 'dsh-git-input dsh-git-set-input',
+            placeholder: '地址（https://… 或 git@…）',
+            value: rUrl,
+            disabled: busy || remoteInside !== true,
+            onChange: function (event) { setRUrl(event.target.value) },
+            onKeyDown: function (event) { if (event.key === 'Enter') remoteAdd() },
+          }),
+          h('button', {
+            type: 'button', className: 'dsh-git-btn dsh-git-primary',
+            disabled: busy || remoteInside !== true || rNameDraft.length === 0 || rUrlDraft.length === 0,
+            title: 'git remote add <名字> <地址>；成功后框清空，可以接着添下一个',
+            onClick: function () { remoteAdd() },
+          }, '添加远端'),
+          h('span', { className: 'dsh-git-set-hint' }, '名字不能有空白；地址删除后就没了，git 不会替你记住。')),
 
         h('div', { className: 'dsh-git-set-group' }, '换行符（git 自己的换行配置）'),
         h('div', { className: 'dsh-git-set-hint' },
@@ -8230,9 +8463,12 @@ textarea.dsh-git-input{resize:vertical}
           if (method === 'git/push' && failureText(failure).indexOf('upstream') >= 0) {
             /* 「这个分支还没有上游」是一次可以自己走完的失败：设置里开了这一条时，
                就把横幅本来要问的那一步直接做掉（同一个请求，带上 setUpstream）。问过
-               的那一次不再自动重试 —— 它要是也失败，横幅照旧出现，读者还有得按。 */
+               的那一次不再自动重试 —— 它要是也失败，横幅照旧出现，读者还有得按。
+               远端不取 refs.remote[0]：ctxPush 的同一条规则（guessPushRemote，origin
+               优先 → 唯一远端 → 都不满足就不猜）—— 多远端而无 origin 的仓库里，
+               瞎猜会把 -u 绑到一个读者没挑过的远端；这时不自动补推，横幅照旧出现。 */
             const retry = payload == null || payload.setUpstream !== true
-            const remote = refs != null && refs.ok === true && refs.remote.length > 0 ? refs.remote[0].name : ''
+            const remote = guessPushRemote(refs)
             if (plugin.pushSetUpstream === true && retry && remote.length > 0 && currentName.length > 0) {
               runOp('git/push', { setUpstream: true, remote: remote, branch: currentName })
               return
@@ -9726,17 +9962,27 @@ textarea.dsh-git-input{resize:vertical}
           : tool('seq-abort', '中止', '放弃本次' + seqLabel,
               function () { setArmed('abort') }, { disabled: busy }))
 
-      const upstreamHint = needsUpstream && refs != null && refs.ok === true && refs.remote.length > 0
-        ? h('div', { className: 'dsh-git-prompt' },
-            h('span', { key: 'l', className: 'dsh-git-hint' }, '这个分支还没有上游'),
-            h('button', {
-              key: 'u', type: 'button', className: 'dsh-git-btn dsh-git-primary', disabled: busy,
-              onClick: function () {
-                runOp('git/push', { setUpstream: true, remote: refs.remote[0].name, branch: currentName })
-              },
-            }, '推送并设为上游'),
-            h('button', { key: 'n', type: 'button', className: 'dsh-git-btn', onClick: function () { setNeedsUpstream(false) } }, '忽略'))
-        : null
+      /* 「推送并设为上游」的横幅。远端不取 refs.remote[0]：ctxPush 的同一条规则
+         （guessPushRemote）—— origin 优先 → 仓库唯一远端 → 都不满足就不渲染自动推
+         的按钮，横幅还在（「忽略」），话换成 ctxPush 那句：替读者挑一个远端并 -u
+         绑上去，赌错的成本是上游指向一个他没想过的远端，出路是右键「修改跟踪分支…」
+         自己指定（选择层按远端分组，多远端都能挑）。 */
+      const upstreamBanner = needsUpstream === true && refs != null && refs.ok === true
+        && Array.isArray(refs.remote) && refs.remote.length > 0
+      const upstreamGuess = upstreamBanner ? guessPushRemote(refs) : ''
+      const upstreamHint = upstreamBanner !== true ? null : h('div', { className: 'dsh-git-prompt' },
+        h('span', { key: 'l', className: 'dsh-git-hint' },
+          upstreamGuess.length > 0
+            ? '这个分支还没有上游'
+            : '该分支没有上游，仓库有多个远端 —— 请先用分支行右键「修改跟踪分支…」指定远端'),
+        upstreamGuess.length > 0 ? h('button', {
+          key: 'u', type: 'button', className: 'dsh-git-btn dsh-git-primary', disabled: busy,
+          title: 'git push -u ' + upstreamGuess + ' ' + currentName,
+          onClick: function () {
+            runOp('git/push', { setUpstream: true, remote: upstreamGuess, branch: currentName })
+          },
+        }, '推送并设为上游（' + upstreamGuess + '）') : null,
+        h('button', { key: 'n', type: 'button', className: 'dsh-git-btn', onClick: function () { setNeedsUpstream(false) } }, '忽略'))
 
       const shownRef = allRefs ? '' : (activeRef.length > 0 ? activeRef : (graph != null && graph.ok === true ? text(graph.ref) : ''))
       const effectiveSelection = selectedKey !== null ? selectedKey : shownRef
@@ -9789,9 +10035,10 @@ textarea.dsh-git-input{resize:vertical}
                 title: '这个项目执行过的 git 命令（来自 DSH 会话记录）',
                 onClick: function () { setTab('cmdlog'); setDiffTarget(null); setMergeTarget(null) } }, '命令'),
               /* 配置页只关于本项目：会话完成后的刷新/推送、只写 --local 的提交身份、
-                 git 自己的两个换行键。设置页管机器与插件，这一页管眼前这个仓库。 */
+                 git 自己的两个换行键、远端清单。设置页管机器与插件，这一页管眼前
+                 这个仓库。 */
               h('button', { type: 'button', className: 'dsh-git-tab' + (tab === 'config' ? ' dsh-git-tab-on' : ''),
-                title: '本项目：会话完成后自动刷新/推送、提交身份与换行符（只写这个项目的 .git/config）',
+                title: '本项目：会话完成后自动刷新/推送、提交身份、换行符与远端（远端可添加/改地址/删除）',
                 onClick: function () { setTab('config'); setDiffTarget(null); setMergeTarget(null) } }, '配置')),
         needsSetup ? null : syncGroup,
         needsSetup ? null : branchChip,
@@ -10005,7 +10252,13 @@ textarea.dsh-git-input{resize:vertical}
           onReload: function () { readCmdLog(freshAt, cmdLogBox.opens) },
         })
       } else if (tab === 'config') {
-        body = h(GitConfigPane, { sessionId: sessionId, sessionAware: props.sessionAware === true })
+        /* 远端表一变就当作仓库动过一次：分支树的「远程」分组、顶栏 ↑ 的数都从
+           refs 来（Host 那边 panelMutate 已失效读缓存），bump 走 ⟳ 同一条读路
+           把它们刷新。 */
+        body = h(GitConfigPane, {
+          sessionId: sessionId, sessionAware: props.sessionAware === true,
+          onChanged: function () { bump() },
+        })
       } else {
         body = h('div', { className: 'dsh-git-body' },
           h('div', { className: 'dsh-git-left' },
@@ -11033,13 +11286,20 @@ textarea.dsh-git-input{resize:vertical}
               }
               const detail = commandDetail(result)
               /* 「还没有上游」是一次能自己走完的失败：设置里开了自动设上游、refs 又
-                 答得出 remote 与当前分支时，按 runOp 的老路补一次 setUpstream:true 的
-                 推送；问过这一次就到头。 */
+                 答得出当前分支时，按面板 runOp 的老路补一次 setUpstream:true 的
+                 推送；问过这一次就到头。远端不取 refs.remote[0]：ctxPush 的同一条
+                 规则（guessPushRemote，origin 优先 → 唯一远端 → 都不满足就不猜）
+                 —— 多远端而无 origin 时补推会把上游绑到读者没挑过的远端，原因
+                 写进「最近一次自动推送」，不推。 */
               if (setUpstream !== true && pluginConfig.pushSetUpstream === true && detail.indexOf('upstream') >= 0) {
                 callHost('git/refs', payload).then(function (refs) {
-                  const remote = refs != null && refs.ok === true && Array.isArray(refs.remote) && refs.remote.length > 0 ? text(refs.remote[0].name) : ''
+                  const remote = guessPushRemote(refs)
                   const branch = refs != null && refs.ok === true && Array.isArray(refs.current) && refs.current.length > 0 ? text(refs.current[0]) : ''
-                  if (remote.length === 0 || branch.length === 0) { noted(false, detail); return }
+                  if (remote.length === 0) {
+                    noted(false, '没有自动设上游：仓库有多个远端且没有 origin —— 在面板里用分支行右键「修改跟踪分支…」指定后再推')
+                    return
+                  }
+                  if (branch.length === 0) { noted(false, detail); return }
                   tryPush(Object.assign({}, payload, { setUpstream: true, remote: remote, branch: branch }), true)
                 }, function (refsFailure) { noted(false, failureText(refsFailure)) })
                 return
