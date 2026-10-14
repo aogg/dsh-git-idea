@@ -14,6 +14,8 @@
 | 依赖 | DSH `>=0.1.5-rc.1`（`engines.dsh`，只声明最低版本）；`@deepseek-ai/cordis ^4.0.2`（peer） |
 | 仓库 | <https://github.com/mays-hi/dsh-git-idea> |
 
+各功能的完整清单见 [功能列表](./功能列表.md)。
+
 ---
 
 ## 安装
