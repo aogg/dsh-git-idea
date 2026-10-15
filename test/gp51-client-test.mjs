@@ -253,7 +253,6 @@ new Function('ctx', 'React', 'host', 'styles', 'console', fs.readFileSync(proces
 
 const chip = registered.find((r) => r.options.id === 'dsh-git-idea-chip').component
 const popover = registered.find((r) => r.options.id === 'dsh-git-idea-panel').component
-const section = registered.find((r) => r.options.id === 'dsh-git-idea').component
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms || 10))
 const popTree = (l) => renderUntilStable(makeElement(popover, { sessionId: 's-1' }), l || 'pop')
@@ -270,6 +269,29 @@ async function openSwitcher() {
   chipBtn.props.onClick()
   await wait(10)
   return await settle()
+}
+/* 面板的「配置」页分两档作用域（80-panel.js）：先点开面板，再点「配置」页签；
+   scope === 'global' 时接着点「全局配置」。原先挂在 DSH 设置面板里的那一页
+   （设置 → dsh-git-idea配置）2026-10 起就是这里的全局档。
+
+   每回都 fibers.clear() 后重新挂载：设置页时代「换个 label 就是新 fiber」的干净
+   状态语义，搬进面板后由这一句来保 —— fiber 一律走 openPanel 的 'pop'，参数里的
+   label 只留给渲染 trace。 */
+async function openConfig(scope, label) {
+  fibers.clear()
+  const open = await openPanel()
+  const tabBtn = buttons(open).find((b) => textOf(b) === '配置')
+  if (tabBtn === undefined) throw new Error('openConfig: 配置 tab not found')
+  tabBtn.props.onClick()
+  let t = await settle('pop')
+  const want = scope === 'global' ? '全局配置' : '项目配置'
+  const wantBtn = buttons(t).find((b) => textOf(b) === want)
+  if (wantBtn === undefined) throw new Error('openConfig: ' + want + ' tab not found')
+  if (String(wantBtn.props.className).indexOf('dsh-git-cview-on') < 0) {
+    wantBtn.props.onClick()
+    t = await settle('pop')
+  }
+  return t
 }
 
 const ok = (label, value) => console.log('  ' + (value ? '✓' : '✗') + ' ' + label + (value ? '' : '   ← 不符合预期'))
@@ -528,7 +550,7 @@ tree = await settle()
 mark = pullCalls.length
 cardGlyph(tree, '↓').props.onClick({ stopEvent: function () {} })
 tree = await settle()
-ok('卡里的 pull 先问了一次 refs（这份列表不含与本地同名的远端行，判断不了）',
+ok('卡里的 pull 先问了一次 refs（绑定谁以 refs 的远端表为准，不用卡片那份列表猜）',
   callsOf(mark, 'git/refs').length >= 1)
 ok('有同名 → git/pull 带 setUpstream，卡上留下「已绑定上游 origin/main 并拉取」',
   pullCalls.length === mark + 1 && pullCalls[pullCalls.length - 1].setUpstream != null

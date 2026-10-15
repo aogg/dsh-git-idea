@@ -111,9 +111,13 @@ function trackCounts(raw) {
    mistaken switch.
 
    Local and remote heads come from the same for-each-ref, so grouping them costs
-   nothing extra. A remote branch that already has a local branch of the same
-   name is dropped: the local row already names it as its upstream, and two rows
-   that both mean "dev" would be one row too many.
+   nothing extra. Every remote branch is kept, including the ones a local branch
+   already shadows: with two remotes (origin/main and upstream/main beside a
+   local main) dropping the shadowed rows emptied the switcher's remote section
+   down to nothing, and a row that only exists on one remote is exactly the row
+   worth showing. Same-named branches from different remotes stay distinct —
+   each row carries its remote name and its full short ref, and the switcher
+   keys on that pair.
 
    Two processes, once per repository per invalidation: the list, and rev-parse
    for @{-1}, which exits 128 (not a failure worth reporting) in a repository
@@ -128,7 +132,6 @@ async function readBranches(input, repo) {
   }
   const branches = []
   const remoteRows = []
-  const localNames = []
   let current = ''
   const rows = listed.stdout.split('\n')
   for (let i = 0; i < rows.length; i += 1) {
@@ -158,7 +161,6 @@ async function readBranches(input, repo) {
     }
     if (full.indexOf('refs/heads/') === 0) {
       if (isCurrent) current = short
-      localNames.push(short)
       branches.push(entry)
     } else if (full.indexOf('refs/remotes/') === 0) {
       const slash = short.indexOf('/')
@@ -171,10 +173,6 @@ async function readBranches(input, repo) {
         ahead: 0, behind: 0,
       })
     }
-  }
-  const remotes = []
-  for (let i = 0; i < remoteRows.length; i += 1) {
-    if (localNames.indexOf(remoteRows[i].name) < 0) remotes.push(remoteRows[i])
   }
   const prev = await git(args, ['rev-parse', '--abbrev-ref', '@{-1}'], null, {})
   const previous = prev.exitCode === 0 ? prev.stdout.trim() : ''
@@ -189,7 +187,7 @@ async function readBranches(input, repo) {
        直接失败（"You do not have the initial commit yet"），所以那张卡片上「先暂存
        再切（切完自动恢复）」这句承诺在这里兑现不了。 */
     unborn: unborn.length > 0,
-    branches: branches, remotes: remotes,
+    branches: branches, remotes: remoteRows,
   }
 }
 

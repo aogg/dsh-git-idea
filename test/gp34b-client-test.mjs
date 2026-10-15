@@ -148,7 +148,8 @@ async function renderUntilStable(element, label) {
 const calls = []
 const nowSec = Math.floor(Date.now() / 1000)
 const OK_PANEL = { ok: true, repo: '/tmp/ws', branch: 'main', detached: false, upstream: 'origin/main', ahead: 2, behind: 1, sequencer: null, staged: [], unstaged: [], untracked: [], unmerged: [] }
-const branchesReply = {
+/* let 而不是 const：多远端那一节要换成两远端 + 同名分支的答复，完了换回来 */
+let branchesReply = {
   ok: true, repo: '/tmp/ws', current: 'main', previous: 'solo',
   branches: [
     { name: 'main', current: true, committedAt: nowSec - 5, upstream: 'origin/main', track: '=', ahead: 2, behind: 1, head: 'aaa', subject: 'tip main' },
@@ -194,7 +195,6 @@ new Function('ctx', 'React', 'host', 'styles', 'console', fs.readFileSync(proces
 
 const chip = registered.find((r) => r.options.id === 'dsh-git-idea-chip').component
 const popover = registered.find((r) => r.options.id === 'dsh-git-idea-panel').component
-const section = registered.find((r) => r.options.id === 'dsh-git-idea').component
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms || 10))
 const popTree = (l) => renderUntilStable(makeElement(popover, { sessionId: 's-1' }), l || 'pop')
@@ -578,11 +578,106 @@ calls.length = 0
 checkoutReply = { ok: true, repo: '/tmp/ws', stashed: false, dirty: 0, popConflict: false, stdout: '', stderr: '', exitCode: 0 }
 buttons(remoteActs).find((b) => textOf(b) === '检出为本地分支').props.onClick({ stopPropagation() {} })
 await wait(15)
-ok('用短名切换（DWIM 建本地）', calls.some((c) => c.method === 'git/checkout' && c.args.name === 'remote-only'))
+ok('用完整远端分支名显式检出（asNewLocal，不再走 DWIM 短名）',
+  calls.some((c) => c.method === 'git/checkout' && c.args.name === 'origin/remote-only' && c.args.asNewLocal === true))
 
 console.log('')
-console.log('== 设置页里能清掉这些记忆 ==')
-const settings = await renderUntilStable(makeElement(section, { close: () => {} }), 'settings')
+console.log('== 多远端：按远端分组、同名分支两行都在 ==')
+/* 两个远端（origin / upstream）各有一条 notes，本地没有同名 —— 两行都得在，
+   而且是两行不同的行：key 带远端名，悬停子菜单、回车、收藏互不串位。本地
+   已有 mirror 时，origin/mirror 与 upstream/mirror 照样显示（不再被剔除），
+   点它们不发请求，先被指到「本地」组那一行。 */
+branchesReply = {
+  ok: true, repo: '/tmp/ws', current: 'main', previous: '',
+  branches: [
+    { name: 'main', current: true, committedAt: nowSec - 5, upstream: 'origin/main', track: '=', ahead: 0, behind: 0, head: 'aaa', subject: 'tip main' },
+    { name: 'mirror', current: false, committedAt: nowSec - 70, upstream: '', track: '', ahead: 0, behind: 0, head: 'bbb', subject: 'local mirror' },
+  ],
+  remotes: [
+    { name: 'notes', remote: 'origin', ref: 'origin/notes', committedAt: nowSec - 61, head: 'ccc', subject: 'origin notes' },
+    { name: 'notes', remote: 'upstream', ref: 'upstream/notes', committedAt: nowSec - 62, head: 'ddd', subject: 'upstream notes' },
+    { name: 'mirror', remote: 'origin', ref: 'origin/mirror', committedAt: nowSec - 63, head: 'eee', subject: 'origin mirror' },
+    { name: 'mirror', remote: 'upstream', ref: 'upstream/mirror', committedAt: nowSec - 64, head: 'fff', subject: 'upstream mirror' },
+  ],
+}
+let tm = await openSwitcher()
+const groupTexts = groups(tm).map(textOf)
+console.log('  分组:', JSON.stringify(groupTexts))
+ok('远端按名字各成一组（origin 优先）',
+  groupTexts.some((x) => x.indexOf('远端 · origin') >= 0) && groupTexts.some((x) => x.indexOf('远端 · upstream') >= 0))
+/* mini-React 的 memo 行不带元素 key，行的身份改从「行尾的远端小字 + 行为」断言：
+   两行 notes 各自写着 origin / upstream，点 upstream 那一行发出的就是
+   upstream/notes 的显式检出 —— 串了行这条会先红。 */
+const notesRows = branchRows(tm).filter((r) => textOf(r).indexOf('notes') >= 0)
+const originNotesRow = notesRows.find((r) => textOf(r).indexOf('origin') >= 0)
+const upstreamNotesRow = notesRows.find((r) => textOf(r).indexOf('upstream') >= 0)
+const mirrorRemoteRows = branchRows(tm).filter((r) => textOf(r).indexOf('mirror') >= 0
+  && (textOf(r).indexOf('origin') >= 0 || textOf(r).indexOf('upstream') >= 0))
+ok('notes 在两个远端各一行（同名不并成一行）', notesRows.length === 2 && originNotesRow !== undefined && upstreamNotesRow !== undefined)
+ok('两行的行尾小字各写各的远端', originNotesRow !== upstreamNotesRow
+  && textOf(originNotesRow).indexOf('upstream') < 0 && textOf(upstreamNotesRow).indexOf('origin') < 0)
+ok('本地已有 mirror 的远端分支也显示（不再剔除）', mirrorRemoteRows.length === 2)
+/* upstream 那一行的子菜单要认得出是 upstream 的（旧的共享 key 会把它认成第一行）。
+   gp34b 的假 timer 不自动走点，所以用 › 按钮钉住 —— 与悬停展开的是同一个 fly。 */
+const upMore = collect(upstreamNotesRow).find((n) => typeof n.props.className === 'string' && n.props.className.indexOf('dsh-git-bs-more') >= 0)
+upMore.props.onClick({ stopPropagation() {} })
+await wait(10)
+tm = await settle('pop')
+const upFly = byClass(tm, 'dsh-git-bs-fly')[0]
+console.log('  upstream 行的子菜单头:', JSON.stringify(textOf(byClass(upFly, 'dsh-git-bs-fly-head')[0])))
+ok('子菜单头带着完整 ref（upstream/notes）', textOf(byClass(upFly, 'dsh-git-bs-fly-head')[0]).indexOf('upstream/notes') >= 0)
+calls.length = 0
+buttons(upFly).find((b) => textOf(b) === '检出为本地分支').props.onClick({ stopPropagation() {} })
+await wait(15)
+ok('检出发的是 upstream/notes 的显式形状',
+  calls.some((c) => c.method === 'git/checkout' && c.args.name === 'upstream/notes' && c.args.asNewLocal === true))
+tm = await settle('pop')
+
+/* 本地同名时的预检：不发请求，把「本地」组那一行指出来。上一次检出成功把卡
+   收了，这里重新开一张、从新渲染里重新拿行。 */
+tm = await openSwitcher()
+calls.length = 0
+const mirrorRemoteRows2 = branchRows(tm).filter((r) => textOf(r).indexOf('mirror') >= 0
+  && (textOf(r).indexOf('origin') >= 0 || textOf(r).indexOf('upstream') >= 0))
+const mirrorOriginRow = mirrorRemoteRows2.find((r) => textOf(r).indexOf('origin') >= 0)
+mirrorOriginRow.props.onClick({ stopPropagation() {} })
+await wait(15)
+tm = await settle('pop')
+ok('本地已有同名分支：不发检出请求', calls.every((c) => c.method !== 'git/checkout'))
+ok('并且说清「本地」组里那一行就是它', textOf(tm).indexOf('本地已经有同名分支 mirror') >= 0)
+
+/* 搜索认完整 ref：搜 upstream 只剩 upstream 组里的行 */
+byClass(tm, 'dsh-git-bs-search')[0].props.onChange({ target: { value: 'upstream' } })
+await wait(10)
+tm = await settle('pop')
+const searchedRows = branchRows(tm).filter((r) => textOf(r).indexOf('notes') >= 0)
+ok('搜索匹配完整名：搜 upstream 只剩 upstream 的 notes',
+  searchedRows.length === 1 && textOf(searchedRows[0]).indexOf('upstream') >= 0 && textOf(searchedRows[0]).indexOf('origin') < 0)
+byClass(tm, 'dsh-git-bs-search')[0].props.onChange({ target: { value: '' } })
+await wait(10)
+branchesReply = {
+  ok: true, repo: '/tmp/ws', current: 'main', previous: 'solo',
+  branches: [
+    { name: 'main', current: true, committedAt: nowSec - 5, upstream: 'origin/main', track: '=', ahead: 2, behind: 1, head: 'aaa', subject: 'tip main' },
+    { name: 'solo', current: false, committedAt: nowSec - 3600, upstream: '', track: '', ahead: 0, behind: 0, head: 'bbb', subject: 'solo tip' },
+    { name: 'feature/one', current: false, committedAt: nowSec - 90000, upstream: 'origin/feature/one', track: '>', ahead: 1, behind: 0, head: 'ccc', subject: 'one tip' },
+    { name: 'zeta', current: false, committedAt: nowSec - 9000, upstream: '', track: '', ahead: 0, behind: 0, head: 'ddd', subject: 'z' },
+  ],
+  remotes: [{ name: 'remote-only', remote: 'origin', ref: 'origin/remote-only', committedAt: nowSec - 500, head: 'eee', subject: 'r' }],
+}
+await settle('pop')
+
+console.log('')
+console.log('== 配置页的全局档里能清掉这些记忆 ==')
+/* 设置页（DSH 设置面板里的 dsh-git-idea配置）搬进了面板「配置」页的全局档 ——
+   这里从面板走同一条路：开面板 → 配置页签 → 全局配置。fiber 全程留在 openPanel
+   用的 'pop' 上，页内的重渲染走 settle。 */
+fibers.clear()
+const cfgOpen = await openPanel()
+buttons(cfgOpen).find((b) => textOf(b) === '配置').props.onClick()
+let settings = await settle('pop')
+buttons(settings).find((b) => textOf(b) === '全局配置').props.onClick()
+settings = await settle('pop')
 const clear = buttons(settings).find((b) => textOf(b).indexOf('清除') >= 0)
 ok('有清除按钮', clear !== undefined)
 clear.props.onClick()
@@ -591,17 +686,17 @@ ok('最近使用被清空', store['dsh.git-idea.mru'] === '[]')
 ok('收藏被清空', store['dsh.git-idea.stars'] === '[]')
 
 console.log('')
-console.log('== 设置页的文本框也有快捷清除 ==')
+console.log('== 全局档的文本框也有快捷清除 ==')
 const initWrap = byClass(settings, 'dsh-git-clearable-set')[0]
 ok('初始化分支那一栏是「可清除」的框', initWrap !== undefined)
 byClass(settings, 'dsh-git-set-input')[0].props.onChange({ target: { value: 'trunk' } })
 await wait(10)
-const settings2 = await renderUntilStable(makeElement(section, { close: () => {} }), 'settings')
+const settings2 = await settle('pop')
 const initX = byClass(byClass(settings2, 'dsh-git-clearable-set')[0], 'dsh-git-clear-x')[0]
 ok('填了内容就出现 ×', initX !== undefined)
 initX.props.onClick({ stopPropagation() {} })
 await wait(10)
-const settings3 = await renderUntilStable(makeElement(section, { close: () => {} }), 'settings')
+const settings3 = await settle('pop')
 ok('点 × 清空了这一栏', byClass(settings3, 'dsh-git-set-input')[0].props.value === '')
 
 console.log('')

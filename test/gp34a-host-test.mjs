@@ -45,13 +45,18 @@ function sh(cmd, cwd) {
 
 const R = '/tmp/gp34-repo'
 const O = '/tmp/gp34-origin'
-await sh(`rm -rf ${R} ${O} && mkdir -p ${R} && cd ${R} && git init -q -b main && git config user.email t@t && git config user.name T && echo a > a.txt && git add -A && git commit -qm first && git clone -q --bare . ${O} && git remote add origin ${O} && git push -q -u origin main`, '/tmp')
+const F = '/tmp/gp34-fork'
+await sh(`rm -rf ${R} ${O} ${F} && mkdir -p ${R} && cd ${R} && git init -q -b main && git config user.email t@t && git config user.name T && echo a > a.txt && git add -A && git commit -qm first && git clone -q --bare . ${O} && git remote add origin ${O} && git push -q -u origin main`, '/tmp')
 const dated = (n, cmd) => `GIT_COMMITTER_DATE="2020-01-0${n}T00:00:00" GIT_AUTHOR_DATE="2020-01-0${n}T00:00:00" ${cmd}`
 await sh(`git checkout -q -b ahead-one && git push -q -u origin ahead-one && ${dated(3, 'git commit -q --allow-empty -m "ahead tip"')}`, R)
 await sh(`git checkout -q -b behind-one && git push -q -u origin behind-one && git checkout -q main && ${dated(4, 'git commit -q --allow-empty -m "main tip"')} && git push -q origin main && git checkout -q behind-one && git reset -q --hard HEAD~1`, R)
 await sh(`git checkout -q main && git checkout -q -b local-only && ${dated(2, 'git commit -q --allow-empty -m "local tip"')}`, R)
 await sh(`git push -q origin main:remote-only`, R)
-await sh(`git fetch -q origin`, R)
+/* 第二个远端 fork：也有一条 main（与本地同名 —— 多远端仓库的常态），外加一条
+   fork 独有的分支。下面的断言守的就是「两个远端的 main 各自成行」。 */
+await sh(`git init -q --bare ${F}`, '/tmp')
+await sh(`git checkout -q main && git remote add fork ${F} && git push -q fork main && git push -q fork main:fork-only`, R)
+await sh(`git fetch -q origin && git fetch -q fork`, R)
 await sh(`git checkout -q main`, R)
 
 const r = await H('git/branches')({ repo: R })
@@ -68,11 +73,13 @@ console.log('  main 与上游一致:', main.ahead === 0 && main.behind === 0 && 
 console.log('  local-only 没有上游:', r.branches.find(b => b.name === 'local-only').upstream === '')
 
 console.log('')
-console.log('=== 远端分支（本地已同名的剔除）===')
+console.log('=== 远端分支（多远端全量在列，同名不剔除）===')
 console.log('  remotes:', JSON.stringify(r.remotes.map(x => x.name + '@' + x.remote)))
 console.log('  有 remote-only:', r.remotes.some(x => x.name === 'remote-only' && x.remote === 'origin'))
-console.log('  没有重复的 main:', r.remotes.every(x => x.name !== 'main'))
-console.log('  没有重复的 ahead-one:', r.remotes.every(x => x.name !== 'ahead-one'))
+console.log('  有 fork-only:', r.remotes.some(x => x.name === 'fork-only' && x.remote === 'fork'))
+console.log('  两个远端的 main 各一行:', r.remotes.filter(x => x.name === 'main').map(x => x.remote).join(','))
+console.log('  ahead-one / behind-one 也在:', r.remotes.some(x => x.name === 'ahead-one' && x.remote === 'origin'), r.remotes.some(x => x.name === 'behind-one' && x.remote === 'origin'))
+console.log('  每行都带完整 ref:', r.remotes.every(x => x.ref === x.remote + '/' + x.name))
 console.log('  current/previous:', r.current, '/', r.previous)
 
 console.log('')
@@ -81,9 +88,9 @@ const sw = await H('git/checkout')({ repo: R, name: 'remote-only' })
 const head = await sh('git rev-parse --abbrev-ref HEAD', R)
 const up = await sh('git rev-parse --abbrev-ref --symbolic-full-name @{u}', R)
 console.log('  ok =', sw.ok, ' 现在在 =', head.out.trim(), ' 上游 =', up.out.trim())
-console.log('  切完列表里 local 有了、remote 里没了:')
+console.log('  切完列表里 local 有了；远端行照旧在（不再因本地同名而隐藏）:')
 const after = await H('git/branches')({ repo: R })
-console.log('   ', after.branches.some(b => b.name === 'remote-only'), after.remotes.some(x => x.name === 'remote-only'))
+console.log('   ', after.branches.some(b => b.name === 'remote-only'), after.remotes.some(x => x.name === 'remote-only' && x.remote === 'origin'))
 
 console.log('')
 console.log('=== 排序与字段没坏 ===')

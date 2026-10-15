@@ -253,7 +253,7 @@ tree = await settle()
 mark = pullCalls.length
 cardGlyph(tree, '↓').props.onClick({ stopEvent: function () {} })
 tree = await settle()
-ok('卡里的 pull 先问了一次 refs（这份列表不含与本地同名的远端行，判断不了）',
+ok('卡里的 pull 先问了一次 refs（绑定谁以 refs 的远端表为准，不用卡片那份列表猜）',
   callsOf(mark, 'git/refs').length >= 1)
 ok('有同名 → git/pull 带 setUpstream，卡上留下「已绑定上游 origin/main 并拉取」',
   pullCalls.length === mark + 1 && pullCalls[pullCalls.length - 1].setUpstream != null

@@ -6024,7 +6024,7 @@ textarea.dsh-git-input{resize:vertical}
         title: tip.join('\n'),
         onMouseEnter: function (event) { props.onEnter(props.rowKey, props.at, event) },
         onMouseLeave: function () { props.onLeave() },
-        onClick: function (event) { props.onPick(name, isCurrent, props.rowKey, event) },
+        onClick: function (event) { props.onPick(props.row, isCurrent, props.rowKey, event) },
       },
         /* 行首那一列和面板左栏表达同一件事、用的是同一个记号：当前分支是 ★
            （文本，面板的 HEAD 行就是这个），其余留空。每一行的分支图标都一
@@ -6219,7 +6219,7 @@ textarea.dsh-git-input{resize:vertical}
       const [query, setQuery] = React.useState('')
       const [index, setIndex] = React.useState(0)
       const [stash, setStash] = React.useState(false)
-      const [pending, setPending] = React.useState('')
+      const [pending, setPending] = React.useState(null)
       const [collapsed, setCollapsed] = React.useState({})
       /* The IDEA submenu. `pinned` separates the two ways in: hovering opens it
          and leaving closes it, clicking › keeps it until it is clicked again. */
@@ -6306,7 +6306,7 @@ textarea.dsh-git-input{resize:vertical}
         setBusy(true)
         setError(null)
         setNote(null)
-        setPending('')
+        setPending(null)
         setFly(null)
         /* Said out loud, because the flyout collapsing under the pointer makes
            it look as if the click was never heard. The chips say it too — their
@@ -6339,10 +6339,79 @@ textarea.dsh-git-input{resize:vertical}
             setError(detail.length > 0 ? detail : '切换失败')
             /* Not necessarily a dirty tree — but that is the one cause the user
                can fix from here, and the button explains itself if it does not. */
-            setPending(name)
+            setPending({ name: name, ref: '' })
           }
           bumpData()
         })
+      }
+
+      /* ── 检出远端分支（多远端下的显式形状）──
+
+         远端行的激活（点行 / 回车 / 子菜单「检出为本地分支」）不走 DWIM 的
+         短名切换：两个远端都有同名分支时 git 会以 "'x' is ambiguous" 拒掉，
+         单远端时「建出来的本地分支跟谁」也只是猜。这里把两件事说死 —— 用完整
+         的远端分支名（origin/feat/x）走 Host 的 asNewLocal 形状：
+         `git switch -c feat/x --track origin/feat/x`。本地已有同名分支时不发
+         请求，先把「本地」组里那一行指给读者（与面板树右键签出同一句话）。 */
+      const checkoutRemote = function (row, useStash) {
+        if (busy === true || row == null) return
+        const ref = typeof row.ref === 'string' ? row.ref.trim() : ''
+        const local = typeof row.name === 'string' ? row.name.trim() : ''
+        if (ref.length === 0 || local.length === 0) return
+        if (data != null && Array.isArray(data.branches)) {
+          for (let i = 0; i < data.branches.length; i += 1) {
+            if (data.branches[i] != null && text(data.branches[i].name) === local) {
+              setError('本地已经有同名分支 ' + local + ' —— 「本地」组里的那一行就是它，点它直接切过去')
+              return
+            }
+          }
+        }
+        clearHoverTimer()
+        setBusy(true)
+        setError(null)
+        setNote(null)
+        setPending(null)
+        setFly(null)
+        setNote(useStash === true
+          ? '正在暂存改动，并把 ' + ref + ' 检出为本地分支 ' + local + '…'
+          : '正在把 ' + ref + ' 检出为本地分支 ' + local + '…')
+        setSwitchingTo(local)
+        rpc('git/checkout', request({ name: ref, asNewLocal: true, stash: useStash === true }), '检出失败').then(function (result) {
+          setBusy(false)
+          setSwitchingTo(null)
+          bumpData()
+          if (result.popConflict === true) {
+            setNote('已检出 ' + ref + '，但你的改动恢复时发生冲突，stash 条目还留着（git stash list）。')
+            return
+          }
+          rememberBranch(local)
+          props.onDone()
+        }, function (failure) {
+          const reply = failure.reply
+          const detail = failureText(failure)
+          setBusy(false)
+          setSwitchingTo(null)
+          if (reply != null && reply.stashed === true && reply.restored === true) {
+            setError('检出 ' + ref + ' 失败，你的改动已经放回工作区。' + (detail.length > 0 ? ' ' + detail : ''))
+          } else if (reply != null && reply.stashed === true) {
+            setError('检出 ' + ref + ' 失败，而且改动没能放回工作区 —— 它们在 stash 里，用 git stash list 找回。')
+          } else if (reply != null && reply.error === 'stash-failed') {
+            setError('暂存改动失败：' + (detail.length > 0 ? detail : 'git stash 没能执行'))
+          } else {
+            setError(detail.length > 0 ? detail : '检出失败')
+            setPending({ name: local, ref: ref })
+          }
+          bumpData()
+        })
+      }
+      /* 行激活：远端行走显式检出，本地行走切换。当前分支的行进不到这里 ——
+         它的点按在 onRowClick 里先被钉子菜单拦下了。 */
+      const activate = function (row, useStash) {
+        if (row != null && text(row.remote).length > 0 && typeof row.ref === 'string' && row.ref.length > 0) {
+          checkoutRemote(row, useStash)
+          return
+        }
+        choose(row != null ? text(row.name) : '', useStash)
       }
 
       /* The repository-wide actions live in the same palette, so "fetch" or "push"
@@ -6475,23 +6544,39 @@ textarea.dsh-git-input{resize:vertical}
         if (x === y) return 0
         return x < y ? -1 : 1
       }
+      /* ── 多远端下的行身份 ──
+
+         远端行显示的名字是剥掉远端前缀的那段（origin/feat/x → feat/x），两个
+         远端的同名分支就是两行同名 —— 身份必须落在「远端名 + 分支名」的完整
+         ref 上，不然悬停子菜单认第一行、回车把第二行发成 DWIM 的短名切换，
+         git 会以 "'x' is ambiguous" 拒掉。收藏与搜索也用同一份身份：收藏键是
+         完整 ref（同名分支各收各的），搜索既匹配短名也匹配完整名（搜 origin
+         就只剩 origin 的分支）。 */
+      const starKeyOf = function (row) {
+        if (row != null && typeof row.ref === 'string' && row.ref.length > 0 && text(row.remote).length > 0) return row.ref
+        return row != null ? text(row.name) : ''
+      }
+      const hitRow = function (row) {
+        if (needle.length === 0) return true
+        if (hit(text(row != null ? row.name : ''))) return true
+        return row != null && typeof row.ref === 'string' && hit(row.ref)
+      }
       /* Favourites float to the top of their group and keep the chosen order
          among themselves, the way a starred row does in IDEA. */
       const ordered = function (list) {
         const kept = []
-        for (let i = 0; i < list.length; i += 1) if (hit(text(list[i].name))) kept.push(list[i])
+        for (let i = 0; i < list.length; i += 1) if (hitRow(list[i])) kept.push(list[i])
         kept.sort(branchSort === 'name' ? byName : byDate)
         const starred = []
         const rest = []
         for (let i = 0; i < kept.length; i += 1) {
-          if (starredBranches.indexOf(text(kept[i].name)) >= 0) starred.push(kept[i])
+          if (starredBranches.indexOf(starKeyOf(kept[i])) >= 0) starred.push(kept[i])
           else rest.push(kept[i])
         }
         return starred.concat(rest)
       }
 
       const localRows = ordered(all)
-      const remoteRows = ordered(remoteAll)
       const recentRows = []
       if (needle.length === 0) {
         for (let i = 0; i < recentBranches.length && recentRows.length < MRU_MAX; i += 1) {
@@ -6526,10 +6611,47 @@ textarea.dsh-git-input{resize:vertical}
       const actions = []
       for (let i = 0; i < actionDefs.length; i += 1) if (hit(actionDefs[i].label) || hit(actionDefs[i].short)) actions.push(actionDefs[i])
 
+      /* 「远端」按远端分组：一个远端一组（origin 优先，其余按名字排），组内
+         行的画法不变（短名 + 行尾小字写远端名）。Host 那边每条远端分支都在
+         （不再因本地同名而剔除），这里照收 —— 两个远端的同名分支各自成行，
+         谁也不藏谁。 */
+      const remoteBuckets = {}
+      const remoteNames = []
+      for (let i = 0; i < remoteAll.length; i += 1) {
+        const one = remoteAll[i]
+        const remoteName = one != null ? text(one.remote) : ''
+        if (remoteName.length === 0) continue
+        if (remoteBuckets[remoteName] === undefined) {
+          remoteBuckets[remoteName] = []
+          remoteNames.push(remoteName)
+        }
+        remoteBuckets[remoteName].push(one)
+      }
+      remoteNames.sort(function (a, b) {
+        if (a === 'origin') return -1
+        if (b === 'origin') return 1
+        return a < b ? -1 : (a > b ? 1 : 0)
+      })
+
       const groups = []
       if (recentRows.length > 0) groups.push({ id: 'recent', label: '最近', rows: recentRows, remote: false })
       groups.push({ id: 'local', label: '本地', rows: localRows, remote: false })
-      if (remoteRows.length > 0) groups.push({ id: 'remote', label: '远端', rows: remoteRows, remote: true })
+      for (let i = 0; i < remoteNames.length; i += 1) {
+        const remoteName = remoteNames[i]
+        const remoteGroupRows = ordered(remoteBuckets[remoteName])
+        if (remoteGroupRows.length > 0) {
+          groups.push({ id: 'remote:' + remoteName, label: '远端 · ' + remoteName, remoteName: remoteName, rows: remoteGroupRows, remote: true })
+        }
+      }
+
+      /* 行身份：本地行 l:<名>，远端行 r:<远端>/<名>。远端名进 key 之后，两个
+         远端的同名分支才不会在悬停子菜单、收藏回显与回车里串成一行。 */
+      const rowKeyOf = function (grp, row) {
+        const name = row != null ? text(row.name) : ''
+        return grp != null && grp.remote === true
+          ? 'r:' + text(grp.remoteName) + '/' + name
+          : 'l:' + name
+      }
 
       /* Keyboard order is the visual order: the action rows first, then every
          group's rows, skipping whatever is collapsed. */
@@ -6544,13 +6666,13 @@ textarea.dsh-git-input{resize:vertical}
         if (collapsed[groups[g].id] === true) continue
         for (let i = 0; i < groups[g].rows.length; i += 1) {
           navAt.set(groups[g].rows[i], nav.length)
-          const rowName = text(groups[g].rows[i].name)
           nav.push({
             kind: 'row', row: groups[g].rows[i], remote: groups[g].remote, group: groups[g].id,
             /* The highlight is an index, the list is re-ordered by favourites and
                sort order, and a row that moves takes its index with it. The key is
-               how the panel finds the same row again afterwards. */
-            key: (groups[g].remote === true ? 'r:' : 'l:') + rowName,
+               how the panel finds the same row again afterwards — remote rows
+               carry their remote name in it (rowKeyOf above). */
+            key: rowKeyOf(groups[g], groups[g].rows[i]),
           })
         }
       }
@@ -6573,6 +6695,7 @@ textarea.dsh-git-input{resize:vertical}
       const [live] = React.useState(function () { return {} })
       live.setIndex = setIndex
       live.choose = choose
+      live.activate = activate
       live.rowTop = rowTop
       live.flyOpenSoon = flyOpenSoon
       live.flyCloseSoon = flyCloseSoon
@@ -6585,25 +6708,32 @@ textarea.dsh-git-input{resize:vertical}
         if (live.busy !== true) live.flyOpenSoon(rowKey, live.rowTop(event))
       }, [])
       const onRowLeave = useCallback(function () { live.flyCloseSoon() }, [])
-      const onRowClick = useCallback(function (name, isCurrent, rowKey, event) {
+      const onRowClick = useCallback(function (row, isCurrent, rowKey, event) {
         /* The current branch has nothing to check out, so the row click pins its
            submenu — the touch/keyboard way to the same panel the pointer gets by
            hovering. */
         if (isCurrent === true) { live.flyPin(rowKey, live.rowTop(event)); return }
-        live.choose(name, live.stash)
+        live.activate(row, live.stash)
       }, [])
       const onRowMenu = useCallback(function (rowKey, event) {
         stopEvent(event)
         live.flyPin(rowKey, live.rowTop(event))
       }, [])
 
-      const rowActions = function (name, remote, isCurrent) {
+      /* 子菜单的动作表。row 是整行数据：远端行带着 ref，检出走 activate 的
+         显式形状（git switch -c <名> --track <远端>/<分支>）；本地行的检出、
+         合并、删除仍按短名。 */
+      const rowActions = function (row, remote, isCurrent) {
+        const name = row != null ? text(row.name) : ''
         const items = []
         if (remote === true) {
+          const ref = row != null && typeof row.ref === 'string' ? row.ref : ''
           items.push(h('button', {
             key: 'sw', type: 'button', className: 'dsh-git-bs-fly-item',
-            title: 'git switch ' + name + ' —— 会在本地建一个跟踪分支',
-            onClick: function (event) { stopEvent(event); choose(name, stash) },
+            title: ref.length > 0
+              ? 'git switch -c ' + name + ' --track ' + ref + ' —— 建同名本地分支并跟踪它'
+              : '检出为本地分支（建同名本地分支并跟踪它）',
+            onClick: function (event) { stopEvent(event); activate(row, stash) },
           }, h('span', { key: 'i', className: 'dsh-git-bs-fly-ico' }, h(Icon, { name: 'right', size: 12 })), '检出为本地分支'))
         } else if (isCurrent !== true) {
           items.push(h('button', {
@@ -6648,7 +6778,9 @@ textarea.dsh-git-input{resize:vertical}
       /* 收藏哪一个：列表里当前高亮的那一行。跟着指针/键盘走，所以「不切过去
          也能收藏」这条能力还在，而按钮只有一个。 */
       const picked = nav[index] !== undefined && nav[index].kind === 'row' ? nav[index] : null
-      const pickedName = picked === null ? '' : text(picked.row.name)
+      /* 收藏键与行身份同源：本地行是名字，远端行是完整的 ref —— 两个远端的
+         同名分支各收各的，星标浮组时也不会把另一家的行顶上去。 */
+      const pickedName = picked === null ? '' : starKeyOf(picked.row)
       const pickedStarred = pickedName.length > 0 && starredBranches.indexOf(pickedName) >= 0
       const pickedKey = picked === null ? '' : text(picked.key)
       /* 收藏会把那一行排到最前面，而高亮记的是序号：不按名字重新对一次，收藏完
@@ -6735,11 +6867,12 @@ textarea.dsh-git-input{resize:vertical}
         }
         for (let r = 0; r < group.rows.length; r += 1) {
           const row = group.rows[r]
-          const name = text(row.name)
-          const rowKey = (group.remote === true ? 'r:' : 'l:') + name
+          const rowKey = rowKeyOf(group, row)
           const at = navAt.has(row) ? navAt.get(row) : -1
           items.push(h(BranchRowMemo, {
-            key: 'r:' + (group.remote === true ? text(row.remote) + '/' : '') + name,
+            /* 元素 key 与行身份同一份（远端行带远端名）：两个远端的同名分支是
+               两行，React 的对账、悬停高亮与回车都各认各的。 */
+            key: rowKey,
             row: row,
             rowKey: rowKey,
             where: group.remote === true ? text(row.remote) : '',
@@ -6759,11 +6892,15 @@ textarea.dsh-git-input{resize:vertical}
       if (data == null) items.push(h('div', { key: 'wait', className: 'dsh-git-bs-empty' }, '正在读取分支…'))
 
       const foot = []
-      if (pending.length > 0) {
+      if (pending !== null) {
         foot.push(h('button', {
           key: 'rescue', type: 'button', className: 'dsh-git-bs-rescue',
-          onClick: function () { setStash(true); choose(pending, true) },
-        }, '先暂存本地改动，再切到 ' + pending))
+          onClick: function () {
+            setStash(true)
+            if (text(pending.ref).length > 0) checkoutRemote(pending, true)
+            else choose(pending.name, true)
+          },
+        }, '先暂存本地改动，再切到 ' + pending.name))
       }
       /* 还没有第一个提交的仓库里 `git stash` 必然失败（"You do not have the initial
          commit yet"），所以这一个勾选框不能出现 —— 「切完自动恢复」在这里是一句
@@ -6793,15 +6930,21 @@ textarea.dsh-git-input{resize:vertical}
         h('button', { key: 'no', type: 'button', className: 'dsh-git-btn', onClick: function () { setCreating(null) } }, '取消'))
 
       /* The submenu element: which branch it belongs to is read back from the
-         key the row handed us, so nothing has to be kept in sync by hand. */
+         key the row handed us, so nothing has to be kept in sync by hand. The
+         key is rebuilt by the same rowKeyOf the rows use — remote rows carry
+         their remote in it, so two same-named branches from two remotes stay
+         two rows with two submenus. */
       let flyNode = null
       if (fly !== null) {
         let foundRow = null
         let foundRemote = false
         for (let g = 0; g < groups.length && foundRow === null; g += 1) {
           for (let r = 0; r < groups[g].rows.length; r += 1) {
-            const key = (groups[g].remote === true ? 'r:' : 'l:') + text(groups[g].rows[r].name)
-            if (key === fly.key) { foundRow = groups[g].rows[r]; foundRemote = groups[g].remote === true; break }
+            if (rowKeyOf(groups[g], groups[g].rows[r]) === fly.key) {
+              foundRow = groups[g].rows[r]
+              foundRemote = groups[g].remote === true
+              break
+            }
           }
         }
         if (foundRow !== null) {
@@ -6818,8 +6961,11 @@ textarea.dsh-git-input{resize:vertical}
           },
             h('div', { key: 'h', className: 'dsh-git-bs-fly-head' },
               h('span', { key: 'n', className: 'dsh-git-bs-name' }, flyName),
+              foundRemote === true && typeof foundRow.ref === 'string' && foundRow.ref.length > 0
+                ? h('span', { key: 'w', className: 'dsh-git-bs-up' }, foundRow.ref)
+                : null,
               flyCurrent === true ? h('span', { key: 'c' }, '（当前）') : null),
-            rowActions(flyName, foundRemote, flyCurrent))
+            rowActions(foundRow, foundRemote, flyCurrent))
         }
       }
 
@@ -6835,7 +6981,7 @@ textarea.dsh-git-input{resize:vertical}
           const entry = nav[index]
           if (entry === undefined) return
           if (entry.kind === 'action') entry.def.run()
-          else choose(text(entry.row.name), stash)
+          else activate(entry.row, stash)
         } else if (event.key === 'Tab') {
           event.preventDefault()
           setBranchSort(branchSort === 'name' ? 'recent' : 'name')

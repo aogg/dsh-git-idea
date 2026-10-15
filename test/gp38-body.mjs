@@ -160,10 +160,22 @@ rowEnter(t, 'remote-only', 200)
 fireTimers()
 await wait(10)
 t = await settle('pop')
-console.log('  远端子菜单:', JSON.stringify(flyItems(t)))
+console.log('  远端子菜单:', JSON.stringify(flyItems(t)), ' 头:', JSON.stringify(flyHead(t)))
 ok('远端行给「检出为本地分支」', flyItems(t).indexOf('检出为本地分支') === 0)
 ok('远端行不给删除', flyItems(t).every((i) => i.indexOf('删除') < 0))
 ok('远端行也不给合并', flyItems(t).every((i) => i.indexOf('合并') < 0))
+ok('子菜单头带完整 ref（多远端下认得出是谁家的分支）', flyHead(t).indexOf('origin/remote-only') >= 0)
+/* 检出走显式形状（git switch -c remote-only --track origin/remote-only）：
+   多远端下 DWIM 的短名切换会被 git 以 "'x' is ambiguous" 拒掉。让答复失败一次，
+   卡片才不会在断言前自己收掉。 */
+calls.length = 0
+checkoutReply = { ok: false, repo: '/tmp/ws', stashed: false, dirty: 0, popConflict: false, stdout: '', stderr: "fatal: 'remote-only' is ambiguous", exitCode: 1 }
+buttons(flyPanel(t)).find((b) => textOf(b) === '检出为本地分支').props.onClick({ stopPropagation() {} })
+await wait(15)
+ok('检出发出完整远端分支名 + asNewLocal',
+  calls.some((c) => c.method === 'git/checkout' && c.args.name === 'origin/remote-only' && c.args.asNewLocal === true))
+checkoutReply = { ok: true, repo: '/tmp/ws', stashed: false, dirty: 0, popConflict: false, stdout: '', stderr: '', exitCode: 0 }
+t = await settle('pop')
 
 console.log('')
 console.log('== 当前分支的子菜单 ==')
