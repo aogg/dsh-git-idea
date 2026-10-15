@@ -151,8 +151,8 @@ async function identitySave(input) {
 
 /* ─────────────── 本项目的 git 配置：身份与换行符 ───────────────
 
-   「提交身份」设置页能写 --global（选机器）也能写 --local（选仓库），但面板属于会
-   话、常常在别的仓库上开着；面板的「配置」页要的恰恰是另一件事：**只**管当前这个
+   「提交身份」在配置页有两档：全局档能写 --global（选机器）也能写 --local（选仓
+   库），项目档属于会话、常常开在别的仓库上，要的恰恰是另一件事：**只**管当前这个
    项目 —— 两个身份键之外，git 自己管换行符的两个键（core.autocrlf / core.eol）也
    是同一性质：写进仓库的 .git/config，终端里的 git、IDEA、钩子看到的是同一个答案，
    跟着项目走而不是跟着某台浏览器。
@@ -191,7 +191,7 @@ function parseProjectConfig(out) {
 }
 
 /* 一把问询折成「值 + 来源文件」。没配 = 空串；origin 摘成读者能对上号的路径
-   （originLabel 与设置页 GitIdentityGroup 的 source() 用的是同一套话）。 */
+   （originLabel 与全局配置 GitIdentityGroup 的 source() 用的是同一套话）。 */
 function projectConfigEntry(raw, key) {
   const one = raw != null ? raw[key] : undefined
   return {

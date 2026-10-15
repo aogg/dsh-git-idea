@@ -161,7 +161,7 @@ async function writeConfigFile(raw, args) {
       }
     }
     /* 换了一个 git，所有读的答案都可能跟着变 —— 可能从「读不动这个目录」变成读得动，
-       反过来也一样。缓存不作废的话，读者在设置页里把路径改对了，面板还在拿上一个二进
+       反过来也一样。缓存不作废的话，读者在配置页的全局档里把路径改对了，面板还在拿上一个二进
        制留下的答案说话（这条是 fixture 抓出来的：改完之后同一棵树仍然回答旧的那一份）。 */
     const before = gitExe
     configCache = applyConfig(next)
@@ -183,7 +183,7 @@ async function writeConfigFile(raw, args) {
 
    为什么是独立的 git/draft-read / git/draft-save，而不是让客户端拿着整份配置走
    git/config-save：config-save 是「整份换掉」的写法 —— 客户端每存一次草稿都得
-   先读一遍完整配置、改一个键、再整体写回，读与写之间落进的任何别的键（设置页
+   先读一遍完整配置、改一个键、再整体写回，读与写之间落进的任何别的键（全局配置
    那边正在改的、另一台浏览器刚写的）都会被这一次整体写回悄悄抹掉。草稿的读改写
    放在 Host（readConfigFile 的缓存上只动 drafts 这一片，其余键原样带过去，与
    61-repos.js 的 saveWorkspaceRepo 同一条路），客户端只递「哪个仓库、这条信息」，

@@ -253,7 +253,6 @@ new Function('ctx', 'React', 'host', 'styles', 'console', fs.readFileSync(proces
 
 const chip = registered.find((r) => r.options.id === 'dsh-git-idea-chip').component
 const popover = registered.find((r) => r.options.id === 'dsh-git-idea-panel').component
-const section = registered.find((r) => r.options.id === 'dsh-git-idea').component
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms || 10))
 const popTree = (l) => renderUntilStable(makeElement(popover, { sessionId: 's-1' }), l || 'pop')
@@ -271,13 +270,37 @@ async function openSwitcher() {
   await wait(10)
   return await settle()
 }
+/* 面板的「配置」页分两档作用域（80-panel.js）：先点开面板，再点「配置」页签；
+   scope === 'global' 时接着点「全局配置」。原先挂在 DSH 设置面板里的那一页
+   （设置 → dsh-git-idea配置）2026-10 起就是这里的全局档。
+
+   每回都 fibers.clear() 后重新挂载：设置页时代「换个 label 就是新 fiber」的干净
+   状态语义，搬进面板后由这一句来保 —— fiber 一律走 openPanel 的 'pop'，参数里的
+   label 只留给渲染 trace。 */
+async function openConfig(scope, label) {
+  fibers.clear()
+  const open = await openPanel()
+  const tabBtn = buttons(open).find((b) => textOf(b) === '配置')
+  if (tabBtn === undefined) throw new Error('openConfig: 配置 tab not found')
+  tabBtn.props.onClick()
+  let t = await settle('pop')
+  const want = scope === 'global' ? '全局配置' : '项目配置'
+  const wantBtn = buttons(t).find((b) => textOf(b) === want)
+  if (wantBtn === undefined) throw new Error('openConfig: ' + want + ' tab not found')
+  if (String(wantBtn.props.className).indexOf('dsh-git-cview-on') < 0) {
+    wantBtn.props.onClick()
+    t = await settle('pop')
+  }
+  return t
+}
 
 const ok = (label, value) => console.log('  ' + (value ? '✓' : '✗') + ' ' + label + (value ? '' : '   ← 不符合预期'))
 /* ═══ gp43：机器上的 git，和它在网上做的事 ═══
-   设置页一直只有两样东西：插件自己的两个开关，和本浏览器的外观。而读者真正会去那里
-   找的是另外三件事 —— 我是谁（提交身份）、我用的是哪个 git（装在 PATH 之外时怎么
-   办）、以及 fetch / pull / push 到底带不带那几个参数。这个套件盯的就是这三块，加上
-   它们唯一一处会动手的地方：推送没有上游的分支时，面板会不会自己把那一步走完。
+   配置页的「全局配置」档（原先自己占 DSH 设置面板的一页，2026-10 起搬进面板）一直
+   只有几样东西：插件自己的开关、本浏览器的外观，和读者真正会去那里找的三件事 ——
+   我是谁（提交身份）、我用的是哪个 git（装在 PATH 之外时怎么办）、以及
+   fetch / pull / push 到底带不带那几个参数。这个套件盯的就是这三块，加上它们唯一
+   一处会动手的地方：推送没有上游的分支时，面板会不会自己把那一步走完。
 
    1. 提交身份：此刻生效的那一份（连来源一起）、缺哪一半、预填、写入时带的 scope
    2. 空框不写：`git config user.name ''` 正是那个错误的来路，面板不制造它
@@ -329,7 +352,9 @@ host.call = function (method, args) {
   return baseCall(method, args)
 }
 
-const sectionTree = async function (label) { return await renderUntilStable(makeElement(section, {}), label) }
+/* 全局配置这一档住在面板「配置」页里（80-panel.js 的作用域切换），进页走 harness
+   的 openConfig；label 只留给渲染 trace，fiber 由它统一按 'pop' 管。 */
+const sectionTree = async function (label) { return await openConfig('global', label) }
 /* 去抖的保存靠这个推一下：骨架里的 timer 只被记下来。 */
 const fireTimers = function () {
   timers.filter(function (t) { return t.kind === 'timeout' && t.dead !== true }).forEach(function (t) { t.cb() })
@@ -350,20 +375,20 @@ const effectiveRow = function (t) { return rowTexts(t).filter(function (x) { ret
 /* ── 1. 缺一半的时候说什么 ── */
 
 console.log('')
-console.log('== 设置页 · 提交身份：缺哪一半 ==')
+console.log('== 配置页 · 全局配置 · 提交身份：缺哪一半 ==')
 identityReply = Object.assign({}, identityReply, { needsIdentity: true, nameMissing: true, name: '', email: '', nameOrigin: '', emailOrigin: '', globalName: '', globalEmail: '' })
 let st = await sectionTree('gp43-ident-missing')
 console.log('  缺一半:', JSON.stringify(warnText(st)))
 ok('缺名字时明说原因是它，并且说清后果',
   warnText(st).indexOf('还缺：名字') >= 0 && warnText(st).indexOf('提交会被 git 拒绝') >= 0)
 ok('这一行是警告色', byClass(st, 'dsh-git-warn').length > 0)
-ok('读的时候只给 session id（路径由 Host 从会话解出来，和面板同一条路）',
-  identityCalls.length >= 1 && identityCalls[0].repo === undefined && identityCalls[0].sessionId === undefined)
+ok('读的时候只把 session id 交给 Host（路径由它从会话解出来，仓库路径不归客户端猜）',
+  identityCalls.length >= 1 && identityCalls[0].repo === undefined && identityCalls[0].sessionId === 's-1')
 
 /* ── 2. 有身份时：值 + 来源、预填、写入 ── */
 
 console.log('')
-console.log('== 设置页 · 提交身份：写进去 ==')
+console.log('== 配置页 · 全局配置 · 提交身份：写进去 ==')
 identityReply = {
   ok: true, repo: '/tmp/ws', insideRepo: true,
   name: 'Ada Lovelace', email: 'ada@example.com',
@@ -386,11 +411,13 @@ ok('写入范围默认是这台机器（--global），也就是 git 自己建议
 
 inputFor(st, '邮箱').props.onChange({ target: { value: 'new@example.com' } })
 await wait(5)
-st = await sectionTree('gp43-ident')
+/* 同一次挂载里继续：草稿活在 fiber 上，重新开一页就会把它弄丢 —— 页内的重渲染
+   走 settle（同一 fiber），只有换场景才用 sectionTree 的新挂载。 */
+st = await settle('pop')
 console.log('  改了邮箱，再点写入')
 btnWith(st, '写入 git 配置').props.onClick()
 await wait(20)
-st = await sectionTree('gp43-ident')
+st = await settle('pop')
 console.log('  写出去的:', JSON.stringify(identitySaves[0]))
 ok('点一下就把两个值写出去，scope 是 global',
   identitySaves.length === 1 && identitySaves[0].scope === 'global'
@@ -403,33 +430,33 @@ ok('写完之后页面把结果说出来（写到哪、写了哪两个字段）'
 
 console.log('')
 console.log('== 只对这个仓库 ==')
-/* 设置页是全局的，自己不知道在哪个会话里 —— chip 一直挂在输入框旁，是它把 session
-   id 记下来的。先渲染一次 chip，模拟「读者在会话里开着 GUI」。 */
-await chipTree('gp43-chip')
+/* 面板本来就带着会话：sessionId 是 props 一路递进「全局配置」的提交身份组的，
+   不必再借 chip 的记忆。先开一次新页（重新读身份），再在同一次挂载里切范围。 */
 st = await sectionTree('gp43-ident')
 collect(st).filter(function (n) { return n.type === 'input' && n.props.type === 'radio' })[1].props.onChange()
 await wait(5)
-st = await sectionTree('gp43-ident')
+st = await settle('pop')
 const localBtn = btnWith(st, '写入 git 配置')
 ok('切到「只对这个仓库」之后按钮仍然可按（这个会话有仓库）', localBtn !== undefined && localBtn.props.disabled !== true)
 ok('这一行说得出「这个仓库」到底是哪个', rowTexts(st).join(' | ').indexOf('这个仓库 = /tmp/ws') >= 0)
 localBtn.props.onClick()
 await wait(20)
+st = await settle('pop')
 console.log('  第二次写出去的:', JSON.stringify(identitySaves[1]))
 ok('本地 scope 带着 session id（Host 靠它解出仓库，也靠它选沙箱）',
   identitySaves.length === 2 && identitySaves[1].scope === 'local' && identitySaves[1].sessionId === 's-1')
-ok('落点也换成了这个仓库', rowTexts(await sectionTree('gp43-ident')).join(' | ').indexOf('已写进 /tmp/ws 的 .git/config') >= 0)
+ok('落点也换成了这个仓库', rowTexts(st).join(' | ').indexOf('已写进 /tmp/ws 的 .git/config') >= 0)
 
 /* 不知道是哪个仓库时：那条路要关掉并说清，而不是猜一个路径往里写。 */
 identityReply = Object.assign({}, identityReply, { repo: null, insideRepo: false })
 st = await sectionTree('gp43-ident-nowhere')
 console.log('  不知道仓库时:', JSON.stringify(rowTexts(st).filter(function (x) { return x.indexOf('还不知道') >= 0 })[0] || ''))
-ok('不知道仓库时，页面上写着这件事', rowTexts(st).join(' | ').indexOf('还不知道是哪个会话的仓库') >= 0)
+ok('不知道仓库时，页面上写着这件事', rowTexts(st).join(' | ').indexOf('还解不出仓库路径') >= 0)
 /* 全局那一份仍然可以写（它不需要知道是哪个仓库）；要写本地就没有落点，按钮关掉。 */
 ok('这时候全局那份照旧能写', btnWith(st, '写入 git 配置').props.disabled !== true)
 collect(st).filter(function (n) { return n.type === 'input' && n.props.type === 'radio' })[1].props.onChange()
 await wait(5)
-st = await sectionTree('gp43-ident-nowhere')
+st = await settle('pop')
 ok('选「只对这个仓库」而不知道是哪个仓库时，按钮关掉（不猜一个路径往里写）',
   btnWith(st, '写入 git 配置').props.disabled === true)
 identityReply = Object.assign({}, identityReply, { repo: '/tmp/ws', insideRepo: true })
@@ -437,7 +464,7 @@ identityReply = Object.assign({}, identityReply, { repo: '/tmp/ws', insideRepo: 
 /* ── 4. git 位置 ── */
 
 console.log('')
-console.log('== 设置页 · git 位置 ==')
+console.log('== 配置页 · 全局配置 · git 位置 ==')
 const toolRow = function (t) {
   return rowTexts(t).filter(function (x) {
     return x.indexOf('现在用的是') >= 0 || x.indexOf('不可用') >= 0 || x.indexOf('PATH 上没有 git') >= 0
@@ -482,7 +509,7 @@ ok('结果就显示在下面（写的就是它、版本是新的那个）',
 /* ── 5. 远程同步 ── */
 
 console.log('')
-console.log('== 设置页 · 远程同步 ==')
+console.log('== 配置页 · 全局配置 · 远程同步 ==')
 const boxNamed = function (t, label) {
   const row = setRow(t, label)
   return row === undefined ? undefined : collect(row).filter(function (n) { return n.type === 'input' && n.props.type === 'checkbox' })[0]
@@ -553,7 +580,7 @@ host.call = function (method, args) {
   return panelSaved(method, args)
 }
 /* 面板读的是内存里那份插件配置（usePluginConfig 只从 Host 拉一次），所以要改它得走
-   设置页自己那扇门：勾一下那个开关。这样「设了之后面板怎么做」测的就是真路径，而不是
+   全局配置自己那扇门：勾一下那个开关。这样「设了之后面板怎么做」测的就是真路径，而不是
    测试往内存里塞一个值。 */
 const setPushSetting = async function (on) {
   const t = await sectionTree('gp43-net')
@@ -569,7 +596,14 @@ const setPushSetting = async function (on) {
    就是这么错的）。所以整段都留在 `openPanel` 用的那个 label 上。 */
 const clickPush = async function () {
   const t = await openPanel()
-  const btn = buttons(t).filter(function (b) { return String(b.props.title).indexOf('push：推送当前分支') === 0 })[0]
+  /* 前面的用例把面板留在了「配置」页；横幅画在历史页的正文里 —— 先切回历史再按 ↑。 */
+  const logTab = buttons(t).find(function (b) { return textOf(b) === '历史' })
+  if (logTab !== undefined && String(logTab.props.className).indexOf('dsh-git-tab-on') < 0) {
+    logTab.props.onClick()
+    await wait(10)
+  }
+  const t2 = await settle('pop')
+  const btn = buttons(t2).filter(function (b) { return String(b.props.title).indexOf('push：推送当前分支') === 0 })[0]
   if (btn !== undefined) btn.props.onClick()
   await wait(30)
   return await settle('pop')

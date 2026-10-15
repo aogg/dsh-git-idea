@@ -51,7 +51,7 @@
     }
 
     /* 答复落进两处：这个会话的工作区路径，和那份按工作区记的清单。扫描失败不是
-       错误横幅的事 —— 仓库清单是辅助信息，坏掉它不该坏掉面板（设置页那套 reason
+       错误横幅的事 —— 仓库清单是辅助信息，坏掉它不该坏掉面板（RepoSetup 那套 reason
        的完整句子留给了「仓库本身读不动」这种情况）。 */
     function adoptReposReply(sessionId, data) {
       if (data != null && data.ok === true && text(data.workspace).length > 0) {
@@ -72,7 +72,7 @@
       bumpRepoList()
     }
 
-    /* 面板打开（或设置页挂着）时叫一次。异步、不阻塞首帧：这里只发起，回复通过
+    /* 面板打开时叫一次。异步、不阻塞首帧：这里只发起，回复通过
        signal 让正在渲染的面板重画。失败只落进 phase，不再抛给调用者。
 
        去重按**会话**记（repoScanAsked）：面板重开、切页签都不再扫 —— 「每个工作区
@@ -113,7 +113,7 @@
       if (code === 'missing') return '这个目录不存在：' + path
       if (code === 'not-a-repository') return '这个目录不是 git 仓库（里面没有 .git），没法加进列表'
       if (code === 'absolute path required') return '要填绝对路径（以 / 开头）'
-      if (code === 'no-path') return '这个会话的工作区还没确定，先在设置页里确定路径'
+      if (code === 'no-path') return '这个会话的工作区还没确定，先在面板的仓库说明页里填一个目录'
       if (reply != null && reply.sandboxDenied === true) {
         return '文件沙箱不允许写插件配置，手动仓库暂时存不下来'
       }

@@ -166,8 +166,8 @@
       }, [watched, repoVersion, sessionId, isOpen])
 
       /* 这个页面在哪个会话里 —— chip 一直挂在输入框旁边，所以它是把这件事记下来的
-         那个面（设置页是全局的，自己不知道）。放在 effect 里而不是渲染里：渲染期间
-         通知订阅者就是渲染期间改别人的 state。 */
+         那个面（配置页「全局配置」的提交身份组没有自己的会话，读的就是这份记忆）。
+         放在 effect 里而不是渲染里：渲染期间通知订阅者就是渲染期间改别人的 state。 */
       React.useEffect(function () { rememberSession(sessionId) }, [sessionId])
 
       /* ── 会话状态（有则用之，bridge 版这些 props 不存在）──

@@ -499,11 +499,12 @@
     const useRepoApplied = repoAppliedSignal.use
 
     /* The same answer for the one surface that has no session of its own: the
-       settings page is global, so it cannot name a session — and it must not name
-       a *path* either, because the Host is the one that resolves a session's
-       workspace (see `repoFrom` in the Host half). So what is remembered here is
-       only the id, and the settings page hands that back to the Host: the same
-       resolution, the same sandbox policy, one source of truth. */
+       global half of the config pane reads it when it is rendered outside the
+       panel — and it must not name a *path* either, because the Host is the one
+       that resolves a session's workspace (see `repoFrom` in the Host half). So
+       what is remembered here is only the id, and that surface hands it back to
+       the Host: the same resolution, the same sandbox policy, one source of
+       truth. */
     let lastSessionId = ''
     const lastSessionSignal = createSignal(function () { return lastSessionId })
     const useLastSession = lastSessionSignal.use

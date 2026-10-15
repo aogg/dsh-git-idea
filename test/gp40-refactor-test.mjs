@@ -253,7 +253,6 @@ new Function('ctx', 'React', 'host', 'styles', 'console', fs.readFileSync(proces
 
 const chip = registered.find((r) => r.options.id === 'dsh-git-idea-chip').component
 const popover = registered.find((r) => r.options.id === 'dsh-git-idea-panel').component
-const section = registered.find((r) => r.options.id === 'dsh-git-idea').component
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms || 10))
 const popTree = (l) => renderUntilStable(makeElement(popover, { sessionId: 's-1' }), l || 'pop')
@@ -270,6 +269,29 @@ async function openSwitcher() {
   chipBtn.props.onClick()
   await wait(10)
   return await settle()
+}
+/* 面板的「配置」页分两档作用域（80-panel.js）：先点开面板，再点「配置」页签；
+   scope === 'global' 时接着点「全局配置」。原先挂在 DSH 设置面板里的那一页
+   （设置 → dsh-git-idea配置）2026-10 起就是这里的全局档。
+
+   每回都 fibers.clear() 后重新挂载：设置页时代「换个 label 就是新 fiber」的干净
+   状态语义，搬进面板后由这一句来保 —— fiber 一律走 openPanel 的 'pop'，参数里的
+   label 只留给渲染 trace。 */
+async function openConfig(scope, label) {
+  fibers.clear()
+  const open = await openPanel()
+  const tabBtn = buttons(open).find((b) => textOf(b) === '配置')
+  if (tabBtn === undefined) throw new Error('openConfig: 配置 tab not found')
+  tabBtn.props.onClick()
+  let t = await settle('pop')
+  const want = scope === 'global' ? '全局配置' : '项目配置'
+  const wantBtn = buttons(t).find((b) => textOf(b) === want)
+  if (wantBtn === undefined) throw new Error('openConfig: ' + want + ' tab not found')
+  if (String(wantBtn.props.className).indexOf('dsh-git-cview-on') < 0) {
+    wantBtn.props.onClick()
+    t = await settle('pop')
+  }
+  return t
 }
 
 const ok = (label, value) => console.log('  ' + (value ? '✓' : '✗') + ' ' + label + (value ? '' : '   ← 不符合预期'))
@@ -295,11 +317,11 @@ ok('老 mru 键不再被读取', String(store['dsh.git-idea.mru'] || '').indexOf
 ok('老键没有被改写（也不再被复制）', store['dsh.gitops.mru'] === JSON.stringify(['legacy-branch']))
 ok('新键里的既有内容原样保留', JSON.parse(store['dsh.git-idea.stars'])[0] === 'already-new')
 
-/* 改一个设置：写进的就是新键，而且写的是默认值而不是老键里的 7 秒 */
-const settingsTree = await renderUntilStable(makeElement(section, {}), 'gp40-store')
-/* 第一个勾选框属于「插件配置」（写进 Host 的配置文件），本浏览器的设置从第二个开始。
-   挑最后一个（悬停切换）来拨：它不影响后面的用例，而 watchEnabled 关掉的话
-   整个套件后半段都不会再有轮询了。 */
+/* 改一个设置：写进的就是新键，而且写的是默认值而不是老键里的 7 秒。
+   设置页已经搬进面板「配置」页的「全局配置」档（79-globalconfig.js），这里从
+   面板走同一条路。最后一个勾选框属于「本浏览器」（悬停切换）：拨它不影响后面的
+   用例 —— watchEnabled 关掉的话整个套件后半段都不会再有轮询了，头一个不能碰。 */
+const settingsTree = await openConfig('global', 'gp40-store')
 const localBoxes = inputs(settingsTree).filter((n) => n.props.type === 'checkbox')
 localBoxes[localBoxes.length - 1].props.onChange({ target: { checked: false } })
 await wait(10)
@@ -307,7 +329,7 @@ const savedSettings = JSON.parse(store['dsh.git-idea.settings'])
 ok('设置写进 dsh.git-idea.settings', savedSettings.hoverSwitch === false)
 ok('写进去的是默认值，不是老键里的 7 秒', savedSettings.watchFastSec === 3)
 
-/* 页面拒绝存储时：设置页照样渲染，写入不抛错 */
+/* 页面拒绝存储时：配置页照样渲染，写入不抛错 */
 const realStorage = fakeDoc.defaultView.localStorage
 fakeDoc.defaultView.localStorage = {
   getItem() { throw new Error('storage disabled') },
@@ -315,8 +337,8 @@ fakeDoc.defaultView.localStorage = {
 }
 let refused = false
 try {
-  const tree = await renderUntilStable(makeElement(section, {}), 'gp40-nostore')
-  refused = byClass(tree, 'dsh-git-set').length === 1
+  const tree = await openConfig('global', 'gp40-nostore')
+  refused = byClass(tree, 'dsh-git-global').length === 1
   const check = inputs(tree).find((n) => n.props.type === 'checkbox')
   if (check !== undefined) check.props.onChange({ target: { checked: false } })
   const reset = buttons(tree).find((b) => textOf(b) === '恢复默认尺寸')
@@ -324,8 +346,15 @@ try {
 } catch (failure) {
   refused = false
 }
-ok('存储被拒绝时设置页仍渲染、改写不抛错', refused === true)
+ok('存储被拒绝时配置页仍渲染、改写不抛错', refused === true)
 fakeDoc.defaultView.localStorage = realStorage
+
+/* 后面的用例都在历史页上做：把面板从「配置」页切回去（设置页时代渲染 section
+   不碰面板，面板一直停在历史页）。 */
+const backToLog = await settle('pop')
+const logTabBtn = buttons(backToLog).find((b) => textOf(b) === '历史')
+if (logTabBtn !== undefined) logTabBtn.props.onClick()
+await wait(10)
 
 /* ── 2. 历史列表窗口化 ── */
 
@@ -791,17 +820,33 @@ await openPanel()
 await wait(20)
 await settle()
 
-/* ── 6. 设置页在左栏里的名字 ──
+/* ── 6. 配置页的两档作用域 ──
 
-   图标那一项外壳没提供（注册选项只有 id/order/label），所以不绕路去改它：
-   这里只盯名字 —— 左栏显示的那行文案和页面上自己的标题必须是同一个。 */
+   全局那一页原先自己占 DSH 设置面板的一页（设置 → dsh-git-idea配置），2026-10 起
+   搬进面板「配置」页，与项目配置并排成两档。这里盯这排切换本身：两档的名字、
+   项目档看得到项目特有的「远端」组、点过去全局档换页（全局特有的「git 位置」组
+   出现，项目特有的组不在）。 */
 
 console.log('')
-console.log('== 设置页的名字 ==')
-const sectionReg = registered.find((r) => r.options.id === 'dsh-git-idea')
-ok('左栏里的名字就是页面上那行标题',
-  sectionReg.options.label === 'dsh-git-idea配置'
-  && textOf(byClass(await renderUntilStable(makeElement(section, {}), 'gp40-label'), 'dsh-git-set-h')[0]) === 'dsh-git-idea配置')
+console.log('== 配置页的两档作用域 ==')
+const projectTree = await openConfig('project', 'gp40-scopes')
+const cfgTabs = byClass(projectTree, 'dsh-git-cfg-tabs')[0]
+ok('作用域切换就是「项目配置 / 全局配置」两档',
+  cfgTabs !== undefined && buttons(cfgTabs).map(textOf).join('/') === '项目配置/全局配置')
+const projectOn = buttons(cfgTabs).find((b) => textOf(b) === '项目配置')
+const projectGroups = byClass(projectTree, 'dsh-git-set-group').map(textOf)
+ok('停在项目配置：项目特有的「远端」组在',
+  String(projectOn.props.className).indexOf('dsh-git-cview-on') >= 0
+  && projectGroups.some((t) => t.indexOf('远端（这个仓库的 remote 清单）') >= 0)
+  && projectGroups.every((t) => t.indexOf('git 位置') < 0))
+const globalTree = await openConfig('global', 'gp40-scopes')
+const globalTabs = byClass(globalTree, 'dsh-git-cfg-tabs')[0]
+const globalOn = buttons(globalTabs).find((b) => textOf(b) === '全局配置')
+const globalGroups = byClass(globalTree, 'dsh-git-set-group').map(textOf)
+ok('点到全局配置：全局特有的「git 位置」组在，项目特有的「远端」组不在',
+  String(globalOn.props.className).indexOf('dsh-git-cview-on') >= 0
+  && globalGroups.some((t) => t.indexOf('git 位置') >= 0)
+  && globalGroups.every((t) => t.indexOf('远端（这个仓库的 remote 清单）') < 0))
 
 /* ── 7. 工作区不是仓库时：只认这个目录 ── */
 

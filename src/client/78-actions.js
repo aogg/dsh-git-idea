@@ -3,8 +3,8 @@
         提交操作（拣选/还原/标签/分支）住进了提交行的右键菜单，分支管理（复制/新建/
         删除）住进了分支行的右键菜单 —— 提交历史的工具条上只剩这一个开菜单的按钮
         （按钮本体在 80-panel.js 的 toolbar 里）。快捷命令的编辑器是同一个组件的两处
-        使用：面板里的覆盖层，和设置页（90-settings.js）里的管理组 —— 片段共享作用域，
-        直接引用，不需要再开一条通道。
+        使用：历史页 ⚡ 菜单里的覆盖层，和配置页「全局配置」里的管理组（79-globalconfig.js）
+        —— 片段共享作用域，直接引用，不需要再开一条通道。
 
         按钮的类名刻意不用 dsh-git-tool：样式照着它画（见 46-css.js），但那个类是
         「作用于选中提交的工具」（拣选/还原/标签/分支——它们现在住在提交行的右键
@@ -292,9 +292,10 @@
 
     /* ── 快捷命令编辑器：列表态 + 编辑态 ──
 
-       面板（覆盖层）与设置页（管理组）共用。配置读写走 usePluginConfig / savePluginConfig
-       —— 那一层已经有 400ms 去抖和 Host 的归一化，这里不另开炉灶。上限 50 条：超出的那次
-       新增不保存，并把原因说在编辑器里（归一化里的截断只是兜底）。 */
+       历史页 ⚡ 菜单（覆盖层）与配置页「全局配置」（管理组）共用。配置读写走
+       usePluginConfig / savePluginConfig —— 那一层已经有 400ms 去抖和 Host 的归一化，
+       这里不另开炉灶。上限 50 条：超出的那次新增不保存，并把原因说在编辑器里
+       （归一化里的截断只是兜底）。 */
     function QuickCommandsEditor(props) {
       const plugin = usePluginConfig()
       const commands = plugin != null && Array.isArray(plugin.quickCommands) ? plugin.quickCommands : []
@@ -466,5 +467,5 @@
         rows,
         h('div', { key: 'a', className: 'dsh-git-qc-actions' },
           h('button', { key: 'new', type: 'button', className: 'dsh-git-btn', onClick: startNew }, '新增'),
-          h('span', { key: 'n', className: 'dsh-git-menu-dim' }, '保存在插件配置里，面板和设置页共用同一份')))
+          h('span', { key: 'n', className: 'dsh-git-menu-dim' }, '保存在插件配置里，这个菜单和「配置 → 全局配置」共用同一份')))
     }

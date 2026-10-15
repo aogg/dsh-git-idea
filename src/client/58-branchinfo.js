@@ -14,8 +14,9 @@
       const err = text(result.stderr).replace(/\s+$/, '')
       const detail = err.length > 0 ? err.slice(0, 400) : text(result.stdout).replace(/\s+$/, '').slice(0, 400)
       /* git 在这件事上说八行，其中七行是建议（"Run git config --global ..."），最后
-         一行才是拒绝本身。这里说的是同一件事，但先说面板里能点的那个地方（设置页的
-         提交身份），再给能照抄的命令 —— 两条路都留着，因为面板并不总是开着的。 */
+         一行才是拒绝本身。这里说的是同一件事，但先说面板里能点的那个地方（配置页
+         全局那一档的提交身份），再给能照抄的命令 —— 两条路都留着，因为面板并不总是
+         开着的。 */
       if (result.needsIdentity === true) {
         const lines = err.length > 0 ? err.split('\n') : []
         let last = ''
@@ -23,7 +24,7 @@
           if (lines[i].trim().length > 0) { last = lines[i].trim(); break }
         }
         const why = 'git 不知道这次提交该署谁的名字，所以把它拒了 —— 作者身份写在 git 的配置里，'
-          + '不在这个仓库里。设置页「dsh-git-idea配置 → 提交身份」里可以填，'
+          + '不在这个仓库里。面板「配置 → 全局配置 → 提交身份」里可以填，'
           + '或者在终端里跑一遍：\n'
           + '  git config --global user.name "你的名字"\n'
           + '  git config --global user.email "你的邮箱"\n'

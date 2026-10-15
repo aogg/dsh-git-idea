@@ -34,13 +34,19 @@
       return null
     }
 
-    /* ── 面板的「配置」页：只关于本项目 ──
+    /* ── 面板的「配置」页：项目配置与全局配置 ──
 
-       设置页那份提交身份管的是机器（`--global` 可选），而面板属于会话、常常开在别
-       的仓库上 —— 这里要的是另一件事：只看、只写**当前这个项目**的 .git/config。
-       git 自己管换行符的两个键（core.autocrlf / core.eol）是同一性质；远端表也长在
-       .git/config 里，只是它走 git remote 自己的三条子命令（74-identity.js）。四个
-       分组都在这一页里；样式复用设置页那套 dsh-git-set-*。 */
+       这一页分两档作用域，切换排在页首（记号用头部视图切换同一套 dsh-git-cview）：
+
+       · 项目配置 —— 只关于眼前这个仓库：会话完成后的刷新/推送、只写 **本项目**
+         .git/config 的提交身份、git 自己管换行符的两个键（core.autocrlf / core.eol）、
+         远端表（长在 .git/config 里，走 git remote 自己的三条子命令，74-identity.js）。
+       · 全局配置 —— 跟着插件与这台机器走（79-globalconfig.js 的 GitGlobalConfigPane，
+         原先是 DSH 设置面板里的「dsh-git-idea配置」页，2026-10 起搬到这里）：初始化
+         分支、远程同步实参、快捷命令、git 位置、提交身份（--global/--local 自选）、
+         以及只属于本浏览器的外观与节奏。
+
+       两档共用同一套 dsh-git-set-* 排版（沿袭自原先那页设置页的样式）。 */
 
     /* ── 右键菜单（ContextMenu）：提交行与分支行共用的一块浮层 ──
 
@@ -79,6 +85,26 @@
 
     function GitConfigPane(props) {
       const sessionId = props.sessionId
+      /* 两档作用域：项目（本仓库的 .git/config）与全局（插件与这台机器，79-globalconfig.js）。
+         选哪档是「这个浏览器怎么用这一页」的偏好，落在浏览器本地那份 settings 里，
+         下次打开还在；首次进来是项目 —— 面板本来就是对着当前仓库说话的。 */
+      const prefs = useGitSettings()
+      const [scope, setScope] = React.useState(prefs.configScope === 'global' ? 'global' : 'project')
+      const pickScope = function (next) {
+        setScope(next)
+        if (prefs.configScope !== next) saveSettings(Object.assign({}, prefs, { configScope: next }))
+      }
+      const scopeTab = function (id, label, hint) {
+        return h('button', {
+          key: id, type: 'button',
+          className: 'dsh-git-cview' + (scope === id ? ' dsh-git-cview-on' : ''),
+          title: hint,
+          onClick: function () { pickScope(id) },
+        }, label)
+      }
+      const scopeTabs = h('div', { className: 'dsh-git-cfg-tabs' },
+        scopeTab('project', '项目配置', '只关于眼前这个仓库：会话完成后自动刷新/推送、只写 --local 的提交身份、换行符与远端'),
+        scopeTab('global', '全局配置', '跟着插件与这台机器走：初始化分支、远程同步、快捷命令、git 位置、提交身份（--global/--local）与本浏览器的外观'))
       const plugin = usePluginConfig()
       const autoPushNote = useAutoPush()
       const [snap, setSnap] = React.useState(null)
@@ -101,7 +127,7 @@
       const [note, setNote] = React.useState('')
       const [problem, setProblem] = React.useState('')
 
-      /* 只把 session id 交给 Host（设置页 GitIdentityGroup 同一条路）：路径由 Host
+      /* 只把 session id 交给 Host（全局配置 GitIdentityGroup 同一条路）：路径由 Host
          从会话的工作区解出来，写配置的沙箱策略也跟着这个会话走。 */
       const request = function () {
         return sessionId.length > 0 ? { sessionId: sessionId } : {}
@@ -181,14 +207,14 @@
         })
       }
 
-      /* 设置页 setPlugin 的同款：草稿即时、落盘有 400ms 去抖（20-prefs.js）。 */
+      /* 全局配置 setPlugin 的同款：草稿即时、落盘有 400ms 去抖（20-prefs.js）。 */
       const setPlugin = function (key, value) {
         const next = Object.assign({}, plugin)
         next[key] = value
         savePluginConfig(next)
       }
 
-      /* 设置页 GitIdentityGroup 的 source() 同款：值 + 它来自哪个文件。 */
+      /* 全局配置 GitIdentityGroup 的 source() 同款：值 + 它来自哪个文件。 */
       const source = function (value, origin) {
         const one = text(value)
         if (one.length === 0) return '没有配'
@@ -414,7 +440,16 @@
         ? '会话跑完那一刻自动做一次 ⟳ 级别的整棵树刷新：chip 的分支名/改动数、变更/历史页跟着更新，命令页若开着也重读 —— 刚被会话新建的文件只有全树读能看见，这正是它该刷的时机。'
         : '当前环境不支持会话状态监听（bridge 版没有会话状态的 props），这两条开关不起作用。'
 
+      /* 全局那一档整个交给 79-globalconfig.js：项目这半的快照（身份/换行符/远端）
+         与它的草稿状态都还留在这只组件里，切回来不必重读。 */
+      if (scope === 'global') {
+        return h('div', { className: 'dsh-git-set dsh-git-config' },
+          scopeTabs,
+          h(GitGlobalConfigPane, { key: 'global', sessionId: sessionId }))
+      }
+
       return h('div', { className: 'dsh-git-set dsh-git-config' },
+        scopeTabs,
         h('div', { className: 'dsh-git-set-group' }, '会话完成'),
         h('div', { className: 'dsh-git-set-hint' }, sessionHint),
 
@@ -444,7 +479,7 @@
 
         h('div', { className: 'dsh-git-set-group' }, '提交身份（只写这个项目的 .git/config）'),
         h('div', { className: 'dsh-git-set-hint' },
-          '这里只写 --local，全局那份不受影响。去「设置 → dsh-git-idea配置 → 提交身份」改全局 —— 那边才选得到写进哪台机器。'),
+          '这里只写 --local，全局那份不受影响。要改这台机器的那一份，切到上面的「全局配置 → 提交身份」—— 那边才选得到写进哪台机器。'),
 
         h('div', { className: 'dsh-git-set-row' },
           h('span', { className: 'dsh-git-set-label' }, '此刻生效'),
@@ -939,7 +974,7 @@
 
            · DRAFT_LEN_MAX 与 Host 的上限同款（4000）：Host 是最后一道关卡，但
              客户端先把超长的截掉，省一次注定被截的往返；
-           · 防抖 900ms（设置页那份整配置保存是 400ms，见 20-prefs.js）：草稿的
+           · 防抖 900ms（配置页那份整配置保存是 400ms，见 20-prefs.js）：草稿的
              保存多得多（每一段连续输入一次），再快就要在连续输入时排队写盘；
            · 保存的 repo 在排程那一刻就闭上：读者打完字立刻切仓库，挂着的保存
              仍写到**原来那个**仓库名下 —— 内容是它的，不能记到新仓库头上；
@@ -1020,12 +1055,12 @@
         if (props.ready !== true) return
         /* 每个工作区只扫一次（24-repos.js 里按会话去重）。工作区本身是不是仓库不
            用来判断要不要扫 —— 嵌着好几个仓库的普通目录，恰恰是最需要这份清单的地方
-           （设置页下面就挂着同一份列表）。 */
+           （「未检测到仓库」的说明页下面就挂着同一份列表）。 */
         ensureWorkspaceRepos(sessionId)
       }, [sessionId, props.ready])
 
       /* 仓库行的单击：切生效仓库 + 清掉这一栏的多选（树跟着生效仓库走回单仓库现状）。
-         和设置页「打开这个目录」同一条路径，chip、历史、提交全都跟着换。 */
+         和说明页「打开这个目录」同一条路径，chip、历史、提交全都跟着换。 */
       const repoSingle = function (pane, path) {
         setRepoSelection(sessionId, pane, [])
         if (path === appliedRepo) return
@@ -2722,11 +2757,11 @@
               h('button', { type: 'button', className: 'dsh-git-tab' + (tab === 'cmdlog' ? ' dsh-git-tab-on' : ''),
                 title: '这个项目执行过的 git 命令（来自 DSH 会话记录）',
                 onClick: function () { setTab('cmdlog'); setDiffTarget(null); setMergeTarget(null) } }, '命令'),
-              /* 配置页只关于本项目：会话完成后的刷新/推送、只写 --local 的提交身份、
-                 git 自己的两个换行键、远端清单。设置页管机器与插件，这一页管眼前
-                 这个仓库。 */
+              /* 配置页分两档：项目配置只关于眼前这个仓库（只写 --local 的提交身份、
+                 git 自己的两个换行键、远端清单），全局配置（79-globalconfig.js）管
+                 插件与这台机器 —— 原先 DSH 设置面板里的那一页搬到了这里。 */
               h('button', { type: 'button', className: 'dsh-git-tab' + (tab === 'config' ? ' dsh-git-tab-on' : ''),
-                title: '本项目：会话完成后自动刷新/推送、提交身份、换行符与远端（远端可添加/改地址/删除）',
+                title: '项目配置与全局配置：项目管眼前这个仓库（会话完成后自动刷新/推送、提交身份、换行符与远端），全局管插件与这台机器（初始化分支、远程同步、快捷命令、git 位置、提交身份、本浏览器外观）',
                 onClick: function () { setTab('config'); setDiffTarget(null); setMergeTarget(null) } }, '配置')),
         needsSetup ? null : syncGroup,
         needsSetup ? null : branchChip,
@@ -2755,7 +2790,7 @@
       if (work == null) {
         body = h('div', { className: 'dsh-git-pane dsh-git-dim' }, '正在读取仓库…')
       } else if (needsSetup) {
-        /* 设置页下面挂同一份仓库清单：工作区本身不是仓库时，这份清单恰恰是出路 ——
+        /* 说明页下面挂同一份仓库清单：工作区本身不是仓库时，这份清单恰恰是出路 ——
            里面嵌着的仓库点一下就打开（单击 = 切生效仓库，与左栏那条同一手势）。 */
         body = h('div', { key: 'setupwrap', className: 'dsh-git-setupwrap' },
           h(RepoSetup, {

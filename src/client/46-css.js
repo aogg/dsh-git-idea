@@ -227,6 +227,13 @@ textarea.dsh-git-input{resize:vertical}
 /* 面板的「配置」页（80-panel.js）住在面板正文里：设置页那套排版照搬，外层改成
    「占满正文、自己滚」—— 面板的高度是钳出来的，内容超出时滚，不把面板撑变形。 */
 .dsh-git-config{flex:1;min-height:0;overflow:auto;padding:10px 12px}
+/* 「配置」页顶部的作用域切换（80-panel.js GitConfigPane）：项目配置 / 全局配置。
+   记号用头部视图切换同一套 .dsh-git-cview，只是这一排自己占一行、贴左，不再
+   margin-left:auto 挤到行尾。 */
+.dsh-git-cfg-tabs{display:inline-flex;flex:none;gap:2px;padding:2px;border-radius:7px;background:var(--dsw-alias-interactive-bg-hover);align-self:flex-start}
+/* 全局配置那一档的正文（79-globalconfig.js GitGlobalConfigPane）：与 .dsh-git-set
+   同一套纵向节奏，但它是嵌在外层滚动容器里的第二层，不再自带 padding 与宽度上限。 */
+.dsh-git-global{display:flex;flex-direction:column;gap:14px}
 .dsh-git-set-select{box-sizing:border-box;flex:0 1 auto;min-width:0;max-width:260px;border:1px solid var(--dsh-alias-border-l1);border-radius:4px;background:var(--dsh-alias-bg-base);color:var(--dsh-alias-label-primary);font:inherit;font-size:12px;font-family:inherit;padding:4px 6px}
 .dsh-git-set-select:disabled{opacity:.45;cursor:default}
 .dsh-git-set-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -434,7 +441,7 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-repo-input:focus{border-color:var(--dsw-alias-brand-primary)}
 .dsh-git-repo-ok{flex:none}
 .dsh-git-repo-problem{padding:2px 6px 3px;font-size:10px;line-height:14px;color:var(--dsw-alias-state-error-primary)}
-/* 设置页（这里还不是仓库）下面挂的那份仓库清单：RepoSetup 自己是可滚动的整页，
+/* 「未检测到仓库」的说明页下面挂的那份仓库清单：RepoSetup 自己是可滚动的整页，
    清单跟在它下面同页滚动，一条细线隔开。 */
 .dsh-git-setupwrap{flex:1;display:flex;flex-direction:column;min-height:0;overflow:auto}
 .dsh-git-setupwrap .dsh-git-setup{flex:none;overflow:visible}
@@ -520,7 +527,7 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-oknote{flex:none;box-sizing:border-box;max-height:120px;overflow:auto;color:var(--dsw-alias-state-success-primary);background:var(--dsw-alias-bg-layer-2);border-bottom:1px solid var(--dsw-alias-border-l1);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
 
 /* ── 快捷命令的确认框与编辑器 ──
-    面板里是覆盖层（盖住正文、居中一张卡片）；设置页里同一张卡片直接排在管理组下面。 */
+    面板里是覆盖层（盖住正文、居中一张卡片）；配置页的全局组里同一张卡片直接排在管理组下面。 */
 .dsh-git-qc-overlay{position:absolute;inset:0;z-index:50;display:flex;padding:14px;background:var(--dsw-alias-bg-layer-1);overflow:auto}
 .dsh-git-qc-box{margin:auto;width:min(620px,100%);max-height:100%;box-sizing:border-box;display:flex;flex-direction:column;gap:8px;padding:12px 14px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1);box-shadow:var(--dsw-elevation-soft)}
 .dsh-git-qc-head{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600}

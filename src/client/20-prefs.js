@@ -22,6 +22,9 @@
          rather than of the plugin — it is about how someone reads a diff, not
          about what git should do. */
       changesView: 'tree',
+      /* 配置页（80-panel.js）停在两档作用域的哪一档：'project' | 'global'。同样是
+         这个浏览器自己的读法偏好，与仓库、与插件都无关。 */
+      configScope: 'project',
     }
     let gitSettings = Object.assign({}, SETTINGS_DEFAULTS)
     let settingsLoaded = false
@@ -45,6 +48,7 @@
       out.watchSlowSec = clampInt(raw.watchSlowSec, 2, 600, SETTINGS_DEFAULTS.watchSlowSec)
       out.hoverSwitch = raw.hoverSwitch !== false
       out.changesView = raw.changesView === 'flat' ? 'flat' : 'tree'
+      out.configScope = raw.configScope === 'global' ? 'global' : 'project'
       if (out.watchSlowSec < out.watchFastSec) out.watchSlowSec = out.watchFastSec
       return out
     }
@@ -84,17 +88,17 @@
          与 host 70-config.js 的 normalizeConfig 两边同款：缺省 true / false。 */
       refreshOnComplete: true, pushOnAllComplete: false,
       /* 手动登记的仓库清单（按工作区分组，24-repos.js / 61-repos.js）。这里必须跟着
-         带上：设置页保存的是**整份**配置，客户端的归一化把它丢了的话，读者在设置页
+         带上：配置页保存的是**整份**配置，客户端的归一化把它丢了的话，读者在配置页
          改一次 git 路径，手动仓库清单就没了。原样搬运、不做清洗 —— 那是 Host 那边
          normalizeConfig 的职责，两边各写一份迟早漂移。 */
       repos: {},
-      /* 快捷命令（面板 ⚡ 按钮，客户端 78-actions.js / host 78-actions.js）。和 repos
+      /* 快捷命令（历史页 ⚡ 按钮，客户端 78-actions.js / host 78-actions.js）。和 repos
          不同，这一项两边都做归一化：它是读者直接编辑的清单，编辑器保存前要拿「合法
          条目 + 条数」做校验，Host 那份 normalizeConfig 是落盘前的最后一道关卡。 */
       quickCommands: [],
       /* 提交信息草稿（按生效仓库的根路径分键，80-panel.js 读写 / host 70-config.js
-         归一化）。与 repos 同一条先例：设置页保存的是**整份**配置，客户端的归一化
-         把它丢了的话，读者在设置页改一次 git 路径，各仓库写到一半的提交信息就全
+         归一化）。与 repos 同一条先例：配置页保存的是**整份**配置，客户端的归一化
+         把它丢了的话，读者在配置页改一次 git 路径，各仓库写到一半的提交信息就全
          没了。原样搬运、不做清洗 —— 清洗是 Host 那边 normalizeDrafts 的职责。 */
       drafts: {},
     }

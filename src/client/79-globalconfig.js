@@ -1,20 +1,30 @@
-    /* The section's name in the settings rail, and the page's own heading. The
-       rail's glyph for it stays the shell's gear: the registration contract is
-       id/order/label with no icon field, and swapping a glyph the shell owns
-       would be a workaround around its own tree, not a feature. */
-    const SETTINGS_NAV_LABEL = 'dsh-git-idea配置'
+    /* ── 面板「配置」页的另一半：全局配置 ──
+
+       原先这里是一页挂在 DSH 设置面板（左下角 → 设置）里的「dsh-git-idea配置」，
+       2026-10 起整页搬进面板的「配置」页，作为与「项目配置」并列的一档作用域：
+       插件自己的行为、git 在这台机器上的位置与提交身份、还有只属于这个浏览器的外观
+       与节奏。搬动只换了住处，没换读写路径 —— 还是 20-prefs.js 那两层（插件配置走
+       Host 的 json，本浏览器走 localStorage），Host 那半一行都不用动。
+
+       这个文件必须排在 80-panel.js 之前：GitConfigPane 在「全局」那一档渲染
+       GitGlobalConfigPane（构建脚本的顺序契约：只用上面定义过的东西）。 */
 
     /* ── 提交身份：写在 git 自己的配置里 ──
 
-       这一组和上面那个插件配置文件不是一回事：`user.name` / `user.email` 是 git 的
+       这一组和插件配置文件不是一回事：`user.name` / `user.email` 是 git 的
        设置，写进去以后终端里的 git、IDEA、钩子看到的都是同一个作者。所以这里既读又
        写，而且写什么由读者挑：这台机器的所有仓库（`--global`），还是只这一个仓库
        （`--local`）。
 
        面板不替你署名：空着的框一个字节都不写（`git config user.name ''` 正是「empty
        ident name」那个错误的来路），两个都空就什么也不做并说清楚。 */
-    function GitIdentityGroup() {
-      const sessionId = useLastSession()
+    function GitIdentityGroup(props) {
+      /* 面板把手里的 session id 递下来；组件单独渲染（老设置页、测试）时退回
+         lastSession —— chip 一直挂在输入框旁，是它把这件事记下来的那个面。 */
+      const remembered = useLastSession()
+      const sessionId = props != null && typeof props.sessionId === 'string' && props.sessionId.length > 0
+        ? props.sessionId
+        : remembered
       const [state, setState] = React.useState(null)
       const [name, setName] = React.useState('')
       const [email, setEmail] = React.useState('')
@@ -115,7 +125,7 @@
           h('span', { className: 'dsh-git-set-hint' },
             text(state != null ? state.repo : '').length > 0
               ? ('这个仓库 = ' + state.repo)
-              : '这个页面还不知道是哪个会话的仓库 —— 先打开一次面板（或输入框旁的 Git 按钮），或只写全局那一份')),
+              : '这个会话还解不出仓库路径 —— 先在「变更 / 历史」页把仓库打开，或只写全局那一份')),
 
         h('div', { className: 'dsh-git-set-row' },
           h('button', {
@@ -189,7 +199,13 @@
           h('span', { className: 'dsh-git-set-hint' }, '面板读、写、初始化用的都是这一个')))
     }
 
-    function GitSettingsSection(props) {
+    /* ── 全局配置这一档的整页 ──
+
+       老设置页 GitSettingsSection 的正文，去掉页首大标题（作用域切换那排已经说了
+       「全局配置」）。分组次序原样保留：插件自己的行为在前，git 与这台机器的在后，
+       只关于这个浏览器的外观收尾。 */
+    function GitGlobalConfigPane(props) {
+      const sessionId = props != null && typeof props.sessionId === 'string' ? props.sessionId : ''
       const settings = useGitSettings()
       const [draft, setDraft] = React.useState(settings)
       const plugin = usePluginConfig()
@@ -221,14 +237,14 @@
       const watchOff = draft.watchEnabled !== true
 
       return h('div', {
-        className: 'dsh-git-set',
+        className: 'dsh-git-global',
         ref: function (node) {
           loadSettings(node != null ? node.ownerDocument : null)
           loadPluginConfig()
         },
       },
-        h('div', { className: 'dsh-git-set-h' }, SETTINGS_NAV_LABEL),
-        h('div', { className: 'dsh-git-set-hint' }, '分两层：跟随插件的配置，和只影响本浏览器的外观与节奏。'),
+        h('div', { className: 'dsh-git-set-hint' },
+          '这一半不跟着仓库走：保存在部署配置目录旁的 dsh-git-idea.json，换浏览器、换仓库都一致 —— 最后一组「本浏览器」例外，只管这个浏览器自己的外观与节奏。'),
 
         h('div', { className: 'dsh-git-set-group' }, '插件配置'),
         h('div', { className: 'dsh-git-set-hint' },
@@ -289,11 +305,11 @@
             + ' · git pull' + (pdraft.pullRebase === true ? ' --rebase' : '')
             + ' · ' + (pdraft.pushSetUpstream === true ? 'git push -u <remote> <branch>（没有上游时）' : 'git push（没有上游时由面板问一句）'))),
 
-        /* 快捷命令的管理组：和面板 ⚡ 菜单里的编辑器是同一个组件（78-actions.js）——
+        /* 快捷命令的管理组：和历史页 ⚡ 菜单里的编辑器是同一个组件（78-actions.js）——
            同一份配置、同一套校验，两处改的都是同一样东西。 */
         h('div', { className: 'dsh-git-set-group' }, '快捷命令'),
         h('div', { className: 'dsh-git-set-hint' },
-          '自定义命令模板，面板历史的 ⚡ 按钮一键执行；{branch}、{hash} 这类变量按当前分支和选中的提交代值。与面板共用同一份（也保存在上面那个 json 里）。'),
+          '自定义命令模板，历史页的 ⚡ 按钮一键执行；{branch}、{hash} 这类变量按当前分支和选中的提交代值。与那个菜单共用同一份（也保存在上面那个 json 里）。'),
         h(QuickCommandsEditor, { key: 'qc', initial: 'list' }),
 
         h(GitToolchainGroup),
@@ -302,7 +318,7 @@
           ? h('div', { className: 'dsh-git-set-row dsh-git-error' }, '保存失败：' + pluginConfigError)
           : null,
 
-        h(GitIdentityGroup),
+        h(GitIdentityGroup, { key: 'ident', sessionId: sessionId }),
 
         h('div', { className: 'dsh-git-set-group' }, '本浏览器'),
         h('div', { className: 'dsh-git-set-hint' }, '这些只是外观和使用节奏，换浏览器各管各的。'),
@@ -376,4 +392,3 @@
             onClick: function () { apply(Object.assign({}, SETTINGS_DEFAULTS)) },
           }, '本浏览器全部恢复默认')))
     }
-

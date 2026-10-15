@@ -203,7 +203,8 @@ new Function('ctx', 'React', 'host', 'styles', 'console', fs.readFileSync(proces
 
 const chip = registered.find((r) => r.options.id === 'dsh-git-idea-chip').component
 const popover = registered.find((r) => r.options.id === 'dsh-git-idea-panel').component
-const section = registered.find((r) => r.options.id === 'dsh-git-idea').component
+/* 全局设置页已搬进面板「配置」页的全局档（79-globalconfig.js），不再单独注册 ——
+   这里没有要渲染它的用例，原本那行按 id 找组件的定义随之摘掉。 */
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms || 10))
 const popTree = (l) => renderUntilStable(makeElement(popover, { sessionId: 's-1' }), l || 'pop')
