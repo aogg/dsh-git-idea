@@ -1572,6 +1572,14 @@ return {
       runCompleteRefresh(forSession)
     }
 
+    /* 页面此刻藏没藏。watchPageDoc 要等第一个 watcher 挂上才有（watchRepo 记下的
+       ownerDocument），在那之前是「不知道」—— 按可见算：宁多刷一遍，不丢一刷。
+       宿主推来的 session-complete（98-register.js）在判断页面藏不藏时用的就是它。 */
+    function livePageHidden() {
+      const doc = watchPageDoc != null ? watchPageDoc : (typeof document !== 'undefined' && document != null ? document : null)
+      return doc != null && doc.hidden === true
+    }
+
     function watchRepo(repo, sessionId, listener, fast, deep) {
       const entry = watcherFor(repo, sessionId)
       const token = {}
@@ -11508,8 +11516,34 @@ textarea.dsh-git-input{resize:vertical}
        条目，不起进程），把本地那份读数标成「不再证明完整」，然后铃 + bump —— 面板
        开着就把 needFull 立起来、走 ⟳ 同一条整树路重读并重画；关着则 chip 自己的
        label、分支预取和压后的整树读都在同一次 bump 里走完。刚被会话新建的文件只有
-       全树读能看见，这正是它该刷的时机。 */
-    function runCompleteRefresh(sessionId) {
+       全树读能看见，这正是它该刷的时机。
+
+       入口的 5 秒重入护栏：同一次完成现在有两条路都会走到这里 —— chip 自己的
+       running 边沿（本文件的 completeRefresh）和宿主推来的 session-complete
+       （98-register.js 的 liveBus 订阅）。两边各挂着一个 2 秒防抖，起点又差着一次
+       轮询间隔，对同一次完成各跑一遍就是两次全树读、两次把通道占满 8–10s。
+
+       护栏的形状是「每会话 5 秒一戳，只有推送路径让路」：chip 边沿与欠账补发
+       （30-watch.js 的 settleOwedCompleteRefresh）永远照跑、只盖戳 —— 一次真实的
+       完成边沿必须刷一遍，这是既有契约（gp52：两次挨得很近的完成各自都刷、藏着
+       的欠账回可见必补）；而推送天生是同一次完成的第二名（chip 在场时它必然晚
+       chip 一步到），让路即可。推送自己重复来的那一份（5 秒内第二条
+       session-complete）也由这道闸压住。 */
+    const COMPLETE_REFRESH_GUARD_MS = 5000
+    const completeRefreshGuard = new Map()
+    function runCompleteRefresh(sessionId, suppressible) {
+      const now = Date.now()
+      const last = completeRefreshGuard.get(sessionId)
+      const blocked = last !== undefined && now - last < COMPLETE_REFRESH_GUARD_MS
+      /* 戳谁都要盖：护栏压的是「推送别再跑一遍」，不是「谁都不许跑」。 */
+      completeRefreshGuard.set(sessionId, now)
+      /* Map 不许无界长：条目多过一屏会话时把过了护栏期的摘掉。 */
+      if (completeRefreshGuard.size > 64) {
+        completeRefreshGuard.forEach(function (at, key) {
+          if (now - at >= COMPLETE_REFRESH_GUARD_MS) completeRefreshGuard.delete(key)
+        })
+      }
+      if (blocked === true && suppressible === true) return
       const repos = completionReposOf(sessionId)
       /* flush 只是删 Host 的缓存条目；运输层断了的这一次安静放过（30-watch.js 的
          watcherTick 同款）—— 下一读拿旧答案，再下一次读自会跟上。 */
@@ -12115,5 +12149,52 @@ textarea.dsh-git-input{resize:vertical}
         if (typeof liveBus !== 'undefined' && liveBus != null && typeof liveBus.close === 'function') liveBus.close()
       }
     }, 'dsh-git-idea live connection')
+
+    /* ── 宿主常驻监听的推送（79-live-watch.js 广播，插件级订阅）──
+
+       完成刷新与仓库变化的「发现」已搬进宿主进程：无论浏览器停在哪个会话视图、
+       chip 挂没挂着，这里的订阅都在（它挂在插件生命周期上，不随会话切换卸载）。
+       bridge 版没有 liveBus，typeof 守卫安静跳过 —— 面板照旧走轮询和 chip 自己的
+       会话监听。三种消息：
+
+       · repo-changed：宿主已经失效过自己的读缓存并广播，这里把本地那份读数标成
+         「不再证明完整」（markTreePartial）、敲整树重读的铃、bump —— 面板开着就走
+         ⟳ 同一条整树路，关着则 chip 的压后全树读接手。repo 形状不对的安静忽略。
+       · session-complete：页面藏着记成欠账（30-watch.js），回可见由可见性处理或
+         live-open 补发；开着当场跑 runCompleteRefresh —— 与 chip 边沿路径共用同一
+         个函数；护栏（92-chip.js）让推送给 5 秒内刚跑过的 chip 那一刷让路，同一次
+         完成不会刷两遍。开关（refreshOnComplete）在跑的那一刻再读，与 chip 路径
+         同一口径。
+       · live-open：连接（重）连上 = 断线期间宿主推的消息丢过 —— 先补欠账，再对
+         手头每个 watcher 强制走一拍签名（第一拍只记基线，第二拍起才对比，无害）。 */
+    ctx.effect(function () {
+      if (typeof liveBus === 'undefined' || liveBus == null || typeof liveBus.subscribe !== 'function') return undefined
+      return liveBus.subscribe(function (message) {
+        if (message == null || typeof message !== 'object') return
+        if (message.kind === 'repo-changed') {
+          const repo = typeof message.repo === 'string' ? message.repo : ''
+          if (repo.length === 0) return
+          markTreePartial(repo)
+          ringTreeReload()
+          bumpData()
+          return
+        }
+        if (message.kind === 'session-complete') {
+          const sessionId = typeof message.sessionId === 'string' ? message.sessionId : ''
+          if (sessionId.length === 0) return
+          if (pluginConfig.refreshOnComplete !== true) return
+          if (livePageHidden() === true) { oweCompleteRefresh(sessionId); return }
+          /* suppressible：推送是同一次完成的第二名 —— chip 在场时它必然晚 chip 一步
+             到，5 秒内 chip 边沿（或欠账补发）刚刷过就让路（92-chip.js 的护栏）。 */
+          runCompleteRefresh(sessionId, true)
+          return
+        }
+        if (message.kind === 'live-open') {
+          settleOwedCompleteRefresh()
+          watcherTickAll()
+          return
+        }
+      })
+    }, 'dsh-git-idea live watch push')
   },
 }
