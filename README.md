@@ -14,7 +14,7 @@
 | 依赖 | DSH `>=0.1.5-rc.1`（`engines.dsh`，只声明最低版本）；`@deepseek-ai/cordis ^4.0.2`（peer） |
 | 仓库 | <https://github.com/mays-hi/dsh-git-idea> |
 
-各功能的完整清单见 [功能列表](./功能列表.md)。
+各功能的完整清单见 [功能列表](./docs/功能列表.md)。
 
 ---
 
@@ -161,6 +161,8 @@ git config --global user.email "你的邮箱"
 
 会话状态听的是 DSH 注入的会话 hook（每个会话常驻的 chip 在听，面板关着也在）：bridge 版／老版本没有这些 props 时两条开关不起作用，页面上会明说「当前环境不支持会话状态监听」。
 
+编辑器保存是另一条即时的刷新来路：装着 DSH-better-sidebar（≥ 0.27.0）时，内置编辑器保存文件成功会让本插件失效读缓存，并在约 1.5 秒防抖后广播一次整树刷新 —— 与会话完成那一刷同一条路（见[联动插件](./docs/联动插件.md)）；该插件未安装或版本过旧时这里什么都不发生，零报错，其余照旧。
+
 ### 读不动时
 
 每一种理由说自己的话，能做的事不同：
@@ -302,7 +304,7 @@ src/pkg/*.js          正式包的 prelude / postlude
 build-package.mjs     正式包构建
 build.mjs             动态桥构建
 host.js client.js     构建产物：动态桥读取的两个半侧（旧运行方式，保留）
-docs/                 README 的图
+docs/                 README 的图与文档（功能列表、联动插件）
 test/                 断言套件与性能基准
 ```
 

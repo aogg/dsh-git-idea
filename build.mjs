@@ -37,6 +37,7 @@ export const TARGETS = [
       'src/host/77-cmdrec.js',
       'src/host/78-actions.js',
       'src/host/79-live-watch.js',
+      'src/host/79b-file-save.js',
       'src/host/80-rpc.js',
     ],
   },
