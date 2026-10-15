@@ -128,6 +128,14 @@
       runCompleteRefresh(forSession)
     }
 
+    /* 页面此刻藏没藏。watchPageDoc 要等第一个 watcher 挂上才有（watchRepo 记下的
+       ownerDocument），在那之前是「不知道」—— 按可见算：宁多刷一遍，不丢一刷。
+       宿主推来的 session-complete（98-register.js）在判断页面藏不藏时用的就是它。 */
+    function livePageHidden() {
+      const doc = watchPageDoc != null ? watchPageDoc : (typeof document !== 'undefined' && document != null ? document : null)
+      return doc != null && doc.hidden === true
+    }
+
     function watchRepo(repo, sessionId, listener, fast, deep) {
       const entry = watcherFor(repo, sessionId)
       const token = {}

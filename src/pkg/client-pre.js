@@ -80,6 +80,18 @@ window.__ModuleLoader__.load({
         liveBus.socket = ws
         ws.onopen = function () {
           liveBus.wait = 1000
+          /* （重）连上 = 断线期间宿主推的消息丢过一批，订阅方需要补一轮核对 ——
+             向 listeners 分发一条 live-open，谁听谁自己决定补什么（98-register.js
+             补欠账 + 对签名）。首连也会收到这一条：欠账本来就是空的，签名第一拍
+             只记基线，无害。与 onmessage 同一款逐订阅者 try/catch：一个订阅者的错
+             不打断其余订阅者。 */
+          liveBus.listeners.forEach(function (listener) {
+            try {
+              listener({ kind: 'live-open' })
+            } catch (error) {
+              console.error('dsh-git-idea: live 订阅者处理消息出错', String(error))
+            }
+          })
         }
         ws.onmessage = function (event) {
           let data = null

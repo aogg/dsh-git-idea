@@ -108,8 +108,34 @@
        条目，不起进程），把本地那份读数标成「不再证明完整」，然后铃 + bump —— 面板
        开着就把 needFull 立起来、走 ⟳ 同一条整树路重读并重画；关着则 chip 自己的
        label、分支预取和压后的整树读都在同一次 bump 里走完。刚被会话新建的文件只有
-       全树读能看见，这正是它该刷的时机。 */
-    function runCompleteRefresh(sessionId) {
+       全树读能看见，这正是它该刷的时机。
+
+       入口的 5 秒重入护栏：同一次完成现在有两条路都会走到这里 —— chip 自己的
+       running 边沿（本文件的 completeRefresh）和宿主推来的 session-complete
+       （98-register.js 的 liveBus 订阅）。两边各挂着一个 2 秒防抖，起点又差着一次
+       轮询间隔，对同一次完成各跑一遍就是两次全树读、两次把通道占满 8–10s。
+
+       护栏的形状是「每会话 5 秒一戳，只有推送路径让路」：chip 边沿与欠账补发
+       （30-watch.js 的 settleOwedCompleteRefresh）永远照跑、只盖戳 —— 一次真实的
+       完成边沿必须刷一遍，这是既有契约（gp52：两次挨得很近的完成各自都刷、藏着
+       的欠账回可见必补）；而推送天生是同一次完成的第二名（chip 在场时它必然晚
+       chip 一步到），让路即可。推送自己重复来的那一份（5 秒内第二条
+       session-complete）也由这道闸压住。 */
+    const COMPLETE_REFRESH_GUARD_MS = 5000
+    const completeRefreshGuard = new Map()
+    function runCompleteRefresh(sessionId, suppressible) {
+      const now = Date.now()
+      const last = completeRefreshGuard.get(sessionId)
+      const blocked = last !== undefined && now - last < COMPLETE_REFRESH_GUARD_MS
+      /* 戳谁都要盖：护栏压的是「推送别再跑一遍」，不是「谁都不许跑」。 */
+      completeRefreshGuard.set(sessionId, now)
+      /* Map 不许无界长：条目多过一屏会话时把过了护栏期的摘掉。 */
+      if (completeRefreshGuard.size > 64) {
+        completeRefreshGuard.forEach(function (at, key) {
+          if (now - at >= COMPLETE_REFRESH_GUARD_MS) completeRefreshGuard.delete(key)
+        })
+      }
+      if (blocked === true && suppressible === true) return
       const repos = completionReposOf(sessionId)
       /* flush 只是删 Host 的缓存条目；运输层断了的这一次安静放过（30-watch.js 的
          watcherTick 同款）—— 下一读拿旧答案，再下一次读自会跟上。 */
