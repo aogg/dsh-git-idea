@@ -188,6 +188,13 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-tool{display:inline-flex;align-items:center;gap:4px;border:1px solid transparent;background:0 0;color:var(--dsw-alias-label-primary);border-radius:5px;padding:3px 7px;font-size:11px;font-family:inherit;cursor:pointer;flex:none;line-height:16px}
 .dsh-git-tool:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
 .dsh-git-tool:disabled{opacity:.4;cursor:default}
+/* 同步组四键的「运行中」：键自己的圈自己转，其余三个照常可点。:disabled 的 .4 透明
+   会把转动淹掉 —— 这条用同级选择器（同为 0,2,0）压在它后面盖过去；描边和字色借
+   品牌色，并排四键里「哪一个在跑」一眼可辨。 */
+.dsh-git-tool.dsh-git-tool-run{opacity:1;border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary);cursor:default}
+/* transform 对行内文本不生效：转的是包字符的 span，给它 inline-block 才转得动
+   （BranchIcon 那个是 svg，天生吃 transform，只有这里要补）。 */
+.dsh-git-tool-run .dsh-git-spin{display:inline-block}
 .dsh-git-tool-on{background:var(--dsw-alias-interactive-bg-hover);border-color:var(--dsw-alias-border-l1)}
 /* 图标键（55-diff.js 的 diffIconButton：返回/⟳/☰）只在这个家族里：26px 的方块
    命中区、图标居中——没有文字，padding 不再撑它。 */

@@ -2179,6 +2179,13 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-tool{display:inline-flex;align-items:center;gap:4px;border:1px solid transparent;background:0 0;color:var(--dsw-alias-label-primary);border-radius:5px;padding:3px 7px;font-size:11px;font-family:inherit;cursor:pointer;flex:none;line-height:16px}
 .dsh-git-tool:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
 .dsh-git-tool:disabled{opacity:.4;cursor:default}
+/* 同步组四键的「运行中」：键自己的圈自己转，其余三个照常可点。:disabled 的 .4 透明
+   会把转动淹掉 —— 这条用同级选择器（同为 0,2,0）压在它后面盖过去；描边和字色借
+   品牌色，并排四键里「哪一个在跑」一眼可辨。 */
+.dsh-git-tool.dsh-git-tool-run{opacity:1;border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary);cursor:default}
+/* transform 对行内文本不生效：转的是包字符的 span，给它 inline-block 才转得动
+   （BranchIcon 那个是 svg，天生吃 transform，只有这里要补）。 */
+.dsh-git-tool-run .dsh-git-spin{display:inline-block}
 .dsh-git-tool-on{background:var(--dsw-alias-interactive-bg-hover);border-color:var(--dsw-alias-border-l1)}
 /* 图标键（55-diff.js 的 diffIconButton：返回/⟳/☰）只在这个家族里：26px 的方块
    命中区、图标居中——没有文字，padding 不再撑它。 */
@@ -8686,6 +8693,22 @@ textarea.dsh-git-input{resize:vertical}
       const [collapsed, setCollapsed] = React.useState({})
       const [error, setError] = React.useState(null)
       const [busy, setBusy] = React.useState(false)
+      /* ── 头部同步组（⟳⇣↓↑）各自的运行中标记 ──
+
+         busy 是面板级的：一抬起来四个键一起 40% 透明、提交框/右键菜单/快捷命令全部
+         锁死。同步组的一次点击只有那一个键在干活，不该连坐整个面板 —— 所以各记各的
+         （函数式更新，一次只翻一个键），按钮的禁用与转圈都从这份算；fetch/pull/push
+         另外彼此串行（panelBox.syncs 那条链），⟳ 等它自己触发的全树读落地。 */
+      const [syncRunning, setSyncRunning] = React.useState({})
+      const setSyncKey = function (key, on) {
+        setSyncRunning(function (previous) {
+          if (previous[key] === on) return previous
+          const nextRun = Object.assign({}, previous)
+          if (on) nextRun[key] = true
+          else delete nextRun[key]
+          return nextRun
+        })
+      }
       /* Shared with the chip and the switcher rather than local: a switch made
          from the hover card happens while this panel is hidden, and it must not
          come back to the foreground still showing the branch it used to be on. */
@@ -8812,6 +8835,14 @@ textarea.dsh-git-input{resize:vertical}
           costMs: remembered === null ? 0 : remembered.costMs,
           lastFull: false,
           mutations: Promise.resolve(),
+          /* 同步组（⇣↓↑）自己的串行链，画法同 mutations：键进了这条链的动作一个跑完
+             再轮下一个，链不因失败中毒。⟳ 是纯读触发，不进这条链。 */
+          syncs: Promise.resolve(),
+          /* ⟳ 点击时挂上的一次性完成回调（见 refresh / settleRefresh）：那一次重读
+             真正落地（或读失败）时由 loadWork 调掉并摘下 —— 时钟驱动的自动重读
+             不挂也不调，所以那条路点不亮按钮。挂箱不挂 state：回调要在读落地的那
+             一帧被找到，而不是跟着某次渲染走。 */
+          refreshDone: null,
         }
       })
       panelBox.status = status
@@ -8840,6 +8871,16 @@ textarea.dsh-git-input{resize:vertical}
         return request
       }
 
+      /* ⟳ 的运行中怎么熄灯：refresh() 把一次性回调挂在箱上，loadWork 里每一条会终止
+         的路都来调它 —— 全树读正常落地、答复被 epoch 作废、读到「不是仓库」、读失败，
+         全都算落地。调一次就摘：早熄一帧只是少转半圈，长转不熄才是事故。 */
+      const settleRefresh = function () {
+        const done = panelBox.refreshDone
+        if (done == null) return
+        panelBox.refreshDone = null
+        done()
+      }
+
       /* Identity first, working tree after. The identity answer is what decides
          whether this path is a repository at all, so waiting for `git status`
          before drawing anything made every switch to an unused workspace feel
@@ -8852,9 +8893,9 @@ textarea.dsh-git-input{resize:vertical}
         callHost('git/panel', Object.assign({ quick: true }, request)).then(function (data) {
           /* A mutation since this read started makes the answer describe the
              repository before it — see repoEpoch. */
-          if (epoch !== repoEpoch(asked, sessionId)) return
+          if (epoch !== repoEpoch(asked, sessionId)) { settleRefresh(); return }
           setWork(data)
-          if (data == null || data.ok !== true) { setStatus(null); return }
+          if (data == null || data.ok !== true) { settleRefresh(); setStatus(null); return }
           const full = paths == null || paths.length === 0
           const work = Object.assign({}, request)
           if (!full) work.paths = paths
@@ -8867,6 +8908,9 @@ textarea.dsh-git-input{resize:vertical}
           const finished = treeCountReadStart(resolved)
           callHost('git/panel', work).then(function (reply) {
             finished()
+            /* ⟳ 的熄灯点放在 finished() 后面、早退判断前面：这一次读不管算不算数
+               （epoch 作废、仓库切走）都算落地，别让按钮替一次作废的读长转。 */
+            settleRefresh()
             /* A read that came back after the path changed is not this path's
                answer; the effect below will load the new one anyway. */
             if (asked !== appliedRepo && asked.length > 0) return
@@ -8887,9 +8931,10 @@ textarea.dsh-git-input{resize:vertical}
             /* A partial answer says nothing about the rest of the tree: it is
                folded into the snapshot on screen, never put in its place. */
             setStatus(function (previous) { return mergePanelStatus(previous, reply) })
-          }).catch(function () { finished(); setStatus(null) })
+          }).catch(function () { finished(); settleRefresh(); setStatus(null) })
         }).catch(function (failure) {
           setError(failureText(failure))
+          settleRefresh()
         })
       }
 
@@ -9170,7 +9215,25 @@ textarea.dsh-git-input{resize:vertical}
            注释）。 */
         setMultiSel([])
         setOkNote('')
+        /* ⟳ 的熄灯时机是这次重读真正落地，不是 flush 回来 —— flush 只保证下一读不作弊。
+           回调挂 panelBox.refreshDone，loadWork 的落地点（settleRefresh）调掉。 */
+        panelBox.refreshDone = function () { setSyncKey('refresh', false) }
+        setSyncKey('refresh', true)
         reloadChanges()
+      }
+
+      /* ── 同步组的运行中包装器（⇣↓↑，⟳ 纯读不进链）──
+
+         先立标记再发起：动作排在链里等前一个跑完时，按钮已经在转了 —— 点下去的那
+         一帧就得到「收到了」的反馈，而不是等前一个结束才亮。防抖在这里：转着的键
+         再点直接忽略。链画法同 queueMutation：上一次 fetch 失败不许把排在后面的
+         pull 毒死；标记在这次动作自己的 promise 落地时熄，不是整条链跑完才熄。 */
+      const runSync = function (key, go) {
+        if (syncRunning[key] === true) return
+        setSyncKey(key, true)
+        if (key === 'refresh') { go(); return }
+        const next = panelBox.syncs.then(go, go)
+        panelBox.syncs = next.then(function () { setSyncKey(key, false) }, function () { setSyncKey(key, false) })
       }
 
       /* ── 「有会话刚跑完」的那声铃（92-chip.js 敲，这里听）──
@@ -9206,9 +9269,16 @@ textarea.dsh-git-input{resize:vertical}
          带 setUpstream 直接跑（Host 先 set-upstream-to 再 pull）；查不到 → 打开
          选择层（pullPick），一条 pull 都不发。其余情况 —— 已有 upstream、
          detached、分支未出生、refs 读不动 —— 照旧原样发 pull，行为一字不变。 */
-      const runOpApply = function (method, payload) {
-        if (busy) return
-        setBusy(true)
+      /* 第三参 syncKey 是同步组的键（'fetch'/'pull'/'push'）：头部四键点击进来的路
+         不抬面板级 busy（那件事只有那一个键在跑，syncRunning 各记各的就够，其余 UI
+         照常可交互），promise 要返回去 —— runSync 的串行链靠它等这次动作落地。没传
+         键的既有调用方（右键菜单、选择层、sequencer）一字不变，仍用全局 busy。 */
+      const runOpApply = function (method, payload, syncKey) {
+        const ownRun = syncKey != null && syncKey !== ''
+        if (ownRun !== true) {
+          if (busy) return
+          setBusy(true)
+        }
         setArmed('')
         setError(null)
         setOkNote('')
@@ -9216,8 +9286,8 @@ textarea.dsh-git-input{resize:vertical}
         panelBox.needFull = REWRITES_TREE.indexOf(method) >= 0
         const request = base(appliedRepo)
         if (payload != null) Object.assign(request, payload)
-        rpc(method, request).then(function (reply) {
-          setBusy(false)
+        return rpc(method, request).then(function (reply) {
+          if (ownRun !== true) setBusy(false)
           if (method === 'git/pull' && reply != null && reply.upstreamSet === true && reply.setUpstream != null) {
             /* 绑定+拉取这一次成功（两个入口共用 runOp）：成功条写明绑到了哪。 */
             setOkNote('已绑定上游 ' + text(reply.setUpstream.remote) + '/' + text(reply.setUpstream.branch) + ' 并拉取')
@@ -9225,7 +9295,7 @@ textarea.dsh-git-input{resize:vertical}
           }
           bump()
         }, function (failure) {
-          setBusy(false)
+          if (ownRun !== true) setBusy(false)
           if (method === 'git/pull' && payload != null && payload.setUpstream != null) {
             const said = failureText(failure)
             /* 绑定这一步发现远端分支其实不在（refs 数据过期，git 的原话是
@@ -9246,8 +9316,9 @@ textarea.dsh-git-input{resize:vertical}
             const retry = payload == null || payload.setUpstream !== true
             const remote = guessPushRemote(refs)
             if (plugin.pushSetUpstream === true && retry && remote.length > 0 && currentName.length > 0) {
-              runOp('git/push', { setUpstream: true, remote: remote, branch: currentName })
-              return
+              /* 重试把键带下去、promise 接回来：链上的等待以重试落地为准，别让 ⟳⇣↓↑
+                 的运行中标记在重试还没跑时就熄掉。 */
+              return runOp('git/push', { setUpstream: true, remote: remote, branch: currentName }, syncKey)
             }
             setNeedsUpstream(true)
           }
@@ -9256,13 +9327,15 @@ textarea.dsh-git-input{resize:vertical}
       }
 
       /* 判断本身只吃一份 refs 答复：refs 还没读到过（首帧、刚换仓库、上次读失败）
-         时由 runOp 先补一次读再进来，别因为缓存未到就弹层。 */
-      const decidePull = function (refsData, payload) {
+         时由 runOp 先补一次读再进来，别因为缓存未到就弹层。syncKey 只是过路键，
+         原样交给 runOpApply —— 走到「打开选择层、不发 rpc」的分支时什么也不返回，
+         同步组的运行中标记随即熄（选择层本身就是下一步反馈）。 */
+      const decidePull = function (refsData, payload, syncKey) {
         const current = refsData != null && refsData.ok === true && Array.isArray(refsData.current) && refsData.current.length > 0
           ? text(refsData.current[0]) : ''
         /* detached：refs.current 空、work.detached 是 true —— 两道都挡。 */
         if (work == null || work.ok !== true || work.detached === true || current.length === 0) {
-          runOpApply('git/pull', payload)
+          runOpApply('git/pull', payload, syncKey)
           return
         }
         /* 未出生分支（unborn）：refs.current 说得出名字，但 refs/heads 里没有它 ——
@@ -9272,37 +9345,34 @@ textarea.dsh-git-input{resize:vertical}
         for (let i = 0; i < local.length; i += 1) {
           if (text(local[i].data) === current) { born = true; break }
         }
-        if (born !== true) { runOpApply('git/pull', payload); return }
+        if (born !== true) { runOpApply('git/pull', payload, syncKey); return }
         const match = upstreamMatchInRefs(refsData, current)
         if (match != null) {
-          runOpApply('git/pull', Object.assign({}, payload == null ? {} : payload, { setUpstream: match }))
+          runOpApply('git/pull', Object.assign({}, payload == null ? {} : payload, { setUpstream: match }), syncKey)
           return
         }
         setPullPick({})
       }
 
-      const runOp = function (method, payload) {
+      const runOp = function (method, payload, syncKey) {
         if (method !== 'git/pull' || (payload != null && payload.setUpstream != null)) {
-          runOpApply(method, payload)
-          return
+          return runOpApply(method, payload, syncKey)
         }
         /* work 还没读到（面板首帧）：上游未知，照旧直接 pull —— 别在旧数据上猜。 */
         if (work == null || work.ok !== true || text(work.upstream).length > 0) {
-          runOpApply(method, payload)
-          return
+          return runOpApply(method, payload, syncKey)
         }
         /* refs 还没读到过（或上次读失败）：先读一次再判断（别弹空窗）；读不动就按
            老路直接 pull，git 的拒绝原话照旧上屏。 */
         if (refs == null || refs.ok !== true) {
-          callHost('git/refs', base(appliedRepo)).then(function (data) {
+          return callHost('git/refs', base(appliedRepo)).then(function (data) {
             setRefs(data)
-            decidePull(data, payload)
+            decidePull(data, payload, syncKey)
           }, function () {
-            runOpApply(method, payload)
+            runOpApply(method, payload, syncKey)
           })
-          return
         }
-        decidePull(refs, payload)
+        return decidePull(refs, payload, syncKey)
       }
 
       const startDrag = function (axis) {
@@ -10449,15 +10519,23 @@ textarea.dsh-git-input{resize:vertical}
         const classes = ['dsh-git-tool']
         if (opts.danger === true) classes.push('dsh-git-danger')
         if (opts.on === true) classes.push('dsh-git-tool-on')
+        /* 运行中的键（同步组专用，见 syncGroup）：字符转起来、title 说一声、按钮
+           自身禁用防重复点击 —— 只锁自己，旁边的键照常可点。转的是包字符的 span
+           而不是按钮：transform 对按钮的文字节点不生效，inline-block 的 span 才
+           吃得到（CSS 里补，BranchIcon 是 svg 天生就吃）。 */
+        const running = opts.running === true
+        if (running) classes.push('dsh-git-tool-run')
         /* 图标键的 -ico 变体不再由这里出：拣选/还原/标签/分支搬进右键菜单后，这条
            工具条上只剩带字（或带字符图形）的键 —— 26px 方块的画法只属于差异头部。 */
-        const parts = [label]
+        const parts = [running ? h('span', { key: 'l', className: 'dsh-git-spin' }, label) : label]
         if (typeof opts.badge === 'number' && opts.badge > 0) {
           parts.push(h('span', { key: 'b', className: 'dsh-git-tool-badge' }, String(opts.badge)))
         }
         return h('button', {
           key: key, type: 'button', className: classes.join(' '),
-          disabled: opts.disabled === true, title: title, onClick: onClick,
+          disabled: opts.disabled === true,
+          title: running ? title + '（运行中…）' : title,
+          onClick: onClick,
         }, parts)
       }
 
@@ -10465,11 +10543,19 @@ textarea.dsh-git-input{resize:vertical}
          beside the branch it acts on — not in the commit graph's own toolbar,
          which is about the selected commit. The middle toolbar keeps only what
          the selection scopes. */
+      /* 四个键的禁用只看「自己是不是在跑」，不再看面板级 busy：一个键转圈时，其余
+         三个照常可点（点了进 panelBox.syncs 排队），提交框、右键菜单、快捷命令也
+         全程照常 —— busy 不再为这四个动作抬起来。 */
+      const syncRunningKey = function (key) { return syncRunning[key] === true }
       const syncGroup = h('div', { className: 'dsh-git-sync' },
-        tool('refresh', '⟳', '重新读取仓库（忽略缓存）', refresh, { disabled: !repoOk || busy }),
-        tool('fetch', '⇣', 'fetch：从所有远端取回最新引用', function () { runOp('git/fetch') }, { disabled: !repoOk || busy }),
-        tool('pull', '↓', 'pull：拉取并合入当前分支', function () { runOp('git/pull') }, { disabled: !repoOk || busy, badge: behind }),
-        tool('push', '↑', 'push：推送当前分支', function () { runOp('git/push') }, { disabled: !repoOk || busy, badge: ahead }))
+        tool('refresh', '⟳', '重新读取仓库（忽略缓存）', function () { runSync('refresh', refresh) },
+          { disabled: !repoOk || syncRunningKey('refresh'), running: syncRunningKey('refresh') }),
+        tool('fetch', '⇣', 'fetch：从所有远端取回最新引用', function () { runSync('fetch', function () { return runOp('git/fetch', null, 'fetch') }) },
+          { disabled: !repoOk || syncRunningKey('fetch'), running: syncRunningKey('fetch') }),
+        tool('pull', '↓', 'pull：拉取并合入当前分支', function () { runSync('pull', function () { return runOp('git/pull', null, 'pull') }) },
+          { disabled: !repoOk || syncRunningKey('pull'), running: syncRunningKey('pull'), badge: behind }),
+        tool('push', '↑', 'push：推送当前分支', function () { runSync('push', function () { return runOp('git/push', null, 'push') }) },
+          { disabled: !repoOk || syncRunningKey('push'), running: syncRunningKey('push'), badge: ahead }))
 
       const branchTitle = (currentName.length > 0 ? currentName : 'HEAD')
         + (ahead > 0 ? ' · 领先 ' + String(ahead) : '')

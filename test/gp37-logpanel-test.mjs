@@ -759,15 +759,31 @@ ok('title 沿用原工具条四个键的文案',
     .every((l, i) => String(ctxItems()[i].props.title) === l))
 ok('四项都可用（右键即选中，!canAct 的置灰不出现）', ctxItems().every((b) => b.props.disabled !== true))
 
-/* 菜单开着时仓库忙起来：!canAct 的另一条腿（busy）在这里才看得见 —— 头部 ⌛ fetch
-   走 runOp 同步置忙，菜单不受影响地开着，四项跟着全部置灰。 */
+/* 菜单开着时点头部 ⇣ fetch：它走同步组自己的运行中标记（syncRunning），不再抬面板级
+   busy —— 菜单照常开着，四项照常可用，这句钉住「同步动作不阻塞面板」。 */
 const fetchBtn = byClass(t, 'dsh-git-tool').find((b) => String(b.props.title).indexOf('fetch：') === 0)
 fetchBtn.props.onClick()
 /* renderRoot 的第二个参数是 fiber 的路径前缀：必须照 popTree 用 'pop'，
-   才会落在挂着的同一批 fiber 上读到 busy 帧；换个名字等于新挂一套。 */
+   才会落在挂着的同一批 fiber 上读到那一帧；换个名字等于新挂一套。 */
+const fetchFrame = renderRoot(makeElement(popover, { sessionId: 's-1' }), 'pop')
+const fetchItems = buttons(byClass(fetchFrame, 'dsh-git-menu')[0])
+ok('fetch 进行中菜单四项照常可用（同步动作不抬面板 busy）', fetchItems.length === 4 && fetchItems.every((b) => b.props.disabled !== true))
+await wait(15)
+t = await settle('pop')
+
+/* !canAct 的另一条腿（busy）还得有人看得见。同步组的四个键不抬 busy 了，还有一条
+   老路照旧抬：序列器横幅的「继续」走的是无键 runOp —— 把 mock 的面板答复临时改成
+   「有一个进行中的变基」，点「继续」把 busy 抬起来，菜单不受影响地开着，四项跟着
+   全部置灰。 */
+OK_PANEL.sequencer = 'rebase'
+t = await settle('pop')
+const contBtn = buttons(t).find((b) => textOf(b) === '继续')
+if (contBtn === undefined) throw new Error('busy 帧：序列器横幅的「继续」没找到')
+contBtn.props.onClick()
 const busyFrame = renderRoot(makeElement(popover, { sessionId: 's-1' }), 'pop')
 const busyItems = buttons(byClass(busyFrame, 'dsh-git-menu')[0])
 ok('busy 帧里四项全部置灰', busyItems.length === 4 && busyItems.every((b) => b.props.disabled === true))
+OK_PANEL.sequencer = null
 await wait(15)
 t = await settle('pop')
 
