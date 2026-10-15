@@ -498,6 +498,107 @@
     const repoAppliedSignal = createSignal(function () { return repoApplied })
     const useRepoApplied = repoAppliedSignal.use
 
+    /* ── 生效仓库的浏览器级持久化层 ──
+
+       内存里的 sharedRepos 只活一页：DSH 换会话时整个 session 子树重挂，模块级的它
+       还在；但页面刷新、断线重连之后就没了 —— chip 只好退回工作区默认仓库，读者上次
+       单击选定的仓库等于被静默改掉。所以再垫一层 localStorage：一个 JSON 键存
+       { [sessionId]: 仓库绝对路径 }。这是视图态（这台浏览器里、这个读者怎么看这个
+       会话），按面板尺寸 PANEL_SIZE_KEY 的先例进 localStorage：不进 Host 部署配置、
+       不加 RPC，换浏览器、换机器不跟 —— 跨机器那是配置层（drafts / repos）的职责。
+
+       读取懒一次：第一次用到时才碰 localStorage，之后以内存这份账为准（页面上问
+       sessionRepo 的频率不低，没必要反复解析同一份 JSON）。store 还拿不到时不算
+       「读过」、下次再试 —— 刷新后的第一帧往往还没有人把 document 交进来，若把那
+       一空读当成「确实没选过」缓存住，等 doc 到了也救不回来。 */
+    const APPLIED_REPOS_KEY = 'dsh.git-idea.applied-repos'
+    /* 上限 50 个会话：一页同时开不了几个会话，但这个键跟着浏览器走一辈子，不设上限
+       的话经年攒下的旧会话 id 就永远躺在里面。超出按最近使用淘汰 —— rememberRepo
+       重写某会话时把它挪到队尾，淘汰永远从队首（最久没人碰的）开始。 */
+    const APPLIED_REPOS_MAX = 50
+    let appliedRepos = null
+
+    function appliedReposMap() {
+      if (appliedRepos !== null) return appliedRepos
+      if (localStore(null) == null) return null
+      const parsed = readStoredJSON(APPLIED_REPOS_KEY, null)
+      const clean = {}
+      if (parsed != null && typeof parsed === 'object') {
+        const keys = Object.keys(parsed)
+        for (let i = 0; i < keys.length; i += 1) {
+          const value = parsed[keys[i]]
+          /* 读入时清洗：键非空、值只要非空字符串。localStorage 是谁都能写的一块地，
+             畸形账（别的版本、手改、半截）就当没这条，绝不把别的东西喂给下游；空串
+             本来就是删除语义，读进来直接等于没有。 */
+          if (keys[i].length > 0 && typeof value === 'string' && value.length > 0) clean[keys[i]] = value
+        }
+      }
+      appliedRepos = clean
+      return appliedRepos
+    }
+
+    /* Every surface that has just been handed a document loads this layer, same
+       as it loads the panel size and the settings. The chip mounts on every page
+       long before the panel is opened, so by the time anything asks sessionRepo
+       with a store in reach, the account is already on hand — the panel's very
+       first render reads sessionRepo into its initial state, too late for later
+       loads to reach it. A non-empty account bumps the applied signal exactly
+       once: surfaces that rendered their first frame before the store existed
+       (the chip reads sessionRepo in render) get to re-read it and re-point
+       their watcher at the restored repository. */
+    function loadAppliedRepos(doc) {
+      localStore(doc)
+      if (appliedRepos !== null) return
+      const loaded = appliedReposMap()
+      if (loaded === null) return
+      if (Object.keys(loaded).length > 0) {
+        repoApplied += 1
+        repoAppliedSignal.notify()
+      }
+    }
+
+    function sessionRepo(sessionId) {
+      if (sessionId === undefined || sessionId === null) return ''
+      const mine = sharedRepos[sessionId]
+      if (typeof mine === 'string') return mine
+      /* 内存没有这一格：查持久化层。多数调用点赶到时账已在（chip 一挂就把 doc 交给
+         loadAppliedRepos 了）；万一 store 还不在，这一问安静地答空 —— 与持久化层
+         出现之前的答法一字不差。 */
+      const stored = appliedReposMap()
+      const value = stored !== null ? stored[sessionId] : undefined
+      return typeof value === 'string' ? value : ''
+    }
+    function rememberRepo(sessionId, next) {
+      if (sessionId === undefined || sessionId === null) return
+      const previous = sessionRepo(sessionId)
+      /* 同值早退：不重复通知，也不写盘 —— 盘上的字节是「读者做过一次真选择」的
+         账，一个没变成别的值的重申不配留痕。 */
+      if (previous === next) return
+      if (next.length > 0) sharedRepos[sessionId] = next
+      else delete sharedRepos[sessionId]
+      /* 盘上的账与内存同进退。store 不在（还没人交 doc、或 localStorage 被私隐模式
+         拒了）就只记内存 —— 与这个层出现之前的行为完全一致，writeStored 自己那层
+         try/catch 语义也是这么承诺的；store 在，则这次单击换来的选择立刻落盘，
+         刷新、重连、切走再切回来都还是它。 */
+      const stored = appliedReposMap()
+      if (stored !== null) {
+        if (next.length > 0) {
+          /* 先删再插：普通对象的键序就是这份账的「最近使用」序，重插即挪到队尾，
+             淘汰从队首开始 —— 最久没人碰的会话先让位。 */
+          delete stored[sessionId]
+          stored[sessionId] = next
+          const keys = Object.keys(stored)
+          for (let i = 0; i < keys.length - APPLIED_REPOS_MAX; i += 1) delete stored[keys[i]]
+        } else {
+          /* 空串是删除语义：与内存格同一条路，盘上也不留这一格。 */
+          delete stored[sessionId]
+        }
+        writeStoredJSON(APPLIED_REPOS_KEY, stored)
+      }
+      repoApplied += 1
+      repoAppliedSignal.notify()
+    }
+
     /* The same answer for the one surface that has no session of its own: the
        global half of the config pane reads it when it is rendered outside the
        panel — and it must not name a *path* either, because the Host is the one
@@ -515,21 +616,6 @@
       if (one.length === 0 || one === lastSessionId) return
       lastSessionId = one
       lastSessionSignal.notify()
-    }
-
-    function sessionRepo(sessionId) {
-      if (sessionId === undefined || sessionId === null) return ''
-      const value = sharedRepos[sessionId]
-      return typeof value === 'string' ? value : ''
-    }
-    function rememberRepo(sessionId, next) {
-      if (sessionId === undefined || sessionId === null) return
-      const previous = sessionRepo(sessionId)
-      if (next.length > 0) sharedRepos[sessionId] = next
-      else delete sharedRepos[sessionId]
-      if (previous === next) return
-      repoApplied += 1
-      repoAppliedSignal.notify()
     }
 
     /* ── panel geometry ──

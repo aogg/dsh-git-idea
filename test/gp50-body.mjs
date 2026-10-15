@@ -554,3 +554,114 @@ ok('← 回列表：多仓库侧栏原样回来，单击 beta 的仓库行照旧
   mergeView(multi) === undefined
   && byClass(multi, 'dsh-git-repo-row').some((r) => String(r.props.key) === 'repo:/tmp/ws/beta'
     && String(r.props.className).indexOf('dsh-git-repo-cur') >= 0))
+
+
+/* ═══ 生效仓库跨刷新记忆（10-state.js 的 localStorage 持久化层）═══
+ *
+ * 单击选定的生效仓库过去只活在模块内存里：页面一刷新就退回工作区默认仓库，读者上
+ * 一次的选择被静默改掉。这里把整条链路钉住：单击落盘、同值不写盘、读入清洗（空值
+ * 即删除）、上限按最近使用淘汰、刷新后 chip 的 watcher 与面板首帧都拿到恢复值。
+ *
+ * 「刷新页面」的模拟：用同一份 fakeDoc/localStorage 把 CLIENT_SRC **再求值一遍**
+ * （与上面 guard 实例同一招）—— 模块内存（sharedRepos、已读标记）全部归零，浏览器
+ * 那份盘账原样还在，正是刷新的语义。账本检查直接读 harness 的 store（localStorage
+ * 桩的兜底对象）。 */
+
+const APPLIED_KEY = 'dsh.git-idea.applied-repos'
+const appliedAccount = function () {
+  try { return JSON.parse(store[APPLIED_KEY]) } catch (error) { return null }
+}
+const tickWatchers = function () {
+  timers.filter((t) => t.kind === 'interval' && t.dead !== true).forEach((t) => t.cb())
+}
+reposReply = { ok: true, workspace: '/tmp/ws', repos: ['/tmp/ws/alpha', '/tmp/ws/beta'], manual: [], missing: [] }
+delete store[APPLIED_KEY]
+fibers.clear()
+
+/* 旧页面：两个面板实例对着同一个会话，各自持一份 appliedRepo 快照 —— 单击选仓库
+   的手势在「变更」页的仓库行上，单击（不带 ctrl）走 repoSingle。 */
+const pop9a = async () => renderUntilStable(makeElement(popover, { sessionId: 's-9' }), 'pop9a')
+const pop9b = async () => renderUntilStable(makeElement(popover, { sessionId: 's-9' }), 'pop9b')
+let tA = await pop9a()
+let tB = await pop9b()
+ok('载入不写盘：盘上没账时，挂面板只是读，localStorage 里还没有这个键', store[APPLIED_KEY] === undefined)
+await clickText(tA, '变更')
+tA = await pop9a()
+tA = await pop9a()
+const alphaRepoRow = (t) => byClass(t, 'dsh-git-repo-row').find((r) => String(r.props.key) === 'repo:/tmp/ws/alpha')
+alphaRepoRow(tA).props.onClick({})
+tA = await pop9a()
+ok('单击 alpha：生效仓库按会话记进持久化层（一个 JSON 键、按会话分格）',
+  appliedAccount() !== null && appliedAccount()['s-9'] === '/tmp/ws/alpha')
+
+/* 同值不写盘的探针：canary 只写在盘上、内存账里没有。若这次重申真的落了盘，
+   整份内存账会把它冲掉；断言它活着，就是断言「没写盘」。面板 B 挂在 alpha
+   落账之前，appliedRepo 快照还是空 —— 它再点同一个仓库，UI 层拦不住
+   （path ≠ 快照），拦住它的只能是持久化层自己的同值早退。 */
+store[APPLIED_KEY] = JSON.stringify({ 's-9': '/tmp/ws/alpha', 'canary': '/tmp/somewhere-else' })
+await clickText(tB, '变更')
+tB = await pop9b()
+tB = await pop9b()
+alphaRepoRow(tB).props.onClick({})
+tB = await pop9b()
+ok('同值不写盘：落后快照的面板再点同一个仓库，canary 原样还在（整份账没被重写）',
+  appliedAccount() !== null && appliedAccount().canary === '/tmp/somewhere-else'
+  && appliedAccount()['s-9'] === '/tmp/ws/alpha')
+
+/* 下一页的盘账长这样：s-9 的最终选择是 beta（比内存新 —— 内存那份刷新后就丢了），
+   一条空串账（删除语义），再加 50 个会话顶满上限。 */
+const crafted = { 's-9': '/tmp/ws/beta', 's-8': '' }
+for (let i = 0; i < 50; i += 1) crafted['k-' + (i < 10 ? '0' + i : String(i))] = '/tmp/r-' + String(i)
+store[APPLIED_KEY] = JSON.stringify(crafted)
+
+/* 刷新：再求值一遍 = 全新模块内存。chip 每页必挂又先于面板，它的挂载 effect 把
+   doc 交进来、把盘账读进来；账非空时 bump 一次 applied 信号，首帧读空了的
+   sessionRepo 重算，watcher 指回恢复出来的仓库。 */
+const registeredR = []
+const ctxR = {
+  get(n) {
+    if (n === 'slots') return { inject: (k, cb) => cb(), register: (o, c) => { registeredR.push({ options: o, component: c }); return () => {} } }
+    if (n === 'timer') return ctx.get('timer')
+    return undefined
+  },
+  effect(cb) { const d = cb(); return typeof d === 'function' ? d : () => {} },
+}
+new Function('ctx', 'React', 'host', 'styles', 'console', CLIENT_SRC)(
+  ctxR, React, host, { insert: () => () => {} }, console).apply(ctxR)
+
+fibers.clear()
+const chipR = registeredR.find((r) => r.options.id === 'dsh-git-idea-chip').component
+const popoverR = registeredR.find((r) => r.options.id === 'dsh-git-idea-panel').component
+const markR = calls.length
+let tChip = await renderUntilStable(makeElement(chipR, { sessionId: 's-9' }), 'chip-r9')
+await wait(10)
+tickWatchers()
+const watchAfter = callsOf(markR, 'git/watch')
+ok('刷新后 chip 从持久化层恢复：watcher 重新盯上恢复出来的仓库（git/watch 带 repo=/tmp/ws/beta）',
+  watchAfter.some((c) => c.args != null && c.args.repo === '/tmp/ws/beta'))
+
+/* 面板得先「开」：bundle2 是全新模块，open=false 时面板只画一个空壳（仓库行、
+   读数全都不在）。点一下 chip（openPanel 的老路）再挂面板；active / ready 是
+   真组合里装配方给面板的两位，给了它们，首帧的身份读与整树读才发得出去。 */
+if (tChip.props.className.indexOf('dsh-git-chip-open') < 0) { tChip.props.onClick(); await wait(10) }
+const popR = async () => renderUntilStable(makeElement(popoverR, { sessionId: 's-9', active: true, ready: true }), 'pop-r9')
+const markPanelR = calls.length
+let tR = await popR()
+const panelRepos = callsOf(markPanelR, 'git/panel').filter((c) => c.args != null && typeof c.args.repo === 'string' && c.args.repo.length > 0)
+ok('刷新后面板首帧就以恢复值为生效仓库（第一条带 repo 的 git/panel 是 /tmp/ws/beta）',
+  panelRepos.length > 0 && panelRepos[0].args.repo === '/tmp/ws/beta')
+
+/* 恢复出来的面板照常可切：单击 alpha = 一次真变化，落盘时把 51 条账重插 + 淘汰。 */
+await clickText(tR, '变更')
+tR = await popR()
+tR = await popR()
+alphaRepoRow(tR).props.onClick({})
+tR = await popR()
+const after = appliedAccount()
+ok('上限淘汰：账重写后恰好 50 个会话，最久没人碰的 k-00 先让位（k-01 / k-49 都还在）',
+  after !== null && Object.keys(after).length === 50
+  && !('k-00' in after) && ('k-01' in after) && ('k-49' in after))
+ok('空值清洗：盘上那条空串会话（s-8）读入时即丢弃，重写落盘也不会复活',
+  after !== null && !('s-8' in after))
+ok('恢复后照常可切：单击 alpha 立刻落盘为新值（s-9 → /tmp/ws/alpha）',
+  after !== null && after['s-9'] === '/tmp/ws/alpha')

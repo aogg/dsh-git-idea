@@ -1714,6 +1714,10 @@
         const doc = node != null ? node.ownerDocument : null
         loadPanelSize(doc)
         loadSettings(doc)
+        /* 面板首帧的 appliedRepo 是渲染期从 sessionRepo 拿的快照：平时账早被 chip
+           读好了（它每页必挂），这里补一次 doc 交接兜底 —— 万一面板先于 chip 到场
+           （单测直接挂面板、或未来的挂载顺序变化），账也赶在下次询问前就位。 */
+        loadAppliedRepos(doc)
         loadPluginConfig()
         if (panelSize.w > 0 || panelSize.h > 0) setSize({ w: panelSize.w, h: panelSize.h })
       }, [])

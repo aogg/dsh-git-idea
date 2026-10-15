@@ -174,6 +174,11 @@
 
       React.useEffect(function () {
         loadSettings(chipNode != null ? chipNode.ownerDocument : null)
+        /* 生效仓库的持久化账也在这里交 doc：chip 每页必挂、又比面板早，页面刷新后
+           第一个把 localStorage 里的账读进来的就是它 —— 账非空时它 bump 一次
+           applied 信号，上面渲染期读过的 sessionRepo 重算一遍，watcher 跟着指回
+           恢复出来的那个仓库（10-state.js 的 loadAppliedRepos）。 */
+        loadAppliedRepos(chipNode != null ? chipNode.ownerDocument : null)
         loadPluginConfig()
       }, [])
 
