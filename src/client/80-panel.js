@@ -83,6 +83,47 @@
       }, props.children)
     }
 
+    /* ── 远程签出的二选一确认框（qc-overlay 里那块 qc-box）──
+
+       右键「远程」组的分支点「签出」、本地同名分支已存在时开它。两个出口都切到
+       本地分支，区别只在本地分支要指向哪：保守的一边原地不动（本地提交保留），
+       激进的一边 reset --hard 到远端 —— 本地独有的提交与未提交改动一并丢弃，这份
+       危险写不进弹层正文那么长的话，就写全在按钮 title 里（命令 + 丢什么），按钮
+       本身给 danger 红（远端删除二次确认的同一个语义）。Esc 与点在底板上都关：
+       Esc 走 78-actions.js 的 useOutsideDismiss（捕获阶段 document 监听，不依赖
+       焦点在层里 —— 读者多半刚点完右键，焦点还不在框内）；底板那下由外层 overlay
+       的 onClick 接。 */
+    function RemoteExistsConfirm(props) {
+      const pick = props.pick
+      const [box] = React.useState(function () { return { node: null } })
+      useOutsideDismiss(props.open, props.onClose, [box])
+      if (props.open !== true) return null
+      return h('div', { key: 'box', className: 'dsh-git-qc-box', ref: function (node) { box.node = node } },
+        h('div', { key: 'h', className: 'dsh-git-qc-head' },
+          '本地已有分支 ' + pick.local + '，远端 ' + pick.name + ' 也在 —— 选择这次的签出动作'),
+        h('div', { key: 'hint', className: 'dsh-git-hint' },
+          '两个选择都会切到 ' + pick.local + '，区别只在本地分支要指向哪：保留它现在的提交，还是改成远端那份。'),
+        h('div', { key: 'a', className: 'dsh-git-qc-actions' },
+          h('button', {
+            key: 'local', type: 'button', className: 'dsh-git-btn dsh-git-primary',
+            disabled: props.busy === true,
+            title: 'git switch ' + pick.local + ' —— 本地分支与它已有的提交原样保留',
+            onClick: function (event) { stopEvent(event); props.onLocal() },
+          }, '切换到本地分支'),
+          h('button', {
+            key: 'reset', type: 'button', className: 'dsh-git-btn dsh-git-danger',
+            disabled: props.busy === true,
+            title: 'git switch ' + pick.local + ' + git reset --hard ' + pick.name
+              + ' —— 本地分支改成与远端完全一致：本地独有的提交与未提交的改动都会被丢弃，找不回来',
+            onClick: function (event) { stopEvent(event); props.onReset() },
+          }, '用远端覆盖'),
+          h('button', {
+            key: 'no', type: 'button', className: 'dsh-git-btn',
+            disabled: props.busy === true,
+            onClick: function (event) { stopEvent(event); props.onClose() },
+          }, '取消')))
+    }
+
     function GitConfigPane(props) {
       const sessionId = props.sessionId
       /* 两档作用域：项目（本仓库的 .git/config）与全局（插件与这台机器，79-globalconfig.js）。
@@ -690,6 +731,12 @@
          远端分支选择（RemotePickList，70-branchpicker.js）。点行 = runOp('git/pull',
          {setUpstream})，成功后 runOp 自己关掉它并写成功条。 */
       const [pullPick, setPullPick] = React.useState(null)
+      /* 右键远程分支「签出」遇本地同名分支的二选一层：null 关着；非 null 是
+         { name, repo, local } —— name 是完整远端名（origin/feat/x）、local 是去掉
+         远端前缀的本地名、repo 是右键那一行自己的仓库（空串就随 ctxRun 落回生效
+         仓库）。原先只报一句错误条把读者支去「本地」组，现在开着时正文上面盖一块
+         确认框：直切本地分支，或用远端覆盖本地分支。 */
+      const [remotePick, setRemotePick] = React.useState(null)
       /* 「修改跟踪分支」的选择层：null 关着；非 null 是 {name, repo} —— 右键的那个
          本地分支（HEAD 组与「本地」组的行都算，远程组的行没有这一项）。开着时正文
          上面盖一层远端分支选择（RemotePickList，70-branchpicker.js，与 pull 的上游
@@ -1932,9 +1979,10 @@
       }
 
       /* 签出远程分支：本地名取去掉远端前缀的那一段（origin/feat/x → feat/x）。
-         本地同名分支已存在时不发请求 —— 直接说清楚去哪找那一行；refs 数据过期
-         漏了的话，git 自己的拒绝（a branch named 'feat/x' already exists）会把
-         原话带上错误条，两道都明确。 */
+         本地同名分支已存在时不发请求 —— 开二选一确认层（remotePick）：两个出口都
+         切到本地那份，区别只在本地分支要指向哪。refs 数据过期漏了同名分支的话，
+         git 自己的拒绝（a branch named 'feat/x' already exists）会把原话带上错误
+         条，两道都明确。 */
       const ctxCheckoutRemote = function (name, repo) {
         const slash = name.indexOf('/')
         const local = slash > 0 ? name.slice(slash + 1) : name
@@ -1943,13 +1991,32 @@
           for (let i = 0; i < data.local.length; i += 1) {
             const row = data.local[i]
             if (row != null && text(row.data) === local) {
-              setError('本地已经有同名分支 ' + local + ' —— 要切过去请右键「本地」组里的那一行，那里才是已存在的分支')
+              setRemotePick({ name: name, repo: text(repo), local: local })
               return
             }
           }
         }
         ctxRun('git/checkout', { name: name, asNewLocal: true }, repo, '签出失败', function () {
           setOkNote('已把 ' + name + ' 签出为本地分支 ' + local + '，并跟踪 ' + name)
+        })
+      }
+
+      /* 二选一层的两个出口。都先关层再走 ctxRun：动作发起即关（busy 是 ctxRun 自己
+         置的），与右键菜单动作「没有两段式」同一规矩 —— 失败时错误条在层底下直接
+         可见，成功写成功条。
+         · 直切：本地分支与其提交原样保留，等价于右键「本地」组的那一行。
+         · 覆盖：切过去之后把本地分支重置到远端 —— 本地独有的提交与未提交改动都会
+           被丢弃，这份危险写在按钮 title 里，确认靠读者自己这一下。 */
+      const ctxCheckoutRemoteLocal = function (pick) {
+        setRemotePick(null)
+        ctxRun('git/checkout', { name: pick.local }, pick.repo, '签出失败', function () {
+          setOkNote('已切到分支 ' + pick.local)
+        })
+      }
+      const ctxCheckoutRemoteReset = function (pick) {
+        setRemotePick(null)
+        ctxRun('git/checkout', { name: pick.name, resetLocal: true }, pick.repo, '签出失败', function () {
+          setOkNote('已把 ' + pick.local + ' 重置到 ' + pick.name + ' 并切换过去（本地独有的提交已丢弃）')
         })
       }
 
@@ -3392,6 +3459,22 @@
                   onPick: function (match) { ctxSetUpstream(upstreamPick.name, upstreamPick.repo, match) },
                   onClose: function () { setUpstreamPick(null) },
                 })))
+          : null,
+        /* 远程签出遇本地同名分支的二选一层：与 pull 的上游选择同一块板子（qc-overlay
+           盖住正文、不盖掉面板本体）。点外（点在底板上）由这里关，Esc 由框内的
+           useOutsideDismiss 关；两个动作按钮发起即关层（setRemotePick 在 ctxRun 之前），
+           失败时错误条在层底下直接可见，成功写成功条。 */
+        remotePick !== null
+          ? h('div', {
+              key: 'remotepick', className: 'dsh-git-qc-overlay',
+              onClick: function (event) { if (event != null && event.target === event.currentTarget) setRemotePick(null) },
+            },
+              h(RemoteExistsConfirm, {
+                key: 'c', open: true, pick: remotePick, busy: busy === true,
+                onLocal: function () { ctxCheckoutRemoteLocal(remotePick) },
+                onReset: function () { ctxCheckoutRemoteReset(remotePick) },
+                onClose: function () { setRemotePick(null) },
+              }))
           : null,
         /* 右键菜单：光标锚的浮层（position:fixed）。挂在面板根部 —— 与 ⚡ 的下拉
             不同它不属于任何一格，开关只随 ctxMenu。 */

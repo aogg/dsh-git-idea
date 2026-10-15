@@ -191,6 +191,21 @@ onRpc('git/commit', function (input) {
 onRpc('git/checkout', async function (input) {
   const name = input != null && isStr(input.name) ? input.name.trim() : ''
   if (name.length === 0) return { ok: false, error: 'a branch name is required' }
+  /* 远程分支行的「用远端覆盖」（本地同名分支已存在、读者选了要远端那份）：name
+     还是完整的远端分支名（origin/feat/x），拆开清洗后调两步的 resetLocalToRemote
+     —— 先切到本地分支，再把它重置到远端。 */
+  if (input != null && input.resetLocal === true) {
+    const slash = name.indexOf('/')
+    const remote = slash > 0 ? cleanRefHalf(name.slice(0, slash)) : ''
+    const branch = slash > 0 ? cleanRefHalf(name.slice(slash + 1)) : ''
+    if (remote === null || branch === null || remote.length === 0 || branch.length === 0) {
+      return {
+        ok: false, error: 'bad-value',
+        stderr: '覆盖签出需要一个完整的远端分支名（如 origin/feature）：远端名与远端分支名都不能为空、不能以 - 开头、不能含控制字符',
+      }
+    }
+    return await resetLocalToRemote(input, branch, remote + '/' + branch)
+  }
   /* 远程分支行的「签出（检出为本地分支）」：name 是完整的远端分支短名
      （origin/feat/x），第一段是远端名，其余是本地分支名。走 switchBranch 的
      create 形状 → `git switch -c feat/x --track origin/feat/x`，与 git 自己的
@@ -219,6 +234,40 @@ onRpc('git/checkout', async function (input) {
   }
   return await switchBranch(input, target, '切换分支')
 })
+
+/* 「用远端覆盖」的两步：先 `git switch <local>` 切到本地分支，再
+   `git reset --hard <remote>/<branch>` 把它重置到远端。分两步而不是一步，是因为
+   reset --hard 只作用于「当前所在」的分支 —— 先 switch 保证被重置的一定是读者点的
+   那个本地分支，哪怕他此刻正站在别的分支上。所以第一步失败就不走第二步：分支没切
+   过去就硬重置，丢的会是别的分支的提交，这种错一次都不能犯 —— 第一步的答复原样
+   带回（switchBranch 的 finish 同一形状），错误条上是 switch 自己的原话。
+   两步各自进「命令」页（desc 区分），读者能在记录里看到这次覆盖到底动了什么。
+   读者本来就在该本地分支上时 switch 原地成功、reset 照跑 —— 这是有意的：此时他
+   要的就是「把手头这份丢掉、改成远端那份」。 */
+async function resetLocalToRemote(input, local, upstream) {
+  const args = argsFor(input)
+  const requested = repoFrom(input, null)
+  const moved = await cmdrecGit(input, '签出远程分支', ['switch', local], function () {
+    return git(args, ['switch', local], null, {})
+  })
+  if (moved.exitCode !== 0) {
+    return {
+      ok: false, repo: moved.cwd, stdout: moved.stdout, stderr: moved.stderr,
+      exitCode: moved.exitCode, command: moved.command, sandboxDenied: moved.sandboxDenied === true,
+    }
+  }
+  const done = await cmdrecGit(input, '重置到远端', ['reset', '--hard', upstream], function () {
+    return git(args, ['reset', '--hard', upstream], null, {})
+  })
+  /* switch 与 reset 都改了工作区和分支指向，缓存必须整仓失效 —— 读侧拿到的 refs
+     与状态才不会是重置前的旧账（switchBranch 的 finish 同一条规矩）。 */
+  invalidateRepo(requested !== undefined ? requested : done.cwd)
+  return {
+    ok: done.exitCode === 0, repo: done.cwd, stdout: done.stdout, stderr: done.stderr,
+    exitCode: done.exitCode, command: done.command, sandboxDenied: done.sandboxDenied === true,
+    resetTo: upstream,
+  }
+}
 
 const NET_SPAWN = { timeoutMs: 180000 }
 

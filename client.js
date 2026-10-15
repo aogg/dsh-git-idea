@@ -525,11 +525,12 @@ return {
     const useRepoApplied = repoAppliedSignal.use
 
     /* The same answer for the one surface that has no session of its own: the
-       settings page is global, so it cannot name a session — and it must not name
-       a *path* either, because the Host is the one that resolves a session's
-       workspace (see `repoFrom` in the Host half). So what is remembered here is
-       only the id, and the settings page hands that back to the Host: the same
-       resolution, the same sandbox policy, one source of truth. */
+       global half of the config pane reads it when it is rendered outside the
+       panel — and it must not name a *path* either, because the Host is the one
+       that resolves a session's workspace (see `repoFrom` in the Host half). So
+       what is remembered here is only the id, and that surface hands it back to
+       the Host: the same resolution, the same sandbox policy, one source of
+       truth. */
     let lastSessionId = ''
     const lastSessionSignal = createSignal(function () { return lastSessionId })
     const useLastSession = lastSessionSignal.use
@@ -791,6 +792,9 @@ return {
          rather than of the plugin — it is about how someone reads a diff, not
          about what git should do. */
       changesView: 'tree',
+      /* 配置页（80-panel.js）停在两档作用域的哪一档：'project' | 'global'。同样是
+         这个浏览器自己的读法偏好，与仓库、与插件都无关。 */
+      configScope: 'project',
     }
     let gitSettings = Object.assign({}, SETTINGS_DEFAULTS)
     let settingsLoaded = false
@@ -814,6 +818,7 @@ return {
       out.watchSlowSec = clampInt(raw.watchSlowSec, 2, 600, SETTINGS_DEFAULTS.watchSlowSec)
       out.hoverSwitch = raw.hoverSwitch !== false
       out.changesView = raw.changesView === 'flat' ? 'flat' : 'tree'
+      out.configScope = raw.configScope === 'global' ? 'global' : 'project'
       if (out.watchSlowSec < out.watchFastSec) out.watchSlowSec = out.watchFastSec
       return out
     }
@@ -853,17 +858,17 @@ return {
          与 host 70-config.js 的 normalizeConfig 两边同款：缺省 true / false。 */
       refreshOnComplete: true, pushOnAllComplete: false,
       /* 手动登记的仓库清单（按工作区分组，24-repos.js / 61-repos.js）。这里必须跟着
-         带上：设置页保存的是**整份**配置，客户端的归一化把它丢了的话，读者在设置页
+         带上：配置页保存的是**整份**配置，客户端的归一化把它丢了的话，读者在配置页
          改一次 git 路径，手动仓库清单就没了。原样搬运、不做清洗 —— 那是 Host 那边
          normalizeConfig 的职责，两边各写一份迟早漂移。 */
       repos: {},
-      /* 快捷命令（面板 ⚡ 按钮，客户端 78-actions.js / host 78-actions.js）。和 repos
+      /* 快捷命令（历史页 ⚡ 按钮，客户端 78-actions.js / host 78-actions.js）。和 repos
          不同，这一项两边都做归一化：它是读者直接编辑的清单，编辑器保存前要拿「合法
          条目 + 条数」做校验，Host 那份 normalizeConfig 是落盘前的最后一道关卡。 */
       quickCommands: [],
       /* 提交信息草稿（按生效仓库的根路径分键，80-panel.js 读写 / host 70-config.js
-         归一化）。与 repos 同一条先例：设置页保存的是**整份**配置，客户端的归一化
-         把它丢了的话，读者在设置页改一次 git 路径，各仓库写到一半的提交信息就全
+         归一化）。与 repos 同一条先例：配置页保存的是**整份**配置，客户端的归一化
+         把它丢了的话，读者在配置页改一次 git 路径，各仓库写到一半的提交信息就全
          没了。原样搬运、不做清洗 —— 清洗是 Host 那边 normalizeDrafts 的职责。 */
       drafts: {},
     }
@@ -1034,7 +1039,7 @@ return {
     }
 
     /* 答复落进两处：这个会话的工作区路径，和那份按工作区记的清单。扫描失败不是
-       错误横幅的事 —— 仓库清单是辅助信息，坏掉它不该坏掉面板（设置页那套 reason
+       错误横幅的事 —— 仓库清单是辅助信息，坏掉它不该坏掉面板（RepoSetup 那套 reason
        的完整句子留给了「仓库本身读不动」这种情况）。 */
     function adoptReposReply(sessionId, data) {
       if (data != null && data.ok === true && text(data.workspace).length > 0) {
@@ -1055,7 +1060,7 @@ return {
       bumpRepoList()
     }
 
-    /* 面板打开（或设置页挂着）时叫一次。异步、不阻塞首帧：这里只发起，回复通过
+    /* 面板打开时叫一次。异步、不阻塞首帧：这里只发起，回复通过
        signal 让正在渲染的面板重画。失败只落进 phase，不再抛给调用者。
 
        去重按**会话**记（repoScanAsked）：面板重开、切页签都不再扫 —— 「每个工作区
@@ -1096,7 +1101,7 @@ return {
       if (code === 'missing') return '这个目录不存在：' + path
       if (code === 'not-a-repository') return '这个目录不是 git 仓库（里面没有 .git），没法加进列表'
       if (code === 'absolute path required') return '要填绝对路径（以 / 开头）'
-      if (code === 'no-path') return '这个会话的工作区还没确定，先在设置页里确定路径'
+      if (code === 'no-path') return '这个会话的工作区还没确定，先在面板的仓库说明页里填一个目录'
       if (reply != null && reply.sandboxDenied === true) {
         return '文件沙箱不允许写插件配置，手动仓库暂时存不下来'
       }
@@ -2119,6 +2124,13 @@ textarea.dsh-git-input{resize:vertical}
 /* 面板的「配置」页（80-panel.js）住在面板正文里：设置页那套排版照搬，外层改成
    「占满正文、自己滚」—— 面板的高度是钳出来的，内容超出时滚，不把面板撑变形。 */
 .dsh-git-config{flex:1;min-height:0;overflow:auto;padding:10px 12px}
+/* 「配置」页顶部的作用域切换（80-panel.js GitConfigPane）：项目配置 / 全局配置。
+   记号用头部视图切换同一套 .dsh-git-cview，只是这一排自己占一行、贴左，不再
+   margin-left:auto 挤到行尾。 */
+.dsh-git-cfg-tabs{display:inline-flex;flex:none;gap:2px;padding:2px;border-radius:7px;background:var(--dsw-alias-interactive-bg-hover);align-self:flex-start}
+/* 全局配置那一档的正文（79-globalconfig.js GitGlobalConfigPane）：与 .dsh-git-set
+   同一套纵向节奏，但它是嵌在外层滚动容器里的第二层，不再自带 padding 与宽度上限。 */
+.dsh-git-global{display:flex;flex-direction:column;gap:14px}
 .dsh-git-set-select{box-sizing:border-box;flex:0 1 auto;min-width:0;max-width:260px;border:1px solid var(--dsh-alias-border-l1);border-radius:4px;background:var(--dsh-alias-bg-base);color:var(--dsh-alias-label-primary);font:inherit;font-size:12px;font-family:inherit;padding:4px 6px}
 .dsh-git-set-select:disabled{opacity:.45;cursor:default}
 .dsh-git-set-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -2326,7 +2338,7 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-repo-input:focus{border-color:var(--dsw-alias-brand-primary)}
 .dsh-git-repo-ok{flex:none}
 .dsh-git-repo-problem{padding:2px 6px 3px;font-size:10px;line-height:14px;color:var(--dsw-alias-state-error-primary)}
-/* 设置页（这里还不是仓库）下面挂的那份仓库清单：RepoSetup 自己是可滚动的整页，
+/* 「未检测到仓库」的说明页下面挂的那份仓库清单：RepoSetup 自己是可滚动的整页，
    清单跟在它下面同页滚动，一条细线隔开。 */
 .dsh-git-setupwrap{flex:1;display:flex;flex-direction:column;min-height:0;overflow:auto}
 .dsh-git-setupwrap .dsh-git-setup{flex:none;overflow:visible}
@@ -2412,7 +2424,7 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-oknote{flex:none;box-sizing:border-box;max-height:120px;overflow:auto;color:var(--dsw-alias-state-success-primary);background:var(--dsw-alias-bg-layer-2);border-bottom:1px solid var(--dsw-alias-border-l1);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
 
 /* ── 快捷命令的确认框与编辑器 ──
-    面板里是覆盖层（盖住正文、居中一张卡片）；设置页里同一张卡片直接排在管理组下面。 */
+    面板里是覆盖层（盖住正文、居中一张卡片）；配置页的全局组里同一张卡片直接排在管理组下面。 */
 .dsh-git-qc-overlay{position:absolute;inset:0;z-index:50;display:flex;padding:14px;background:var(--dsw-alias-bg-layer-1);overflow:auto}
 .dsh-git-qc-box{margin:auto;width:min(620px,100%);max-height:100%;box-sizing:border-box;display:flex;flex-direction:column;gap:8px;padding:12px 14px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1);box-shadow:var(--dsw-elevation-soft)}
 .dsh-git-qc-head{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600}
@@ -4260,11 +4272,11 @@ textarea.dsh-git-input{resize:vertical}
          一起提交了。勾选框则各落各的仓库（见 makeScope 的 onSetStaged）。 */
       const side = h('div', { className: 'dsh-git-commitpane' },
         h('div', { className: 'dsh-git-group-title' }, '提交信息'),
-        /* 先说出来，而不是等读者写完提交信息再被 git 拒一次。两条路都留着：设置页里
-           能填的那个地方（面板里点得到），和在终端里跑的两条命令（面板不一定开着）。 */
+        /* 先说出来，而不是等读者写完提交信息再被 git 拒一次。两条路都留着：面板
+           「配置」页里能填的那个地方，和在终端里跑的两条命令（面板不一定开着）。 */
         props.work.needsIdentity === true
           ? h('div', { key: 'ident', className: 'dsh-git-hint dsh-git-warn' },
-            '这台机器还没配 git 提交身份，提交会被 git 拒绝。设置页「dsh-git-idea配置 → 提交身份」里能填，'
+            '这台机器还没配 git 提交身份，提交会被 git 拒绝。面板「配置 → 全局配置 → 提交身份」里能填，'
             + '或在终端里跑：git config --global user.name "你的名字"、git config --global user.email "你的邮箱"。')
           : null,
         /* 同一件事也说在提交前：带未解决冲突的索引 `git commit` 会直接拒（「cannot
@@ -5236,8 +5248,9 @@ textarea.dsh-git-input{resize:vertical}
       const err = text(result.stderr).replace(/\s+$/, '')
       const detail = err.length > 0 ? err.slice(0, 400) : text(result.stdout).replace(/\s+$/, '').slice(0, 400)
       /* git 在这件事上说八行，其中七行是建议（"Run git config --global ..."），最后
-         一行才是拒绝本身。这里说的是同一件事，但先说面板里能点的那个地方（设置页的
-         提交身份），再给能照抄的命令 —— 两条路都留着，因为面板并不总是开着的。 */
+         一行才是拒绝本身。这里说的是同一件事，但先说面板里能点的那个地方（配置页
+         全局那一档的提交身份），再给能照抄的命令 —— 两条路都留着，因为面板并不总是
+         开着的。 */
       if (result.needsIdentity === true) {
         const lines = err.length > 0 ? err.split('\n') : []
         let last = ''
@@ -5245,7 +5258,7 @@ textarea.dsh-git-input{resize:vertical}
           if (lines[i].trim().length > 0) { last = lines[i].trim(); break }
         }
         const why = 'git 不知道这次提交该署谁的名字，所以把它拒了 —— 作者身份写在 git 的配置里，'
-          + '不在这个仓库里。设置页「dsh-git-idea配置 → 提交身份」里可以填，'
+          + '不在这个仓库里。面板「配置 → 全局配置 → 提交身份」里可以填，'
           + '或者在终端里跑一遍：\n'
           + '  git config --global user.name "你的名字"\n'
           + '  git config --global user.email "你的邮箱"\n'
@@ -5388,10 +5401,11 @@ textarea.dsh-git-input{resize:vertical}
      *   别处发起的，这里只管「一个路径的三个版本」。所以「取消」只关界面，绝不执
      *   行 git merge --abort；「应用更改」写回这一个文件并 git add，也不替读者
      *   继续合并（继续/中止在顶栏横幅上）。
-     * · ⚙ 落在面板自己的「配置」页：DSH 的全局设置面板（设置 → dsh-git-idea配置）
-     *   的打开状态是 shell 私有的 store，插件没有任何受支持的编程入口能打开它
-     *   （settings.launcher 槽位被自带账户菜单占用，抢注等于顶掉自带 UI）。面板
-     *   内能到的设置类页面就是「配置」页，⚙ 关掉本界面并切过去。
+     * · ⚙ 落在面板自己的「配置」页：本插件在 DSH 全局设置面板里已经没有自己的一页
+     *   （2026-10 起那一页整个搬成了配置页的「全局配置」），而设置面板的打开状态是
+     *   shell 私有的 store，插件没有任何受支持的编程入口能打开它（settings.launcher
+     *   槽位被自带账户菜单占用，抢注等于顶掉自带 UI）。面板内能到的设置类页面就是
+     *   「配置」页，⚙ 关掉本界面并切过去。
      *
      * 结果区是一支普通 textarea，冲突块的底色画在它身后一层按「行号 × 行高」定位
      * 的色块层里（行高固定，几何是算术，不需要逐行镜像 DOM）—— 这样中文输入法、
@@ -6890,8 +6904,8 @@ textarea.dsh-git-input{resize:vertical}
         提交操作（拣选/还原/标签/分支）住进了提交行的右键菜单，分支管理（复制/新建/
         删除）住进了分支行的右键菜单 —— 提交历史的工具条上只剩这一个开菜单的按钮
         （按钮本体在 80-panel.js 的 toolbar 里）。快捷命令的编辑器是同一个组件的两处
-        使用：面板里的覆盖层，和设置页（90-settings.js）里的管理组 —— 片段共享作用域，
-        直接引用，不需要再开一条通道。
+        使用：历史页 ⚡ 菜单里的覆盖层，和配置页「全局配置」里的管理组（79-globalconfig.js）
+        —— 片段共享作用域，直接引用，不需要再开一条通道。
 
         按钮的类名刻意不用 dsh-git-tool：样式照着它画（见 46-css.js），但那个类是
         「作用于选中提交的工具」（拣选/还原/标签/分支——它们现在住在提交行的右键
@@ -7179,9 +7193,10 @@ textarea.dsh-git-input{resize:vertical}
 
     /* ── 快捷命令编辑器：列表态 + 编辑态 ──
 
-       面板（覆盖层）与设置页（管理组）共用。配置读写走 usePluginConfig / savePluginConfig
-       —— 那一层已经有 400ms 去抖和 Host 的归一化，这里不另开炉灶。上限 50 条：超出的那次
-       新增不保存，并把原因说在编辑器里（归一化里的截断只是兜底）。 */
+       历史页 ⚡ 菜单（覆盖层）与配置页「全局配置」（管理组）共用。配置读写走
+       usePluginConfig / savePluginConfig —— 那一层已经有 400ms 去抖和 Host 的归一化，
+       这里不另开炉灶。上限 50 条：超出的那次新增不保存，并把原因说在编辑器里
+       （归一化里的截断只是兜底）。 */
     function QuickCommandsEditor(props) {
       const plugin = usePluginConfig()
       const commands = plugin != null && Array.isArray(plugin.quickCommands) ? plugin.quickCommands : []
@@ -7353,7 +7368,401 @@ textarea.dsh-git-input{resize:vertical}
         rows,
         h('div', { key: 'a', className: 'dsh-git-qc-actions' },
           h('button', { key: 'new', type: 'button', className: 'dsh-git-btn', onClick: startNew }, '新增'),
-          h('span', { key: 'n', className: 'dsh-git-menu-dim' }, '保存在插件配置里，面板和设置页共用同一份')))
+          h('span', { key: 'n', className: 'dsh-git-menu-dim' }, '保存在插件配置里，这个菜单和「配置 → 全局配置」共用同一份')))
+    }
+    /* ── 面板「配置」页的另一半：全局配置 ──
+
+       原先这里是一页挂在 DSH 设置面板（左下角 → 设置）里的「dsh-git-idea配置」，
+       2026-10 起整页搬进面板的「配置」页，作为与「项目配置」并列的一档作用域：
+       插件自己的行为、git 在这台机器上的位置与提交身份、还有只属于这个浏览器的外观
+       与节奏。搬动只换了住处，没换读写路径 —— 还是 20-prefs.js 那两层（插件配置走
+       Host 的 json，本浏览器走 localStorage），Host 那半一行都不用动。
+
+       这个文件必须排在 80-panel.js 之前：GitConfigPane 在「全局」那一档渲染
+       GitGlobalConfigPane（构建脚本的顺序契约：只用上面定义过的东西）。 */
+
+    /* ── 提交身份：写在 git 自己的配置里 ──
+
+       这一组和插件配置文件不是一回事：`user.name` / `user.email` 是 git 的
+       设置，写进去以后终端里的 git、IDEA、钩子看到的都是同一个作者。所以这里既读又
+       写，而且写什么由读者挑：这台机器的所有仓库（`--global`），还是只这一个仓库
+       （`--local`）。
+
+       面板不替你署名：空着的框一个字节都不写（`git config user.name ''` 正是「empty
+       ident name」那个错误的来路），两个都空就什么也不做并说清楚。 */
+    function GitIdentityGroup(props) {
+      /* 面板把手里的 session id 递下来；组件单独渲染（老设置页、测试）时退回
+         lastSession —— chip 一直挂在输入框旁，是它把这件事记下来的那个面。 */
+      const remembered = useLastSession()
+      const sessionId = props != null && typeof props.sessionId === 'string' && props.sessionId.length > 0
+        ? props.sessionId
+        : remembered
+      const [state, setState] = React.useState(null)
+      const [name, setName] = React.useState('')
+      const [email, setEmail] = React.useState('')
+      const [scope, setScope] = React.useState('global')
+      const [busy, setBusy] = React.useState(false)
+      const [note, setNote] = React.useState('')
+      const [problem, setProblem] = React.useState('')
+
+      /* 只把 session id 交给 Host，路径由它自己从会话的工作区解出来 —— 和面板、
+         chip 走的是同一条路，也就落在这个会话的沙箱策略里。 */
+      const request = function () {
+        return sessionId.length > 0 ? { sessionId: sessionId } : {}
+      }
+      const load = function () {
+        callHost('git/identity', request()).then(function (data) {
+          setState(data)
+          setProblem('')
+          /* 预填：先给此刻生效的那一份，没有再给机器上的那一份。读者要改的就是它。 */
+          const effectiveName = text(data.name)
+          const effectiveEmail = text(data.email)
+          setName(effectiveName.length > 0 ? effectiveName : text(data.globalName))
+          setEmail(effectiveEmail.length > 0 ? effectiveEmail : text(data.globalEmail))
+        }, function (failure) { setProblem(failureText(failure)) })
+      }
+      React.useEffect(function () { load() }, [sessionId])
+
+      const save = function () {
+        if (busy) return
+        setBusy(true)
+        setNote('')
+        setProblem('')
+        const payload = { scope: scope, name: name, email: email }
+        if (sessionId.length > 0) payload.sessionId = sessionId
+        callHost('git/identity-save', payload).then(function (result) {
+          setBusy(false)
+          setState(result)
+          setNote(result.scope === 'local'
+            ? ('已写进 ' + text(result.repo) + ' 的 .git/config：' + result.written.join('、'))
+            : ('已写进这台机器的 git 配置：' + result.written.join('、')))
+        }, function (failure) {
+          setBusy(false)
+          setProblem(failureText(failure))
+        })
+      }
+
+      const ready = state != null
+      const missing = ready && state.needsIdentity === true
+      const source = function (value, origin) {
+        const one = text(value)
+        if (one.length === 0) return '没有配'
+        const from = text(origin)
+        return from.length === 0 ? one : (one + '（来自 ' + from + '）')
+      }
+      const toggle = function (next) {
+        return h('label', { className: 'dsh-git-set-check' },
+          h('input', {
+            type: 'radio', checked: scope === next, name: 'dsh-git-ident-scope',
+            onChange: function () { setScope(next) },
+          }),
+          h('span', null, next === 'global' ? '这台机器的所有仓库（--global）' : '只对这个仓库（--local）'))
+      }
+
+      return h('div', null,
+        h('div', { className: 'dsh-git-set-group' }, '提交身份（写在 git 自己的配置里）'),
+        h('div', { className: 'dsh-git-set-hint' },
+          'git 不知道作者是谁时会拒绝提交，而这台机器上终端里的 git 也用同一份配置。面板空着的框一个字节都不写。'),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '此刻生效'),
+          h('span', { className: missing === true ? 'dsh-git-set-hint dsh-git-warn' : 'dsh-git-set-hint' },
+            ready !== true ? '正在读取…'
+              : (missing === true
+                ? '还缺：' + (state.nameMissing === true ? '名字' : '邮箱') + ' —— 提交会被 git 拒绝'
+                : (source(state.name, state.nameOrigin) + ' · ' + source(state.email, state.emailOrigin))))),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '名字'),
+          h('input', {
+            className: 'dsh-git-input dsh-git-set-input',
+            placeholder: '提交里显示的名字',
+            value: name,
+            onChange: function (event) { setName(event.target.value) },
+          })),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '邮箱'),
+          h('input', {
+            className: 'dsh-git-input dsh-git-set-input',
+            placeholder: 'you@example.com',
+            value: email,
+            onChange: function (event) { setEmail(event.target.value) },
+          })),
+
+        h('div', { className: 'dsh-git-set-row' }, h('span', { className: 'dsh-git-set-label' }, '写进哪里'), toggle('global')),
+        h('div', { className: 'dsh-git-set-row' }, h('span', { className: 'dsh-git-set-label' }, ''), toggle('local')),
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, ''),
+          h('span', { className: 'dsh-git-set-hint' },
+            text(state != null ? state.repo : '').length > 0
+              ? ('这个仓库 = ' + state.repo)
+              : '这个会话还解不出仓库路径 —— 先在「变更 / 历史」页把仓库打开，或只写全局那一份')),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('button', {
+            type: 'button', className: 'dsh-git-btn dsh-git-primary',
+            disabled: busy || (scope === 'local' && text(state != null ? state.repo : '').length === 0),
+            onClick: save,
+          }, busy ? '写入中…' : '写入 git 配置'),
+          h('span', { className: 'dsh-git-set-hint' }, '写进去就是以后所有提交的作者，别的工具也看得到')),
+
+        note.length > 0 ? h('div', { className: 'dsh-git-set-row dsh-git-set-hint' }, note) : null,
+        problem.length > 0 ? h('div', { className: 'dsh-git-set-row dsh-git-error' }, problem) : null)
+    }
+
+    /* ── git 位置：这台机器上的哪个 git ──
+
+       每一行命令都以同一个词开头，而那个词默认来自部署的 PATH。装在不在这条 PATH 上的
+       地方（Homebrew 前缀、IDE 自带的 git、nix profile）时，面板以前只会说「这台机器
+       上找不到 git」—— 既是错的，也没给出下一步。所以它是个设置。 */
+    function GitToolchainGroup() {
+      const plugin = usePluginConfig()
+      const committed = usePluginConfigCommitted()
+      const [draftPath, setDraftPath] = React.useState(plugin.gitPath)
+      const [tool, setTool] = React.useState(null)
+      React.useEffect(function () { setDraftPath(plugin.gitPath) }, [plugin.gitPath])
+
+      const probe = function () {
+        callHost('git/toolchain', {}).then(function (data) { setTool(data) }, function (failure) {
+          setTool({ ok: false, path: '', version: '', found: false, reason: 'probe-failed', error: failureText(failure) })
+        })
+      }
+      /* 问的时机是**Host 确认过之后**，不是敲键的时候：草稿是即时的，而
+         `savePluginConfig` 有 400ms 去抖，落盘之后 Host 才回话。挂在草稿上问，
+         问到的是上一份配置 —— 真机上量到的就是界面永远慢一步（写入坏路径之后那一行
+         还说「来自 PATH」，要等下一次改动才改口）；挂在每次按键上还会把一次询问变成
+         每个字符一次。`committed` 只在答复带着配置回来时动。 */
+      React.useEffect(function () { probe() }, [committed])
+
+      const commitPath = function (value) {
+        setDraftPath(value)
+        const next = Object.assign({}, plugin)
+        next.gitPath = value
+        savePluginConfig(next)
+      }
+      const found = tool != null && tool.found === true
+      const reason = tool == null ? '' : text(tool.reason)
+      const verdict = tool == null
+        ? '正在检查…'
+        : (found
+          ? ('现在用的是 ' + tool.path + (tool.fromPath === true ? '（来自 PATH）' : '（设置里写的就是它）')
+            + ' · ' + text(tool.version))
+          : (reason === 'configured-missing'
+            ? '设置里写的这个路径不可用：它不存在，或者不是可执行文件。面板里的每条命令都会失败。'
+            : '这台机器的 PATH 上没有 git。装上它，或者在下面写一个绝对路径。'))
+
+      return h('div', null,
+        h('div', { className: 'dsh-git-set-group' }, 'git 位置'),
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '可执行文件'),
+          h('input', {
+            className: 'dsh-git-input dsh-git-set-input',
+            placeholder: '留空 = 用 PATH 里的 git',
+            value: draftPath,
+            onChange: function (event) { commitPath(event.target.value) },
+          })),
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, ''),
+          h('span', { className: found === true ? 'dsh-git-set-hint' : 'dsh-git-set-hint dsh-git-warn' }, verdict)),
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, ''),
+          h('button', { type: 'button', className: 'dsh-git-btn', onClick: probe }, '再检查一次'),
+          h('span', { className: 'dsh-git-set-hint' }, '面板读、写、初始化用的都是这一个')))
+    }
+
+    /* ── 全局配置这一档的整页 ──
+
+       老设置页 GitSettingsSection 的正文，去掉页首大标题（作用域切换那排已经说了
+       「全局配置」）。分组次序原样保留：插件自己的行为在前，git 与这台机器的在后，
+       只关于这个浏览器的外观收尾。 */
+    function GitGlobalConfigPane(props) {
+      const sessionId = props != null && typeof props.sessionId === 'string' ? props.sessionId : ''
+      const settings = useGitSettings()
+      const [draft, setDraft] = React.useState(settings)
+      const plugin = usePluginConfig()
+      const [pdraft, setPdraft] = React.useState(plugin)
+
+      React.useEffect(function () { setDraft(settings) }, [settings])
+      React.useEffect(function () { setPdraft(plugin) }, [plugin])
+
+      const setPlugin = function (key, value) {
+        const next = Object.assign({}, pdraft)
+        next[key] = value
+        setPdraft(next)
+        savePluginConfig(next)
+      }
+
+      const apply = function (next) {
+        setDraft(next)
+        saveSettings(next)
+      }
+      const set = function (key, value) {
+        const next = Object.assign({}, draft)
+        next[key] = value
+        apply(next)
+      }
+      const num = function (key, value, min, max) {
+        const n = parseInt(value, 10)
+        set(key, isNaN(n) ? min : n)
+      }
+      const watchOff = draft.watchEnabled !== true
+
+      return h('div', {
+        className: 'dsh-git-global',
+        ref: function (node) {
+          loadSettings(node != null ? node.ownerDocument : null)
+          loadPluginConfig()
+        },
+      },
+        h('div', { className: 'dsh-git-set-hint' },
+          '这一半不跟着仓库走：保存在部署配置目录旁的 dsh-git-idea.json，换浏览器、换仓库都一致 —— 最后一组「本浏览器」例外，只管这个浏览器自己的外观与节奏。'),
+
+        h('div', { className: 'dsh-git-set-group' }, '插件配置'),
+        h('div', { className: 'dsh-git-set-hint' },
+          pluginConfigPath.length > 0
+            ? ('保存在 ' + pluginConfigPath + ' —— 换浏览器也一致')
+            : '保存在部署配置目录旁的 dsh-git-idea.json —— 换浏览器也一致'),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '初始化仓库的默认分支'),
+          clearable('init', h('input', {
+            className: 'dsh-git-input dsh-git-set-input',
+            placeholder: 'main',
+            value: pdraft.initBranch,
+            onChange: function (event) { setPlugin('initBranch', event.target.value) },
+          }), pdraft.initBranch.length > 0, function () { setPlugin('initBranch', '') }, 'dsh-git-clearable-set'),
+          h('span', { className: 'dsh-git-set-hint' }, '引导页「在此初始化仓库」会用它执行 git init -b；留空则用 git 自己的默认值')),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('label', { className: 'dsh-git-set-check' },
+            h('input', {
+              type: 'checkbox', checked: pdraft.cherryPickRecord === true,
+              onChange: function (event) { setPlugin('cherryPickRecord', event.target.checked) },
+            }),
+            h('span', null, 'cherry-pick 时记录来源（-x）'))),
+
+        h('div', { className: 'dsh-git-set-group' }, '远程同步'),
+        h('div', { className: 'dsh-git-set-hint' },
+          '这三条是面板给 git 的实参，不是 git 自己的设置：下面没勾的，就是 git 原本的行为（`push.default`、`pull.rebase` 照旧生效）。'),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('label', { className: 'dsh-git-set-check' },
+            h('input', {
+              type: 'checkbox', checked: pdraft.fetchPrune !== false,
+              onChange: function (event) { setPlugin('fetchPrune', event.target.checked) },
+            }),
+            h('span', null, 'fetch 时删掉远端已经删了的远程分支（--prune）'))),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('label', { className: 'dsh-git-set-check' },
+            h('input', {
+              type: 'checkbox', checked: pdraft.pullRebase === true,
+              onChange: function (event) { setPlugin('pullRebase', event.target.checked) },
+            }),
+            h('span', null, 'pull 用 rebase 而不是 merge（--rebase）'))),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('label', { className: 'dsh-git-set-check' },
+            h('input', {
+              type: 'checkbox', checked: pdraft.pushSetUpstream === true,
+              onChange: function (event) { setPlugin('pushSetUpstream', event.target.checked) },
+            }),
+            h('span', null, '推送没有上游的分支时直接推上去并设上游（push -u）'))),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '也就是'),
+          h('span', { className: 'dsh-git-set-hint' },
+            'git fetch --all' + (pdraft.fetchPrune !== false ? ' --prune' : '')
+            + ' · git pull' + (pdraft.pullRebase === true ? ' --rebase' : '')
+            + ' · ' + (pdraft.pushSetUpstream === true ? 'git push -u <remote> <branch>（没有上游时）' : 'git push（没有上游时由面板问一句）'))),
+
+        /* 快捷命令的管理组：和历史页 ⚡ 菜单里的编辑器是同一个组件（78-actions.js）——
+           同一份配置、同一套校验，两处改的都是同一样东西。 */
+        h('div', { className: 'dsh-git-set-group' }, '快捷命令'),
+        h('div', { className: 'dsh-git-set-hint' },
+          '自定义命令模板，历史页的 ⚡ 按钮一键执行；{branch}、{hash} 这类变量按当前分支和选中的提交代值。与那个菜单共用同一份（也保存在上面那个 json 里）。'),
+        h(QuickCommandsEditor, { key: 'qc', initial: 'list' }),
+
+        h(GitToolchainGroup),
+
+        pluginConfigError.length > 0
+          ? h('div', { className: 'dsh-git-set-row dsh-git-error' }, '保存失败：' + pluginConfigError)
+          : null,
+
+        h(GitIdentityGroup, { key: 'ident', sessionId: sessionId }),
+
+        h('div', { className: 'dsh-git-set-group' }, '本浏览器'),
+        h('div', { className: 'dsh-git-set-hint' }, '这些只是外观和使用节奏，换浏览器各管各的。'),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('label', { className: 'dsh-git-set-check' },
+            h('input', {
+              type: 'checkbox', checked: draft.watchEnabled === true,
+              onChange: function (event) { set('watchEnabled', event.target.checked) },
+            }),
+            h('span', null, '后台监测仓库变化，发现变化就自动刷新'))),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '面板打开时每'),
+          h('input', {
+            className: 'dsh-git-input dsh-git-set-num', type: 'number', min: 1, max: 120,
+            disabled: watchOff,
+            value: String(draft.watchFastSec),
+            onChange: function (event) { num('watchFastSec', event.target.value, 1, 120) },
+          }),
+          h('span', { className: 'dsh-git-set-hint' }, '秒检查一次')),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '只有按钮时每'),
+          h('input', {
+            className: 'dsh-git-input dsh-git-set-num', type: 'number', min: 2, max: 600,
+            disabled: watchOff,
+            value: String(draft.watchSlowSec),
+            onChange: function (event) { num('watchSlowSec', event.target.value, 2, 600) },
+          }),
+          h('span', { className: 'dsh-git-set-hint' }, '秒检查一次')),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('label', { className: 'dsh-git-set-check' },
+            h('input', {
+              type: 'checkbox', checked: draft.watchChip === true, disabled: watchOff,
+              onChange: function (event) { set('watchChip', event.target.checked) },
+            }),
+            h('span', null, '面板关着时也监测，让按钮上的分支名和改动数保持实时'))),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('label', { className: 'dsh-git-set-check' },
+            h('input', {
+              type: 'checkbox', checked: draft.hoverSwitch === true,
+              onChange: function (event) { set('hoverSwitch', event.target.checked) },
+            }),
+            h('span', null, '鼠标停在输入框旁的 Git 按钮上，弹出分支切换卡片（点一下就切）'))),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '面板尺寸'),
+          h('span', { className: 'dsh-git-set-hint' },
+            panelSize.w > 0 || panelSize.h > 0
+              ? (String(panelSize.w) + ' × ' + String(panelSize.h) + ' 像素')
+              : '跟随输入框宽度 / 74vh'),
+          h('button', {
+            type: 'button', className: 'dsh-git-btn',
+            onClick: function () { publishPanelSize({ w: 0, h: 0 }); savePanelSize() },
+          }, '恢复默认尺寸')),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '切换器的记忆'),
+          h('span', { className: 'dsh-git-set-hint' }, '最近使用与收藏只写在这个浏览器里'),
+          h('button', {
+            type: 'button', className: 'dsh-git-btn',
+            onClick: function () { clearBranchMemory() },
+          }, '清除最近使用与收藏')),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('button', {
+            type: 'button', className: 'dsh-git-btn',
+            onClick: function () { apply(Object.assign({}, SETTINGS_DEFAULTS)) },
+          }, '本浏览器全部恢复默认')))
     }
     /* ── 面板能长多高：跟着输入框的位置走 ──
 
@@ -7391,13 +7800,19 @@ textarea.dsh-git-input{resize:vertical}
       return null
     }
 
-    /* ── 面板的「配置」页：只关于本项目 ──
+    /* ── 面板的「配置」页：项目配置与全局配置 ──
 
-       设置页那份提交身份管的是机器（`--global` 可选），而面板属于会话、常常开在别
-       的仓库上 —— 这里要的是另一件事：只看、只写**当前这个项目**的 .git/config。
-       git 自己管换行符的两个键（core.autocrlf / core.eol）是同一性质；远端表也长在
-       .git/config 里，只是它走 git remote 自己的三条子命令（74-identity.js）。四个
-       分组都在这一页里；样式复用设置页那套 dsh-git-set-*。 */
+       这一页分两档作用域，切换排在页首（记号用头部视图切换同一套 dsh-git-cview）：
+
+       · 项目配置 —— 只关于眼前这个仓库：会话完成后的刷新/推送、只写 **本项目**
+         .git/config 的提交身份、git 自己管换行符的两个键（core.autocrlf / core.eol）、
+         远端表（长在 .git/config 里，走 git remote 自己的三条子命令，74-identity.js）。
+       · 全局配置 —— 跟着插件与这台机器走（79-globalconfig.js 的 GitGlobalConfigPane，
+         原先是 DSH 设置面板里的「dsh-git-idea配置」页，2026-10 起搬到这里）：初始化
+         分支、远程同步实参、快捷命令、git 位置、提交身份（--global/--local 自选）、
+         以及只属于本浏览器的外观与节奏。
+
+       两档共用同一套 dsh-git-set-* 排版（沿袭自原先那页设置页的样式）。 */
 
     /* ── 右键菜单（ContextMenu）：提交行与分支行共用的一块浮层 ──
 
@@ -7434,8 +7849,69 @@ textarea.dsh-git-input{resize:vertical}
       }, props.children)
     }
 
+    /* ── 远程签出的二选一确认框（qc-overlay 里那块 qc-box）──
+
+       右键「远程」组的分支点「签出」、本地同名分支已存在时开它。两个出口都切到
+       本地分支，区别只在本地分支要指向哪：保守的一边原地不动（本地提交保留），
+       激进的一边 reset --hard 到远端 —— 本地独有的提交与未提交改动一并丢弃，这份
+       危险写不进弹层正文那么长的话，就写全在按钮 title 里（命令 + 丢什么），按钮
+       本身给 danger 红（远端删除二次确认的同一个语义）。Esc 与点在底板上都关：
+       Esc 走 78-actions.js 的 useOutsideDismiss（捕获阶段 document 监听，不依赖
+       焦点在层里 —— 读者多半刚点完右键，焦点还不在框内）；底板那下由外层 overlay
+       的 onClick 接。 */
+    function RemoteExistsConfirm(props) {
+      const pick = props.pick
+      const [box] = React.useState(function () { return { node: null } })
+      useOutsideDismiss(props.open, props.onClose, [box])
+      if (props.open !== true) return null
+      return h('div', { key: 'box', className: 'dsh-git-qc-box', ref: function (node) { box.node = node } },
+        h('div', { key: 'h', className: 'dsh-git-qc-head' },
+          '本地已有分支 ' + pick.local + '，远端 ' + pick.name + ' 也在 —— 选择这次的签出动作'),
+        h('div', { key: 'hint', className: 'dsh-git-hint' },
+          '两个选择都会切到 ' + pick.local + '，区别只在本地分支要指向哪：保留它现在的提交，还是改成远端那份。'),
+        h('div', { key: 'a', className: 'dsh-git-qc-actions' },
+          h('button', {
+            key: 'local', type: 'button', className: 'dsh-git-btn dsh-git-primary',
+            disabled: props.busy === true,
+            title: 'git switch ' + pick.local + ' —— 本地分支与它已有的提交原样保留',
+            onClick: function (event) { stopEvent(event); props.onLocal() },
+          }, '切换到本地分支'),
+          h('button', {
+            key: 'reset', type: 'button', className: 'dsh-git-btn dsh-git-danger',
+            disabled: props.busy === true,
+            title: 'git switch ' + pick.local + ' + git reset --hard ' + pick.name
+              + ' —— 本地分支改成与远端完全一致：本地独有的提交与未提交的改动都会被丢弃，找不回来',
+            onClick: function (event) { stopEvent(event); props.onReset() },
+          }, '用远端覆盖'),
+          h('button', {
+            key: 'no', type: 'button', className: 'dsh-git-btn',
+            disabled: props.busy === true,
+            onClick: function (event) { stopEvent(event); props.onClose() },
+          }, '取消')))
+    }
+
     function GitConfigPane(props) {
       const sessionId = props.sessionId
+      /* 两档作用域：项目（本仓库的 .git/config）与全局（插件与这台机器，79-globalconfig.js）。
+         选哪档是「这个浏览器怎么用这一页」的偏好，落在浏览器本地那份 settings 里，
+         下次打开还在；首次进来是项目 —— 面板本来就是对着当前仓库说话的。 */
+      const prefs = useGitSettings()
+      const [scope, setScope] = React.useState(prefs.configScope === 'global' ? 'global' : 'project')
+      const pickScope = function (next) {
+        setScope(next)
+        if (prefs.configScope !== next) saveSettings(Object.assign({}, prefs, { configScope: next }))
+      }
+      const scopeTab = function (id, label, hint) {
+        return h('button', {
+          key: id, type: 'button',
+          className: 'dsh-git-cview' + (scope === id ? ' dsh-git-cview-on' : ''),
+          title: hint,
+          onClick: function () { pickScope(id) },
+        }, label)
+      }
+      const scopeTabs = h('div', { className: 'dsh-git-cfg-tabs' },
+        scopeTab('project', '项目配置', '只关于眼前这个仓库：会话完成后自动刷新/推送、只写 --local 的提交身份、换行符与远端'),
+        scopeTab('global', '全局配置', '跟着插件与这台机器走：初始化分支、远程同步、快捷命令、git 位置、提交身份（--global/--local）与本浏览器的外观'))
       const plugin = usePluginConfig()
       const autoPushNote = useAutoPush()
       const [snap, setSnap] = React.useState(null)
@@ -7458,7 +7934,7 @@ textarea.dsh-git-input{resize:vertical}
       const [note, setNote] = React.useState('')
       const [problem, setProblem] = React.useState('')
 
-      /* 只把 session id 交给 Host（设置页 GitIdentityGroup 同一条路）：路径由 Host
+      /* 只把 session id 交给 Host（全局配置 GitIdentityGroup 同一条路）：路径由 Host
          从会话的工作区解出来，写配置的沙箱策略也跟着这个会话走。 */
       const request = function () {
         return sessionId.length > 0 ? { sessionId: sessionId } : {}
@@ -7538,14 +8014,14 @@ textarea.dsh-git-input{resize:vertical}
         })
       }
 
-      /* 设置页 setPlugin 的同款：草稿即时、落盘有 400ms 去抖（20-prefs.js）。 */
+      /* 全局配置 setPlugin 的同款：草稿即时、落盘有 400ms 去抖（20-prefs.js）。 */
       const setPlugin = function (key, value) {
         const next = Object.assign({}, plugin)
         next[key] = value
         savePluginConfig(next)
       }
 
-      /* 设置页 GitIdentityGroup 的 source() 同款：值 + 它来自哪个文件。 */
+      /* 全局配置 GitIdentityGroup 的 source() 同款：值 + 它来自哪个文件。 */
       const source = function (value, origin) {
         const one = text(value)
         if (one.length === 0) return '没有配'
@@ -7771,7 +8247,16 @@ textarea.dsh-git-input{resize:vertical}
         ? '会话跑完那一刻自动做一次 ⟳ 级别的整棵树刷新：chip 的分支名/改动数、变更/历史页跟着更新，命令页若开着也重读 —— 刚被会话新建的文件只有全树读能看见，这正是它该刷的时机。'
         : '当前环境不支持会话状态监听（bridge 版没有会话状态的 props），这两条开关不起作用。'
 
+      /* 全局那一档整个交给 79-globalconfig.js：项目这半的快照（身份/换行符/远端）
+         与它的草稿状态都还留在这只组件里，切回来不必重读。 */
+      if (scope === 'global') {
+        return h('div', { className: 'dsh-git-set dsh-git-config' },
+          scopeTabs,
+          h(GitGlobalConfigPane, { key: 'global', sessionId: sessionId }))
+      }
+
       return h('div', { className: 'dsh-git-set dsh-git-config' },
+        scopeTabs,
         h('div', { className: 'dsh-git-set-group' }, '会话完成'),
         h('div', { className: 'dsh-git-set-hint' }, sessionHint),
 
@@ -7801,7 +8286,7 @@ textarea.dsh-git-input{resize:vertical}
 
         h('div', { className: 'dsh-git-set-group' }, '提交身份（只写这个项目的 .git/config）'),
         h('div', { className: 'dsh-git-set-hint' },
-          '这里只写 --local，全局那份不受影响。去「设置 → dsh-git-idea配置 → 提交身份」改全局 —— 那边才选得到写进哪台机器。'),
+          '这里只写 --local，全局那份不受影响。要改这台机器的那一份，切到上面的「全局配置 → 提交身份」—— 那边才选得到写进哪台机器。'),
 
         h('div', { className: 'dsh-git-set-row' },
           h('span', { className: 'dsh-git-set-label' }, '此刻生效'),
@@ -8012,6 +8497,12 @@ textarea.dsh-git-input{resize:vertical}
          远端分支选择（RemotePickList，70-branchpicker.js）。点行 = runOp('git/pull',
          {setUpstream})，成功后 runOp 自己关掉它并写成功条。 */
       const [pullPick, setPullPick] = React.useState(null)
+      /* 右键远程分支「签出」遇本地同名分支的二选一层：null 关着；非 null 是
+         { name, repo, local } —— name 是完整远端名（origin/feat/x）、local 是去掉
+         远端前缀的本地名、repo 是右键那一行自己的仓库（空串就随 ctxRun 落回生效
+         仓库）。原先只报一句错误条把读者支去「本地」组，现在开着时正文上面盖一块
+         确认框：直切本地分支，或用远端覆盖本地分支。 */
+      const [remotePick, setRemotePick] = React.useState(null)
       /* 「修改跟踪分支」的选择层：null 关着；非 null 是 {name, repo} —— 右键的那个
          本地分支（HEAD 组与「本地」组的行都算，远程组的行没有这一项）。开着时正文
          上面盖一层远端分支选择（RemotePickList，70-branchpicker.js，与 pull 的上游
@@ -8296,7 +8787,7 @@ textarea.dsh-git-input{resize:vertical}
 
            · DRAFT_LEN_MAX 与 Host 的上限同款（4000）：Host 是最后一道关卡，但
              客户端先把超长的截掉，省一次注定被截的往返；
-           · 防抖 900ms（设置页那份整配置保存是 400ms，见 20-prefs.js）：草稿的
+           · 防抖 900ms（配置页那份整配置保存是 400ms，见 20-prefs.js）：草稿的
              保存多得多（每一段连续输入一次），再快就要在连续输入时排队写盘；
            · 保存的 repo 在排程那一刻就闭上：读者打完字立刻切仓库，挂着的保存
              仍写到**原来那个**仓库名下 —— 内容是它的，不能记到新仓库头上；
@@ -8377,12 +8868,12 @@ textarea.dsh-git-input{resize:vertical}
         if (props.ready !== true) return
         /* 每个工作区只扫一次（24-repos.js 里按会话去重）。工作区本身是不是仓库不
            用来判断要不要扫 —— 嵌着好几个仓库的普通目录，恰恰是最需要这份清单的地方
-           （设置页下面就挂着同一份列表）。 */
+           （「未检测到仓库」的说明页下面就挂着同一份列表）。 */
         ensureWorkspaceRepos(sessionId)
       }, [sessionId, props.ready])
 
       /* 仓库行的单击：切生效仓库 + 清掉这一栏的多选（树跟着生效仓库走回单仓库现状）。
-         和设置页「打开这个目录」同一条路径，chip、历史、提交全都跟着换。 */
+         和说明页「打开这个目录」同一条路径，chip、历史、提交全都跟着换。 */
       const repoSingle = function (pane, path) {
         setRepoSelection(sessionId, pane, [])
         if (path === appliedRepo) return
@@ -9254,9 +9745,10 @@ textarea.dsh-git-input{resize:vertical}
       }
 
       /* 签出远程分支：本地名取去掉远端前缀的那一段（origin/feat/x → feat/x）。
-         本地同名分支已存在时不发请求 —— 直接说清楚去哪找那一行；refs 数据过期
-         漏了的话，git 自己的拒绝（a branch named 'feat/x' already exists）会把
-         原话带上错误条，两道都明确。 */
+         本地同名分支已存在时不发请求 —— 开二选一确认层（remotePick）：两个出口都
+         切到本地那份，区别只在本地分支要指向哪。refs 数据过期漏了同名分支的话，
+         git 自己的拒绝（a branch named 'feat/x' already exists）会把原话带上错误
+         条，两道都明确。 */
       const ctxCheckoutRemote = function (name, repo) {
         const slash = name.indexOf('/')
         const local = slash > 0 ? name.slice(slash + 1) : name
@@ -9265,13 +9757,32 @@ textarea.dsh-git-input{resize:vertical}
           for (let i = 0; i < data.local.length; i += 1) {
             const row = data.local[i]
             if (row != null && text(row.data) === local) {
-              setError('本地已经有同名分支 ' + local + ' —— 要切过去请右键「本地」组里的那一行，那里才是已存在的分支')
+              setRemotePick({ name: name, repo: text(repo), local: local })
               return
             }
           }
         }
         ctxRun('git/checkout', { name: name, asNewLocal: true }, repo, '签出失败', function () {
           setOkNote('已把 ' + name + ' 签出为本地分支 ' + local + '，并跟踪 ' + name)
+        })
+      }
+
+      /* 二选一层的两个出口。都先关层再走 ctxRun：动作发起即关（busy 是 ctxRun 自己
+         置的），与右键菜单动作「没有两段式」同一规矩 —— 失败时错误条在层底下直接
+         可见，成功写成功条。
+         · 直切：本地分支与其提交原样保留，等价于右键「本地」组的那一行。
+         · 覆盖：切过去之后把本地分支重置到远端 —— 本地独有的提交与未提交改动都会
+           被丢弃，这份危险写在按钮 title 里，确认靠读者自己这一下。 */
+      const ctxCheckoutRemoteLocal = function (pick) {
+        setRemotePick(null)
+        ctxRun('git/checkout', { name: pick.local }, pick.repo, '签出失败', function () {
+          setOkNote('已切到分支 ' + pick.local)
+        })
+      }
+      const ctxCheckoutRemoteReset = function (pick) {
+        setRemotePick(null)
+        ctxRun('git/checkout', { name: pick.name, resetLocal: true }, pick.repo, '签出失败', function () {
+          setOkNote('已把 ' + pick.local + ' 重置到 ' + pick.name + ' 并切换过去（本地独有的提交已丢弃）')
         })
       }
 
@@ -10079,11 +10590,11 @@ textarea.dsh-git-input{resize:vertical}
               h('button', { type: 'button', className: 'dsh-git-tab' + (tab === 'cmdlog' ? ' dsh-git-tab-on' : ''),
                 title: '这个项目执行过的 git 命令（来自 DSH 会话记录）',
                 onClick: function () { setTab('cmdlog'); setDiffTarget(null); setMergeTarget(null) } }, '命令'),
-              /* 配置页只关于本项目：会话完成后的刷新/推送、只写 --local 的提交身份、
-                 git 自己的两个换行键、远端清单。设置页管机器与插件，这一页管眼前
-                 这个仓库。 */
+              /* 配置页分两档：项目配置只关于眼前这个仓库（只写 --local 的提交身份、
+                 git 自己的两个换行键、远端清单），全局配置（79-globalconfig.js）管
+                 插件与这台机器 —— 原先 DSH 设置面板里的那一页搬到了这里。 */
               h('button', { type: 'button', className: 'dsh-git-tab' + (tab === 'config' ? ' dsh-git-tab-on' : ''),
-                title: '本项目：会话完成后自动刷新/推送、提交身份、换行符与远端（远端可添加/改地址/删除）',
+                title: '项目配置与全局配置：项目管眼前这个仓库（会话完成后自动刷新/推送、提交身份、换行符与远端），全局管插件与这台机器（初始化分支、远程同步、快捷命令、git 位置、提交身份、本浏览器外观）',
                 onClick: function () { setTab('config'); setDiffTarget(null); setMergeTarget(null) } }, '配置')),
         needsSetup ? null : syncGroup,
         needsSetup ? null : branchChip,
@@ -10112,7 +10623,7 @@ textarea.dsh-git-input{resize:vertical}
       if (work == null) {
         body = h('div', { className: 'dsh-git-pane dsh-git-dim' }, '正在读取仓库…')
       } else if (needsSetup) {
-        /* 设置页下面挂同一份仓库清单：工作区本身不是仓库时，这份清单恰恰是出路 ——
+        /* 说明页下面挂同一份仓库清单：工作区本身不是仓库时，这份清单恰恰是出路 ——
            里面嵌着的仓库点一下就打开（单击 = 切生效仓库，与左栏那条同一手势）。 */
         body = h('div', { key: 'setupwrap', className: 'dsh-git-setupwrap' },
           h(RepoSetup, {
@@ -10715,6 +11226,22 @@ textarea.dsh-git-input{resize:vertical}
                   onClose: function () { setUpstreamPick(null) },
                 })))
           : null,
+        /* 远程签出遇本地同名分支的二选一层：与 pull 的上游选择同一块板子（qc-overlay
+           盖住正文、不盖掉面板本体）。点外（点在底板上）由这里关，Esc 由框内的
+           useOutsideDismiss 关；两个动作按钮发起即关层（setRemotePick 在 ctxRun 之前），
+           失败时错误条在层底下直接可见，成功写成功条。 */
+        remotePick !== null
+          ? h('div', {
+              key: 'remotepick', className: 'dsh-git-qc-overlay',
+              onClick: function (event) { if (event != null && event.target === event.currentTarget) setRemotePick(null) },
+            },
+              h(RemoteExistsConfirm, {
+                key: 'c', open: true, pick: remotePick, busy: busy === true,
+                onLocal: function () { ctxCheckoutRemoteLocal(remotePick) },
+                onReset: function () { ctxCheckoutRemoteReset(remotePick) },
+                onClose: function () { setRemotePick(null) },
+              }))
+          : null,
         /* 右键菜单：光标锚的浮层（position:fixed）。挂在面板根部 —— 与 ⚡ 的下拉
             不同它不属于任何一格，开关只随 ctxMenu。 */
         ctxMenu !== null
@@ -10723,385 +11250,6 @@ textarea.dsh-git-input{resize:vertical}
               onClose: function () { setCtxMenu(null) },
             }, ctxCommitItems)
           : null)
-    }
-
-    /* The section's name in the settings rail, and the page's own heading. The
-       rail's glyph for it stays the shell's gear: the registration contract is
-       id/order/label with no icon field, and swapping a glyph the shell owns
-       would be a workaround around its own tree, not a feature. */
-    const SETTINGS_NAV_LABEL = 'dsh-git-idea配置'
-
-    /* ── 提交身份：写在 git 自己的配置里 ──
-
-       这一组和上面那个插件配置文件不是一回事：`user.name` / `user.email` 是 git 的
-       设置，写进去以后终端里的 git、IDEA、钩子看到的都是同一个作者。所以这里既读又
-       写，而且写什么由读者挑：这台机器的所有仓库（`--global`），还是只这一个仓库
-       （`--local`）。
-
-       面板不替你署名：空着的框一个字节都不写（`git config user.name ''` 正是「empty
-       ident name」那个错误的来路），两个都空就什么也不做并说清楚。 */
-    function GitIdentityGroup() {
-      const sessionId = useLastSession()
-      const [state, setState] = React.useState(null)
-      const [name, setName] = React.useState('')
-      const [email, setEmail] = React.useState('')
-      const [scope, setScope] = React.useState('global')
-      const [busy, setBusy] = React.useState(false)
-      const [note, setNote] = React.useState('')
-      const [problem, setProblem] = React.useState('')
-
-      /* 只把 session id 交给 Host，路径由它自己从会话的工作区解出来 —— 和面板、
-         chip 走的是同一条路，也就落在这个会话的沙箱策略里。 */
-      const request = function () {
-        return sessionId.length > 0 ? { sessionId: sessionId } : {}
-      }
-      const load = function () {
-        callHost('git/identity', request()).then(function (data) {
-          setState(data)
-          setProblem('')
-          /* 预填：先给此刻生效的那一份，没有再给机器上的那一份。读者要改的就是它。 */
-          const effectiveName = text(data.name)
-          const effectiveEmail = text(data.email)
-          setName(effectiveName.length > 0 ? effectiveName : text(data.globalName))
-          setEmail(effectiveEmail.length > 0 ? effectiveEmail : text(data.globalEmail))
-        }, function (failure) { setProblem(failureText(failure)) })
-      }
-      React.useEffect(function () { load() }, [sessionId])
-
-      const save = function () {
-        if (busy) return
-        setBusy(true)
-        setNote('')
-        setProblem('')
-        const payload = { scope: scope, name: name, email: email }
-        if (sessionId.length > 0) payload.sessionId = sessionId
-        callHost('git/identity-save', payload).then(function (result) {
-          setBusy(false)
-          setState(result)
-          setNote(result.scope === 'local'
-            ? ('已写进 ' + text(result.repo) + ' 的 .git/config：' + result.written.join('、'))
-            : ('已写进这台机器的 git 配置：' + result.written.join('、')))
-        }, function (failure) {
-          setBusy(false)
-          setProblem(failureText(failure))
-        })
-      }
-
-      const ready = state != null
-      const missing = ready && state.needsIdentity === true
-      const source = function (value, origin) {
-        const one = text(value)
-        if (one.length === 0) return '没有配'
-        const from = text(origin)
-        return from.length === 0 ? one : (one + '（来自 ' + from + '）')
-      }
-      const toggle = function (next) {
-        return h('label', { className: 'dsh-git-set-check' },
-          h('input', {
-            type: 'radio', checked: scope === next, name: 'dsh-git-ident-scope',
-            onChange: function () { setScope(next) },
-          }),
-          h('span', null, next === 'global' ? '这台机器的所有仓库（--global）' : '只对这个仓库（--local）'))
-      }
-
-      return h('div', null,
-        h('div', { className: 'dsh-git-set-group' }, '提交身份（写在 git 自己的配置里）'),
-        h('div', { className: 'dsh-git-set-hint' },
-          'git 不知道作者是谁时会拒绝提交，而这台机器上终端里的 git 也用同一份配置。面板空着的框一个字节都不写。'),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('span', { className: 'dsh-git-set-label' }, '此刻生效'),
-          h('span', { className: missing === true ? 'dsh-git-set-hint dsh-git-warn' : 'dsh-git-set-hint' },
-            ready !== true ? '正在读取…'
-              : (missing === true
-                ? '还缺：' + (state.nameMissing === true ? '名字' : '邮箱') + ' —— 提交会被 git 拒绝'
-                : (source(state.name, state.nameOrigin) + ' · ' + source(state.email, state.emailOrigin))))),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('span', { className: 'dsh-git-set-label' }, '名字'),
-          h('input', {
-            className: 'dsh-git-input dsh-git-set-input',
-            placeholder: '提交里显示的名字',
-            value: name,
-            onChange: function (event) { setName(event.target.value) },
-          })),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('span', { className: 'dsh-git-set-label' }, '邮箱'),
-          h('input', {
-            className: 'dsh-git-input dsh-git-set-input',
-            placeholder: 'you@example.com',
-            value: email,
-            onChange: function (event) { setEmail(event.target.value) },
-          })),
-
-        h('div', { className: 'dsh-git-set-row' }, h('span', { className: 'dsh-git-set-label' }, '写进哪里'), toggle('global')),
-        h('div', { className: 'dsh-git-set-row' }, h('span', { className: 'dsh-git-set-label' }, ''), toggle('local')),
-        h('div', { className: 'dsh-git-set-row' },
-          h('span', { className: 'dsh-git-set-label' }, ''),
-          h('span', { className: 'dsh-git-set-hint' },
-            text(state != null ? state.repo : '').length > 0
-              ? ('这个仓库 = ' + state.repo)
-              : '这个页面还不知道是哪个会话的仓库 —— 先打开一次面板（或输入框旁的 Git 按钮），或只写全局那一份')),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('button', {
-            type: 'button', className: 'dsh-git-btn dsh-git-primary',
-            disabled: busy || (scope === 'local' && text(state != null ? state.repo : '').length === 0),
-            onClick: save,
-          }, busy ? '写入中…' : '写入 git 配置'),
-          h('span', { className: 'dsh-git-set-hint' }, '写进去就是以后所有提交的作者，别的工具也看得到')),
-
-        note.length > 0 ? h('div', { className: 'dsh-git-set-row dsh-git-set-hint' }, note) : null,
-        problem.length > 0 ? h('div', { className: 'dsh-git-set-row dsh-git-error' }, problem) : null)
-    }
-
-    /* ── git 位置：这台机器上的哪个 git ──
-
-       每一行命令都以同一个词开头，而那个词默认来自部署的 PATH。装在不在这条 PATH 上的
-       地方（Homebrew 前缀、IDE 自带的 git、nix profile）时，面板以前只会说「这台机器
-       上找不到 git」—— 既是错的，也没给出下一步。所以它是个设置。 */
-    function GitToolchainGroup() {
-      const plugin = usePluginConfig()
-      const committed = usePluginConfigCommitted()
-      const [draftPath, setDraftPath] = React.useState(plugin.gitPath)
-      const [tool, setTool] = React.useState(null)
-      React.useEffect(function () { setDraftPath(plugin.gitPath) }, [plugin.gitPath])
-
-      const probe = function () {
-        callHost('git/toolchain', {}).then(function (data) { setTool(data) }, function (failure) {
-          setTool({ ok: false, path: '', version: '', found: false, reason: 'probe-failed', error: failureText(failure) })
-        })
-      }
-      /* 问的时机是**Host 确认过之后**，不是敲键的时候：草稿是即时的，而
-         `savePluginConfig` 有 400ms 去抖，落盘之后 Host 才回话。挂在草稿上问，
-         问到的是上一份配置 —— 真机上量到的就是界面永远慢一步（写入坏路径之后那一行
-         还说「来自 PATH」，要等下一次改动才改口）；挂在每次按键上还会把一次询问变成
-         每个字符一次。`committed` 只在答复带着配置回来时动。 */
-      React.useEffect(function () { probe() }, [committed])
-
-      const commitPath = function (value) {
-        setDraftPath(value)
-        const next = Object.assign({}, plugin)
-        next.gitPath = value
-        savePluginConfig(next)
-      }
-      const found = tool != null && tool.found === true
-      const reason = tool == null ? '' : text(tool.reason)
-      const verdict = tool == null
-        ? '正在检查…'
-        : (found
-          ? ('现在用的是 ' + tool.path + (tool.fromPath === true ? '（来自 PATH）' : '（设置里写的就是它）')
-            + ' · ' + text(tool.version))
-          : (reason === 'configured-missing'
-            ? '设置里写的这个路径不可用：它不存在，或者不是可执行文件。面板里的每条命令都会失败。'
-            : '这台机器的 PATH 上没有 git。装上它，或者在下面写一个绝对路径。'))
-
-      return h('div', null,
-        h('div', { className: 'dsh-git-set-group' }, 'git 位置'),
-        h('div', { className: 'dsh-git-set-row' },
-          h('span', { className: 'dsh-git-set-label' }, '可执行文件'),
-          h('input', {
-            className: 'dsh-git-input dsh-git-set-input',
-            placeholder: '留空 = 用 PATH 里的 git',
-            value: draftPath,
-            onChange: function (event) { commitPath(event.target.value) },
-          })),
-        h('div', { className: 'dsh-git-set-row' },
-          h('span', { className: 'dsh-git-set-label' }, ''),
-          h('span', { className: found === true ? 'dsh-git-set-hint' : 'dsh-git-set-hint dsh-git-warn' }, verdict)),
-        h('div', { className: 'dsh-git-set-row' },
-          h('span', { className: 'dsh-git-set-label' }, ''),
-          h('button', { type: 'button', className: 'dsh-git-btn', onClick: probe }, '再检查一次'),
-          h('span', { className: 'dsh-git-set-hint' }, '面板读、写、初始化用的都是这一个')))
-    }
-
-    function GitSettingsSection(props) {
-      const settings = useGitSettings()
-      const [draft, setDraft] = React.useState(settings)
-      const plugin = usePluginConfig()
-      const [pdraft, setPdraft] = React.useState(plugin)
-
-      React.useEffect(function () { setDraft(settings) }, [settings])
-      React.useEffect(function () { setPdraft(plugin) }, [plugin])
-
-      const setPlugin = function (key, value) {
-        const next = Object.assign({}, pdraft)
-        next[key] = value
-        setPdraft(next)
-        savePluginConfig(next)
-      }
-
-      const apply = function (next) {
-        setDraft(next)
-        saveSettings(next)
-      }
-      const set = function (key, value) {
-        const next = Object.assign({}, draft)
-        next[key] = value
-        apply(next)
-      }
-      const num = function (key, value, min, max) {
-        const n = parseInt(value, 10)
-        set(key, isNaN(n) ? min : n)
-      }
-      const watchOff = draft.watchEnabled !== true
-
-      return h('div', {
-        className: 'dsh-git-set',
-        ref: function (node) {
-          loadSettings(node != null ? node.ownerDocument : null)
-          loadPluginConfig()
-        },
-      },
-        h('div', { className: 'dsh-git-set-h' }, SETTINGS_NAV_LABEL),
-        h('div', { className: 'dsh-git-set-hint' }, '分两层：跟随插件的配置，和只影响本浏览器的外观与节奏。'),
-
-        h('div', { className: 'dsh-git-set-group' }, '插件配置'),
-        h('div', { className: 'dsh-git-set-hint' },
-          pluginConfigPath.length > 0
-            ? ('保存在 ' + pluginConfigPath + ' —— 换浏览器也一致')
-            : '保存在部署配置目录旁的 dsh-git-idea.json —— 换浏览器也一致'),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('span', { className: 'dsh-git-set-label' }, '初始化仓库的默认分支'),
-          clearable('init', h('input', {
-            className: 'dsh-git-input dsh-git-set-input',
-            placeholder: 'main',
-            value: pdraft.initBranch,
-            onChange: function (event) { setPlugin('initBranch', event.target.value) },
-          }), pdraft.initBranch.length > 0, function () { setPlugin('initBranch', '') }, 'dsh-git-clearable-set'),
-          h('span', { className: 'dsh-git-set-hint' }, '引导页「在此初始化仓库」会用它执行 git init -b；留空则用 git 自己的默认值')),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('label', { className: 'dsh-git-set-check' },
-            h('input', {
-              type: 'checkbox', checked: pdraft.cherryPickRecord === true,
-              onChange: function (event) { setPlugin('cherryPickRecord', event.target.checked) },
-            }),
-            h('span', null, 'cherry-pick 时记录来源（-x）'))),
-
-        h('div', { className: 'dsh-git-set-group' }, '远程同步'),
-        h('div', { className: 'dsh-git-set-hint' },
-          '这三条是面板给 git 的实参，不是 git 自己的设置：下面没勾的，就是 git 原本的行为（`push.default`、`pull.rebase` 照旧生效）。'),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('label', { className: 'dsh-git-set-check' },
-            h('input', {
-              type: 'checkbox', checked: pdraft.fetchPrune !== false,
-              onChange: function (event) { setPlugin('fetchPrune', event.target.checked) },
-            }),
-            h('span', null, 'fetch 时删掉远端已经删了的远程分支（--prune）'))),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('label', { className: 'dsh-git-set-check' },
-            h('input', {
-              type: 'checkbox', checked: pdraft.pullRebase === true,
-              onChange: function (event) { setPlugin('pullRebase', event.target.checked) },
-            }),
-            h('span', null, 'pull 用 rebase 而不是 merge（--rebase）'))),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('label', { className: 'dsh-git-set-check' },
-            h('input', {
-              type: 'checkbox', checked: pdraft.pushSetUpstream === true,
-              onChange: function (event) { setPlugin('pushSetUpstream', event.target.checked) },
-            }),
-            h('span', null, '推送没有上游的分支时直接推上去并设上游（push -u）'))),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('span', { className: 'dsh-git-set-label' }, '也就是'),
-          h('span', { className: 'dsh-git-set-hint' },
-            'git fetch --all' + (pdraft.fetchPrune !== false ? ' --prune' : '')
-            + ' · git pull' + (pdraft.pullRebase === true ? ' --rebase' : '')
-            + ' · ' + (pdraft.pushSetUpstream === true ? 'git push -u <remote> <branch>（没有上游时）' : 'git push（没有上游时由面板问一句）'))),
-
-        /* 快捷命令的管理组：和面板 ⚡ 菜单里的编辑器是同一个组件（78-actions.js）——
-           同一份配置、同一套校验，两处改的都是同一样东西。 */
-        h('div', { className: 'dsh-git-set-group' }, '快捷命令'),
-        h('div', { className: 'dsh-git-set-hint' },
-          '自定义命令模板，面板历史的 ⚡ 按钮一键执行；{branch}、{hash} 这类变量按当前分支和选中的提交代值。与面板共用同一份（也保存在上面那个 json 里）。'),
-        h(QuickCommandsEditor, { key: 'qc', initial: 'list' }),
-
-        h(GitToolchainGroup),
-
-        pluginConfigError.length > 0
-          ? h('div', { className: 'dsh-git-set-row dsh-git-error' }, '保存失败：' + pluginConfigError)
-          : null,
-
-        h(GitIdentityGroup),
-
-        h('div', { className: 'dsh-git-set-group' }, '本浏览器'),
-        h('div', { className: 'dsh-git-set-hint' }, '这些只是外观和使用节奏，换浏览器各管各的。'),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('label', { className: 'dsh-git-set-check' },
-            h('input', {
-              type: 'checkbox', checked: draft.watchEnabled === true,
-              onChange: function (event) { set('watchEnabled', event.target.checked) },
-            }),
-            h('span', null, '后台监测仓库变化，发现变化就自动刷新'))),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('span', { className: 'dsh-git-set-label' }, '面板打开时每'),
-          h('input', {
-            className: 'dsh-git-input dsh-git-set-num', type: 'number', min: 1, max: 120,
-            disabled: watchOff,
-            value: String(draft.watchFastSec),
-            onChange: function (event) { num('watchFastSec', event.target.value, 1, 120) },
-          }),
-          h('span', { className: 'dsh-git-set-hint' }, '秒检查一次')),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('span', { className: 'dsh-git-set-label' }, '只有按钮时每'),
-          h('input', {
-            className: 'dsh-git-input dsh-git-set-num', type: 'number', min: 2, max: 600,
-            disabled: watchOff,
-            value: String(draft.watchSlowSec),
-            onChange: function (event) { num('watchSlowSec', event.target.value, 2, 600) },
-          }),
-          h('span', { className: 'dsh-git-set-hint' }, '秒检查一次')),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('label', { className: 'dsh-git-set-check' },
-            h('input', {
-              type: 'checkbox', checked: draft.watchChip === true, disabled: watchOff,
-              onChange: function (event) { set('watchChip', event.target.checked) },
-            }),
-            h('span', null, '面板关着时也监测，让按钮上的分支名和改动数保持实时'))),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('label', { className: 'dsh-git-set-check' },
-            h('input', {
-              type: 'checkbox', checked: draft.hoverSwitch === true,
-              onChange: function (event) { set('hoverSwitch', event.target.checked) },
-            }),
-            h('span', null, '鼠标停在输入框旁的 Git 按钮上，弹出分支切换卡片（点一下就切）'))),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('span', { className: 'dsh-git-set-label' }, '面板尺寸'),
-          h('span', { className: 'dsh-git-set-hint' },
-            panelSize.w > 0 || panelSize.h > 0
-              ? (String(panelSize.w) + ' × ' + String(panelSize.h) + ' 像素')
-              : '跟随输入框宽度 / 74vh'),
-          h('button', {
-            type: 'button', className: 'dsh-git-btn',
-            onClick: function () { publishPanelSize({ w: 0, h: 0 }); savePanelSize() },
-          }, '恢复默认尺寸')),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('span', { className: 'dsh-git-set-label' }, '切换器的记忆'),
-          h('span', { className: 'dsh-git-set-hint' }, '最近使用与收藏只写在这个浏览器里'),
-          h('button', {
-            type: 'button', className: 'dsh-git-btn',
-            onClick: function () { clearBranchMemory() },
-          }, '清除最近使用与收藏')),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('button', {
-            type: 'button', className: 'dsh-git-btn',
-            onClick: function () { apply(Object.assign({}, SETTINGS_DEFAULTS)) },
-          }, '本浏览器全部恢复默认')))
     }
 
     /* ── 输入框旁边那个 chip ──
@@ -11272,8 +11420,8 @@ textarea.dsh-git-input{resize:vertical}
       }, [watched, repoVersion, sessionId, isOpen])
 
       /* 这个页面在哪个会话里 —— chip 一直挂在输入框旁边，所以它是把这件事记下来的
-         那个面（设置页是全局的，自己不知道）。放在 effect 里而不是渲染里：渲染期间
-         通知订阅者就是渲染期间改别人的 state。 */
+         那个面（配置页「全局配置」的提交身份组没有自己的会话，读的就是这份记忆）。
+         放在 effect 里而不是渲染里：渲染期间通知订阅者就是渲染期间改别人的 state。 */
       React.useEffect(function () { rememberSession(sessionId) }, [sessionId])
 
       /* ── 会话状态（有则用之，bridge 版这些 props 不存在）──
@@ -11811,13 +11959,6 @@ textarea.dsh-git-input{resize:vertical}
         return slots.register({ name: 'conversation.input.overlay', id: 'dsh-git-idea-panel', order: 10 }, GitPopover)
       })
     }, 'dsh-git-idea composer panel')
-
-    /* A page of its own in Settings, between Agent presets (20) and Market (40). */
-    ctx.effect(function () {
-      return slots.inject('settings.section', function () {
-        return slots.register({ name: 'settings.section', id: 'dsh-git-idea', order: 30, label: SETTINGS_NAV_LABEL }, GitSettingsSection)
-      })
-    }, 'dsh-git-idea settings section')
 
     /* host→client 的实时通道（真包的 client-pre.js 提供 liveBus）：插件活着连接就活着，
        插件卸载连接断开。bridge 版没有 liveBus（也没有 WS 路由可连），typeof 守卫让它
