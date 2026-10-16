@@ -2934,6 +2934,18 @@ textarea.dsh-git-input{resize:vertical}
           /* 右键菜单的菜单项跟着这一组走：远程的分支只给「复制分支名称」（远端分支
              的删除不在这一棵树的手势里），本地的才有删除。 */
           const branchKind = key.indexOf('@remote:') === 0 ? 'remote' : 'local'
+          /* 配置了但从未 fetch 过的远端（66-refs.js 并进来的 refs 为空的分组）也要
+             有个说得通的组内：画一行灰色说明，而不是一个空组头吊着。折叠照旧收掉
+             它（上面 collapsed 已经 return），搜索时也不会误伤 —— 组真的没有引用，
+             什么都不会匹配，这句话照实说。 */
+          if (branchKind === 'remote' && entries.length === 0) {
+            rows.push(h('div', {
+              className: 'dsh-git-trow dsh-git-dim',
+              key: keyOf(key) + ':none',
+              style: { paddingLeft: '18px' },
+            }, '未抓取，暂无远程分支'))
+            return
+          }
           const tree = buildTree(shown)
           /* 末位 false：分支树不再压扁 —— `feature/a`、`feature/b` 归到可折叠的
              目录行 `feature`（treeDirRow 自带展开/收起与条数），叶子行只显示末段
