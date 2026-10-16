@@ -131,6 +131,34 @@
     下一次点击不可撤销）。 */
 .dsh-git-ctool-danger{color:var(--dsw-alias-state-error-primary);border-color:var(--dsw-alias-state-error-primary)}
 .dsh-git-commitpane{width:304px;flex:none;border-left:1px solid var(--dsw-alias-border-l1);padding:8px;display:flex;flex-direction:column;gap:8px}
+/* ── 窄屏的提交栏折叠（54-changes.js useNarrowChanges 判定，阈值 560px）──
+    手机窄屏上 304px 的提交栏占掉大半宽度，默认整个收成一条，点了才全宽展开。
+    这组选择器全部带 .dsh-git-changes-narrow 前缀、只挂在窄屏：宽屏一条都不命中，
+    DOM 与样式和从前一字不差 —— 本功能的不变量（测试按 dsh-git-commitpane 里的
+    textarea 找输入框，量不到宽度的环境一律走宽屏分支）。 */
+.dsh-git-changes-narrow{flex-direction:column}
+/* 纵列之后树靠 min-height:0 才肯把高度让出来：横排时宽度方向的 min-width:0 已
+    写在 .dsh-git-changes-tree 上，纵排还差高度这一眼 —— 没有它树不缩、clist 不
+    滚，展开的提交栏会把文件树挤出面板。 */
+.dsh-git-changes-narrow .dsh-git-changes-tree{min-height:0}
+/* 提交栏全宽：宽度交还布局（width:auto），与树的分隔线从左缘改到上缘（它在纵列
+    的树下面）。max-height 60%：6 行的 textarea 加警告条和按钮比矮面板还高，不钳
+    的话树被挤成一条缝；六成之外整块还给树，树自己滚。 */
+.dsh-git-changes-narrow .dsh-git-commitpane{width:auto;max-height:60%;border-left:0;border-top:1px solid var(--dsw-alias-border-l1)}
+/* 折叠态那条展开条：与树之间也是上缘分隔线（同在纵列里）；高度对着头部 chip 的
+    28px —— 手机上拇指点得中的最小一档。 */
+.dsh-git-commitbar{flex:none;display:flex;align-items:center;gap:6px;height:28px;padding:0 8px;border-top:1px solid var(--dsw-alias-border-l1);cursor:pointer;white-space:nowrap;-webkit-user-select:none;user-select:none;font-size:12px;color:var(--dsw-alias-label-primary)}
+.dsh-git-commitbar:hover{background:var(--dsw-alias-bg-layer-2)}
+.dsh-git-commitbar-label{font-weight:600}
+.dsh-git-commitbar-glyph{flex:none;color:var(--dsw-alias-label-secondary);font-size:10px}
+/* 草稿非空的 ●：栏收起来了，「有没写完的话」还得看得见 —— 品牌色，和提交按钮
+    同一源。 */
+.dsh-git-commitbar-dirty{flex:none;color:var(--dsw-alias-brand-primary);font-size:10px}
+.dsh-git-commitbar-count{flex:none;margin-left:auto;color:var(--dsw-alias-label-secondary);font-size:11px}
+/* 窄屏展开态的栏头收起键：同一只开关的另一副面孔（▾ = 点我收起）。字级字重仍是
+    group-title 的，读起来还是那个标题，只是可点 —— cursor 与悬停变亮说明这件事。 */
+.dsh-git-commitpane-fold{cursor:pointer}
+.dsh-git-commitpane-fold:hover{color:var(--dsw-alias-label-primary)}
 .dsh-git-crow{display:flex;align-items:center;gap:8px;height:26px;box-sizing:border-box;padding:0 8px;cursor:pointer;white-space:nowrap;-webkit-user-select:none;user-select:none}
 .dsh-git-crow:hover{background:var(--dsw-alias-bg-layer-2)}
 .dsh-git-crow-sel{background:var(--dsw-alias-interactive-bg-hover)}

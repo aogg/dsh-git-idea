@@ -2122,6 +2122,34 @@ return {
     下一次点击不可撤销）。 */
 .dsh-git-ctool-danger{color:var(--dsw-alias-state-error-primary);border-color:var(--dsw-alias-state-error-primary)}
 .dsh-git-commitpane{width:304px;flex:none;border-left:1px solid var(--dsw-alias-border-l1);padding:8px;display:flex;flex-direction:column;gap:8px}
+/* ── 窄屏的提交栏折叠（54-changes.js useNarrowChanges 判定，阈值 560px）──
+    手机窄屏上 304px 的提交栏占掉大半宽度，默认整个收成一条，点了才全宽展开。
+    这组选择器全部带 .dsh-git-changes-narrow 前缀、只挂在窄屏：宽屏一条都不命中，
+    DOM 与样式和从前一字不差 —— 本功能的不变量（测试按 dsh-git-commitpane 里的
+    textarea 找输入框，量不到宽度的环境一律走宽屏分支）。 */
+.dsh-git-changes-narrow{flex-direction:column}
+/* 纵列之后树靠 min-height:0 才肯把高度让出来：横排时宽度方向的 min-width:0 已
+    写在 .dsh-git-changes-tree 上，纵排还差高度这一眼 —— 没有它树不缩、clist 不
+    滚，展开的提交栏会把文件树挤出面板。 */
+.dsh-git-changes-narrow .dsh-git-changes-tree{min-height:0}
+/* 提交栏全宽：宽度交还布局（width:auto），与树的分隔线从左缘改到上缘（它在纵列
+    的树下面）。max-height 60%：6 行的 textarea 加警告条和按钮比矮面板还高，不钳
+    的话树被挤成一条缝；六成之外整块还给树，树自己滚。 */
+.dsh-git-changes-narrow .dsh-git-commitpane{width:auto;max-height:60%;border-left:0;border-top:1px solid var(--dsw-alias-border-l1)}
+/* 折叠态那条展开条：与树之间也是上缘分隔线（同在纵列里）；高度对着头部 chip 的
+    28px —— 手机上拇指点得中的最小一档。 */
+.dsh-git-commitbar{flex:none;display:flex;align-items:center;gap:6px;height:28px;padding:0 8px;border-top:1px solid var(--dsw-alias-border-l1);cursor:pointer;white-space:nowrap;-webkit-user-select:none;user-select:none;font-size:12px;color:var(--dsw-alias-label-primary)}
+.dsh-git-commitbar:hover{background:var(--dsw-alias-bg-layer-2)}
+.dsh-git-commitbar-label{font-weight:600}
+.dsh-git-commitbar-glyph{flex:none;color:var(--dsw-alias-label-secondary);font-size:10px}
+/* 草稿非空的 ●：栏收起来了，「有没写完的话」还得看得见 —— 品牌色，和提交按钮
+    同一源。 */
+.dsh-git-commitbar-dirty{flex:none;color:var(--dsw-alias-brand-primary);font-size:10px}
+.dsh-git-commitbar-count{flex:none;margin-left:auto;color:var(--dsw-alias-label-secondary);font-size:11px}
+/* 窄屏展开态的栏头收起键：同一只开关的另一副面孔（▾ = 点我收起）。字级字重仍是
+    group-title 的，读起来还是那个标题，只是可点 —— cursor 与悬停变亮说明这件事。 */
+.dsh-git-commitpane-fold{cursor:pointer}
+.dsh-git-commitpane-fold:hover{color:var(--dsw-alias-label-primary)}
 .dsh-git-crow{display:flex;align-items:center;gap:8px;height:26px;box-sizing:border-box;padding:0 8px;cursor:pointer;white-space:nowrap;-webkit-user-select:none;user-select:none}
 .dsh-git-crow:hover{background:var(--dsw-alias-bg-layer-2)}
 .dsh-git-crow-sel{background:var(--dsw-alias-interactive-bg-hover)}
@@ -3859,6 +3887,57 @@ textarea.dsh-git-input{resize:vertical}
       }, state === 'all' ? '☑' : (state === 'some' ? '▣' : '☐'))
     }
 
+    /* ── 窄屏判定：量容器自己，不量视口 ──
+
+       面板是浮在页面上的可拖拽弹层，「手机窄屏」对它来说不是视口有多宽，而是
+       .dsh-git-changes 这块地有多宽 —— 视口很宽、面板被拖到 500px 时提交栏照样
+       占掉大半；matchMedia 只认视口，量不到「面板被拖窄」这回事。所以判定用
+       容器的 clientWidth：挂载后量（useLayoutEffect 在排版后、绘制前跑，不会先
+       闪一帧宽屏），window resize 时复量 —— 面板跟着窗口变的最后一环仍落在这个
+       容器上，一条监听就够。
+
+       阈值 560px：提交栏固定 304px，树那侧还得装下「勾选框 14 + 状态字母 12 +
+       缩进 + 一截名字」，剩不到 250px 时名字只剩省略号。560 = 304 + 256，正是
+       「提交栏占掉大半宽度、树还读得动」的那条线。
+
+       量不到（clientWidth<=0：测试替身没有布局、真实页面还没排版的一瞬）一律按
+       宽屏 —— 和 12-window.js 量不到高度就把窗口当「全部」是同一条底线：判定
+       失效的代价绝不能是少渲染一块。宽屏渲染的就是现状 DOM，这条同时把不变量
+       焊死了：判定瞎了，页面也和从前一字不差（测试按 dsh-git-commitpane 里的
+       textarea 找输入框，替身环境正好落在这条宽屏分支上）。 */
+    const CHANGES_NARROW_PX = 560
+    let changesPaneNode = null
+    const attachChangesPaneNode = function (node) { changesPaneNode = node }
+    const measureChangesNarrow = function (setNarrow) {
+      const node = changesPaneNode
+      /* clientWidth 本该是整数，parseInt 把「万一不是数」挡在比较门外（数值对比
+         两边都过一次转换的规矩）；量不到按 0，0 走宽屏。 */
+      const width = node != null && typeof node.clientWidth === 'number' ? parseInt(node.clientWidth, 10) : 0
+      setNarrow(function () { return width > 0 && width < CHANGES_NARROW_PX })
+    }
+    /* ChangesPane 全面板只有一处挂载（80-panel.js），模块层一个槽位就够，不用
+       12-window.js 那张按 id 的表 —— 没有第二张嘴要量。 */
+    function useNarrowChanges() {
+      const [narrow, setNarrow] = React.useState(false)
+      /* 无依赖、每次渲染后复量：量是幂等的，宽度没变时 setter 原值退回、不会
+         循环；面板拖拽、展开/收起引起的重排都靠这一眼兜住（12-window.js 的
+         虚拟窗口同一个做法）。 */
+      useLayoutEffect(function () {
+        measureChangesNarrow(setNarrow)
+        return undefined
+      })
+      /* resize 监听只需要存在到组件卸载：setNarrow 是稳定身份，依赖给 [] 让它
+         挂一次就好，之后每次变化都由上面那眼复量接手。测试替身没有 window，
+         typeof 挡一下。 */
+      React.useEffect(function () {
+        if (typeof window === 'undefined' || window === null || typeof window.addEventListener !== 'function') return undefined
+        const onResize = function () { measureChangesNarrow(setNarrow) }
+        window.addEventListener('resize', onResize)
+        return function () { window.removeEventListener('resize', onResize) }
+      }, [])
+      return narrow
+    }
+
     function ChangesPane(props) {
       /* Read before the early returns: a hook cannot be skipped by a branch. */
       const settings = useGitSettings()
@@ -3868,6 +3947,15 @@ textarea.dsh-git-input{resize:vertical}
          布尔：勾选数一变或换了仓库，armed 自动失效 —— 第二次点确认的永远是读者正看着
          的那一组，而不是点击之间被换掉的一组。同样必须在早退之前读（hook 的规矩）。 */
       const [revertArm, setRevertArm] = React.useState('')
+      /* ── 窄屏折叠：事实与意愿，两个状态 ──
+         narrow 是量出来的「事实」（useNarrowChanges：容器窄不窄）；commitOpen 是
+         读者的「意愿」—— null＝没动过手，折叠与否跟事实走（窄=折叠、宽=展开，
+         宽屏因此完全等于现状）；点过展开/收起之后意愿留下，之后 resize 只更新
+         事实，不再替读者做主（「不强行改用户的展开态」）。会话内记忆，不进
+         prefs：面板宽窄随手势变，记住一个旧判定反而是错。两个 hook 都在早退
+         之前 —— hook 不能被分支跳过的规矩。 */
+      const narrow = useNarrowChanges()
+      const [commitOpen, setCommitOpen] = React.useState(null)
       const view = settings.changesView === 'flat' ? 'flat' : 'tree'
       const work = props.work
       if (work == null) return h('div', { className: 'dsh-git-pane dsh-git-dim' }, '正在读取工作区…')
@@ -4384,9 +4472,43 @@ textarea.dsh-git-input{resize:vertical}
 
       /* 提交这一格永远只属于**生效仓库**（右侧历史、chip、推送用的那一个），多选只是
          变更树的显示方式 —— 把几个仓库的索引搅进同一次提交，等于把读者没看到的改动
-         一起提交了。勾选框则各落各的仓库（见 makeScope 的 onSetStaged）。 */
+         一起提交了。勾选框则各落各的仓库（见 makeScope 的 onSetStaged）。
+
+         ── 窄屏的两种形态 ──
+         stacked：整页切纵列（树在上、提交在下），dsh-git-changes-narrow 只在这一态
+         挂 —— 宽屏的 DOM 一个字都不动，这是不变量。折叠与否：没动过手
+         （commitOpen===null）时跟 narrow 走，动过手以后听读者的。 */
+      const stacked = narrow === true
+      const commitCollapsed = commitOpen === null ? narrow : commitOpen === false
+      /* 折叠态的那一条：一行窄条，点一下把提交栏还回来。已暂存计数只在有活时
+         出现（「已暂存 0」是噪音）；写了草稿就亮一枚 ● —— 栏收起来了，「这里
+         有没写完的话」这件事不能跟着收走。 */
+      const commitBar = h('div', {
+        key: 'commitbar',
+        className: 'dsh-git-commitbar',
+        title: '展开提交栏（提交信息与提交按钮收在这里）',
+        onClick: function () { setCommitOpen(true) },
+      },
+        h('span', { key: 'l', className: 'dsh-git-commitbar-label' }, '提交信息'),
+        h('span', { key: 'g', className: 'dsh-git-commitbar-glyph' }, '▸'),
+        props.message.length > 0
+          ? h('span', { key: 'd', className: 'dsh-git-commitbar-dirty', title: '提交信息已写，还没提交' }, '●')
+          : null,
+        stagedCount > 0
+          ? h('span', { key: 'c', className: 'dsh-git-commitbar-count' }, '已暂存 ' + String(stagedCount) + ' 项')
+          : null)
+      /* 提交栏本体：窄屏展开时栏头换成可点的「▾ 提交信息」（和折叠条是同一只开关
+         的两副面孔，▾ 指点我收起），宽屏保持那颗纯标题。两个分支只有栏头不同：
+         警告条、输入框、已暂存计数与按钮完全共用 —— 测试按这里面的 textarea 找
+         输入框，宽屏分支必须与从前逐字节一致。 */
       const side = h('div', { className: 'dsh-git-commitpane' },
-        h('div', { className: 'dsh-git-group-title' }, '提交信息'),
+        stacked === true
+          ? h('div', {
+            className: 'dsh-git-group-title dsh-git-commitpane-fold',
+            title: '收起提交栏（收起后从下面那条再展开）',
+            onClick: function () { setCommitOpen(false) },
+          }, '▾ 提交信息')
+          : h('div', { className: 'dsh-git-group-title' }, '提交信息'),
         /* 先说出来，而不是等读者写完提交信息再被 git 拒一次。两条路都留着：面板
            「配置」页里能填的那个地方，和在终端里跑的两条命令（面板不一定开着）。 */
         props.work.needsIdentity === true
@@ -4424,12 +4546,17 @@ textarea.dsh-git-input{resize:vertical}
 
       /* 左侧那列仓库侧栏与分支树那份是同一个控件（RepoSwitcher），选择态各自独立 ——
          理由见 24-repos.js。 */
-      return h('div', { className: 'dsh-git-changes' },
+      /* ref 挂在容器上（useNarrowChanges 量的就是它）；宽屏时 className 与子节点
+         都和从前一字不差 —— ref 不是 DOM 属性，不出现在渲染结果里。 */
+      return h('div', {
+        className: 'dsh-git-changes' + (stacked === true ? ' dsh-git-changes-narrow' : ''),
+        ref: attachChangesPaneNode,
+      },
         props.repoProps == null ? null : h('div', { key: 'repos', className: 'dsh-git-reposide' },
           h(RepoSwitcher, props.repoProps)),
         h('div', { className: 'dsh-git-changes-tree' },
           h('div', { key: 'list', className: 'dsh-git-clist' }, rows.length > 0 ? rows : h('div', { className: 'dsh-git-pane dsh-git-ok' }, '工作区干净'))),
-        side)
+        commitCollapsed === true ? commitBar : side)
     }
 
     /* 多仓库 scope 的选中键也带前缀：剥出前缀之后的那个键，行里的比较才对得上。 */
