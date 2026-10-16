@@ -3171,12 +3171,14 @@ textarea.dsh-git-input{resize:vertical}
               },
                 h('span', { className: 'dsh-git-tw' }),
                 /* 与 HEAD 组的行同一个约定：名字下面一行小字写它跟踪的上游，没有
-                   上游写更淡的「未跟踪」。远程组的行不进来（见 branchKind），保持
-                   单行。 */
+                   上游写更淡的「未跟踪」。远程组的行例外（branchKind === 'remote'）：
+                   metaOf 只收本地分支，远程行的 upstream 恒为空，小字只可能是
+                   「未跟踪」，所以干脆不渲染这一行，行保持单行只有分支名。 */
                 h('span', { className: 'dsh-git-tmain' },
                   h('span', { className: 'dsh-git-tname' }, node.name),
-                  h('span', { className: 'dsh-git-tsub' + (upstream.length > 0 ? '' : ' dsh-git-tsub-none') },
-                    upstream.length > 0 ? upstream : '未跟踪')),
+                  branchKind === 'remote' ? null
+                    : h('span', { className: 'dsh-git-tsub' + (upstream.length > 0 ? '' : ' dsh-git-tsub-none') },
+                      upstream.length > 0 ? upstream : '未跟踪')),
                 onHead && opts.dirty > 0
                   ? h('span', { key: 'd', className: 'dsh-git-tdirty', title: String(opts.dirty) + ' 个未提交改动' }, '●' + String(opts.dirty))
                   : null,
