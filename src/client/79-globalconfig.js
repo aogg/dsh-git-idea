@@ -2,9 +2,9 @@
 
        原先这里是一页挂在 DSH 设置面板（左下角 → 设置）里的「dsh-git-idea配置」，
        2026-10 起整页搬进面板的「配置」页，作为与「项目配置」并列的一档作用域：
-       插件自己的行为、git 在这台机器上的位置与提交身份、还有只属于这个浏览器的外观
-       与节奏。搬动只换了住处，没换读写路径 —— 还是 20-prefs.js 那两层（插件配置走
-       Host 的 json，本浏览器走 localStorage），Host 那半一行都不用动。
+       插件自己的行为、git 在这台机器上的位置、提交身份与换行符，还有只属于这个
+       浏览器的外观与节奏。搬动只换了住处，没换读写路径 —— 还是 20-prefs.js 那两层
+       （插件配置走 Host 的 json，本浏览器走 localStorage），Host 那半一行都不用动。
 
        这个文件必须排在 80-panel.js 之前：GitConfigPane 在「全局」那一档渲染
        GitGlobalConfigPane（构建脚本的顺序契约：只用上面定义过的东西）。 */
@@ -12,14 +12,15 @@
     /* ── 提交身份：写在 git 自己的配置里 ──
 
        这一组和插件配置文件不是一回事：`user.name` / `user.email` 是 git 的
-       设置，写进去以后终端里的 git、IDEA、钩子看到的都是同一个作者。所以这里既读又
-       写，而且写什么由读者挑：这台机器的所有仓库（`--global`），还是只这一个仓库
-       （`--local`）。
+       设置，写进去以后终端里的 git、IDEA、钩子看到的都是同一个作者。所以这里既读
+       又写，而且落点只有一个：这台机器的 git 配置（`--global`）—— 机器上的 git 就
+       是一份，写本地那份是项目自己的事，归配置页「项目配置」档管（80-panel.js），
+       两档各说各的，这里不再挑写进哪。
 
        面板不替你署名：空着的框一个字节都不写（`git config user.name ''` 正是「empty
        ident name」那个错误的来路），两个都空就什么也不做并说清楚。 */
     function GitIdentityGroup(props) {
-      /* 面板把手里的 session id 递下来；组件单独渲染（老设置页、测试）时退回
+      /* 面板把手里的 session id 递下来；组件单独渲染（测试）时退回
          lastSession —— chip 一直挂在输入框旁，是它把这件事记下来的那个面。 */
       const remembered = useLastSession()
       const sessionId = props != null && typeof props.sessionId === 'string' && props.sessionId.length > 0
@@ -28,7 +29,6 @@
       const [state, setState] = React.useState(null)
       const [name, setName] = React.useState('')
       const [email, setEmail] = React.useState('')
-      const [scope, setScope] = React.useState('global')
       const [busy, setBusy] = React.useState(false)
       const [note, setNote] = React.useState('')
       const [problem, setProblem] = React.useState('')
@@ -56,14 +56,14 @@
         setBusy(true)
         setNote('')
         setProblem('')
-        const payload = { scope: scope, name: name, email: email }
+        /* host 的 git/identity-save 还收 scope，客户端固定发 global：这一组只管
+           这台机器的那份，写本地归项目档（80-panel.js），不让读者在这里挑。 */
+        const payload = { scope: 'global', name: name, email: email }
         if (sessionId.length > 0) payload.sessionId = sessionId
         callHost('git/identity-save', payload).then(function (result) {
           setBusy(false)
           setState(result)
-          setNote(result.scope === 'local'
-            ? ('已写进 ' + text(result.repo) + ' 的 .git/config：' + result.written.join('、'))
-            : ('已写进这台机器的 git 配置：' + result.written.join('、')))
+          setNote('已写进这台机器的 git 配置：' + result.written.join('、'))
         }, function (failure) {
           setBusy(false)
           setProblem(failureText(failure))
@@ -77,14 +77,6 @@
         if (one.length === 0) return '没有配'
         const from = text(origin)
         return from.length === 0 ? one : (one + '（来自 ' + from + '）')
-      }
-      const toggle = function (next) {
-        return h('label', { className: 'dsh-git-set-check' },
-          h('input', {
-            type: 'radio', checked: scope === next, name: 'dsh-git-ident-scope',
-            onChange: function () { setScope(next) },
-          }),
-          h('span', null, next === 'global' ? '这台机器的所有仓库（--global）' : '只对这个仓库（--local）'))
       }
 
       return h('div', null,
@@ -118,19 +110,13 @@
             onChange: function (event) { setEmail(event.target.value) },
           })),
 
-        h('div', { className: 'dsh-git-set-row' }, h('span', { className: 'dsh-git-set-label' }, '写进哪里'), toggle('global')),
-        h('div', { className: 'dsh-git-set-row' }, h('span', { className: 'dsh-git-set-label' }, ''), toggle('local')),
-        h('div', { className: 'dsh-git-set-row' },
-          h('span', { className: 'dsh-git-set-label' }, ''),
-          h('span', { className: 'dsh-git-set-hint' },
-            text(state != null ? state.repo : '').length > 0
-              ? ('这个仓库 = ' + state.repo)
-              : '这个会话还解不出仓库路径 —— 先在「变更 / 历史」页把仓库打开，或只写全局那一份')),
+        h('div', { className: 'dsh-git-set-row' }, h('span', { className: 'dsh-git-set-label' }, '写进哪里'),
+          h('span', { className: 'dsh-git-set-hint' }, '写进这台机器的 git 配置（--global）—— 项目自己的那份归配置页「项目配置」档')),
 
         h('div', { className: 'dsh-git-set-row' },
           h('button', {
             type: 'button', className: 'dsh-git-btn dsh-git-primary',
-            disabled: busy || (scope === 'local' && text(state != null ? state.repo : '').length === 0),
+            disabled: busy,
             onClick: save,
           }, busy ? '写入中…' : '写入 git 配置'),
           h('span', { className: 'dsh-git-set-hint' }, '写进去就是以后所有提交的作者，别的工具也看得到')),
@@ -197,6 +183,127 @@
           h('span', { className: 'dsh-git-set-label' }, ''),
           h('button', { type: 'button', className: 'dsh-git-btn', onClick: probe }, '再检查一次'),
           h('span', { className: 'dsh-git-set-hint' }, '面板读、写、初始化用的都是这一个')))
+    }
+
+    /* ── 换行符：写在 ~/.gitconfig 里的那两个键 ──
+
+       项目档的换行组（80-panel.js）答的是「这个仓库怎么办」，这一组答的是「这台机器
+       默认怎么办」：两行读写都落在 `--global` 那份（~/.gitconfig），终端里的 git 用
+       同一份，没有自己答案的仓库也吃它。读写走 74-identity.js 的两条新路由
+       （git/global-config 读、git/global-config-save 写），都带上 session id ——
+       全局写没有仓库可指名，会话是唯一能说出该用哪份沙箱策略的东西（identitySave
+       的 global 分支同一个先例）。
+
+       每行下拉首项固定「不设置（清掉 --global 的这条）」＝ unset：项目档的「跟随
+       全局」清掉的是 local、退回机器那份，这里清掉的本身就是机器那份。选中即写
+       （即清），答复里的 config 为准重画、不回显输入（identitySave /
+       projectConfigSave 的同一条原则）。
+
+       宿主旧版兜底：DSH 不重启时正在运行的宿主进程没有这两条新路由，callHost 会把
+       10-state.js HOST_NOT_READY 重试耗尽的原话（is not registered）带回来 —— 那与
+       这个仓库、与 git 都无关，照 80-panel.js remoteHostOld 的路数给一行灰字出路
+       （重启 DSH 后这里才能读写），不甩错误原文；其余失败照 GitIdentityGroup 的
+       problem 路子把 git 的原话说出来。 */
+    function GitCrlfGroup(props) {
+      const sessionId = props != null && typeof props.sessionId === 'string' ? props.sessionId : ''
+      const [snap, setSnap] = React.useState(null)
+      const [busy, setBusy] = React.useState(false)
+      const [note, setNote] = React.useState('')
+      const [problem, setProblem] = React.useState('')
+
+      /* 与读同形的请求底座：读写都带上 session id（上面注释里的那条先例）。 */
+      const request = function () {
+        return sessionId.length > 0 ? { sessionId: sessionId } : {}
+      }
+      const load = function () {
+        callHost('git/global-config', request()).then(function (data) {
+          setSnap(data)
+          setProblem('')
+        }, function (failure) {
+          const said = failureText(failure)
+          setSnap({ ok: false, stderr: said })
+          /* 宿主旧版那一种不上 problem：下面那行灰字出路替它说话，原文不上屏；
+             其余失败照 GitIdentityGroup 的路子把话说出来。 */
+          if (said.indexOf(HOST_NOT_READY) < 0) setProblem(said)
+        })
+      }
+      React.useEffect(function () { load() }, [sessionId])
+
+      const configOf = function (key) {
+        const one = snap != null && snap.config != null ? snap.config[key] : null
+        return one != null ? one : { global: '', globalOrigin: '' }
+      }
+      /* 读失败里的宿主旧版那一种：与远端组 remoteHostOld 同一条判据。 */
+      const hostOld = snap != null && snap.ok !== true
+        && text(snap.stderr).indexOf(HOST_NOT_READY) >= 0
+
+      const saveLine = function (key, next) {
+        if (busy) return
+        setBusy(true)
+        setNote('')
+        setProblem('')
+        const payload = request()
+        if (next.length === 0) payload.unset = [key]
+        else payload.set = (function () { const one = {}; one[key] = next; return one })()
+        callHost('git/global-config-save', payload).then(function (result) {
+          setBusy(false)
+          if (result == null || result.ok !== true) {
+            setProblem(commandDetail(result) || '保存失败')
+            return
+          }
+          /* 读回来而不是回显输入：写进去的值 git 怎么记下的，以此刻的问询为准。 */
+          setSnap(result)
+          setNote(next.length === 0
+            ? ('已清掉 --global 的 ' + key + '：这台机器不再有这条默认值')
+            : ('已写进这台机器的 git 配置：' + key + ' = ' + next))
+        }, function (failure) {
+          setBusy(false)
+          setProblem(failureText(failure))
+        })
+      }
+
+      /* 一行的画法照项目档 lineSelect（80-panel.js）：标签 + 下拉 + 右边一句话。
+         右边那句话答「当前全局值与来源」，宿主旧版时如实说读不到。 */
+      const line = function (key, choices, title) {
+        const entry = configOf(key)
+        const value = text(entry.global)
+        const options = [h('option', {
+          key: 'unset', value: '',
+          title: '清掉 --global 的 ' + key + '（本来没配也算成功）',
+        }, '不设置（清掉 --global 的这条）')]
+        for (let i = 0; i < choices.length; i += 1) {
+          options.push(h('option', { key: choices[i], value: choices[i] }, choices[i]))
+        }
+        return h('div', { className: 'dsh-git-set-row', key: key },
+          h('span', { className: 'dsh-git-set-label' }, key),
+          h('select', {
+            className: 'dsh-git-set-select', value: value, title: title,
+            disabled: busy || hostOld === true,
+            onChange: function (event) { saveLine(key, event.target.value) },
+          }, options),
+          h('span', { className: 'dsh-git-set-hint' },
+            hostOld === true
+              ? '宿主旧版，读不到'
+              : ('当前全局：' + (value.length > 0
+                ? value + (text(entry.globalOrigin).length > 0 ? '（来自 ' + entry.globalOrigin + '）' : '')
+                : '未配置'))))
+      }
+
+      return h('div', null,
+        h('div', { className: 'dsh-git-set-group' }, '换行符（这台机器的 git 换行配置）'),
+        h('div', { className: 'dsh-git-set-hint' },
+          '这两行写的是 --global 那份（~/.gitconfig），终端里的 git 用同一份。autocrlf=true 检出转 CRLF、提交转回 LF，input 只在提交时转 LF，false 不转；safecrlf 是把关开关，换行转换不可逆（行尾抹过一遍还原不回去）时 true 让 git 拒绝、warn 只警告、false 不把关。选中即写，首项「不设置」＝清掉 --global 的这条。'),
+
+        line('core.autocrlf', ['true', 'false', 'input'], '检出时把 LF 转 CRLF、提交时转回 LF（input 只在提交时转 LF，false 什么都不转）'),
+        line('core.safecrlf', ['true', 'false', 'warn'], '换行转换不可逆（会丢字）时的把关开关：true 让 git 拒绝这次操作、warn 只警告照做、false 不把关'),
+
+        hostOld === true
+          ? h('div', { className: 'dsh-git-set-row dsh-git-set-hint' },
+            '换行符这两行要在重启 DSH、加载新版宿主之后才能读写 —— 现在运行的宿主进程还是旧版，没有这两条路由；重启 DSH 后回到这里，这里显示的才是一份真正的答案')
+          : null,
+
+        note.length > 0 ? h('div', { className: 'dsh-git-set-row dsh-git-set-hint' }, note) : null,
+        problem.length > 0 ? h('div', { className: 'dsh-git-set-row dsh-git-error' }, problem) : null)
     }
 
     /* ── 全局配置这一档的整页 ──
@@ -313,6 +420,8 @@
         h(QuickCommandsEditor, { key: 'qc', initial: 'list' }),
 
         h(GitToolchainGroup),
+
+        h(GitCrlfGroup, { key: 'crlf', sessionId: sessionId }),
 
         pluginConfigError.length > 0
           ? h('div', { className: 'dsh-git-set-row dsh-git-error' }, '保存失败：' + pluginConfigError)

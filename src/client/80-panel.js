@@ -39,12 +39,12 @@
        这一页分两档作用域，切换排在页首（记号用头部视图切换同一套 dsh-git-cview）：
 
        · 项目配置 —— 只关于眼前这个仓库：会话完成后的刷新/推送、只写 **本项目**
-         .git/config 的提交身份、git 自己管换行符的两个键（core.autocrlf / core.eol）、
+         .git/config 的提交身份、git 自己管换行符的两个键（core.autocrlf / core.safecrlf）、
          远端表（长在 .git/config 里，走 git remote 自己的三条子命令，74-identity.js）。
        · 全局配置 —— 跟着插件与这台机器走（79-globalconfig.js 的 GitGlobalConfigPane，
          原先是 DSH 设置面板里的「dsh-git-idea配置」页，2026-10 起搬到这里）：初始化
-         分支、远程同步实参、快捷命令、git 位置、提交身份（--global/--local 自选）、
-         以及只属于本浏览器的外观与节奏。
+         分支、远程同步实参、快捷命令、git 位置、提交身份（--global）、换行符
+         （--global）、以及只属于本浏览器的外观与节奏。
 
        两档共用同一套 dsh-git-set-* 排版（沿袭自原先那页设置页的样式）。 */
 
@@ -145,7 +145,7 @@
       }
       const scopeTabs = h('div', { className: 'dsh-git-cfg-tabs' },
         scopeTab('project', '项目配置', '只关于眼前这个仓库：会话完成后自动刷新/推送、只写 --local 的提交身份、换行符与远端'),
-        scopeTab('global', '全局配置', '跟着插件与这台机器走：初始化分支、远程同步、快捷命令、git 位置、提交身份（--global/--local）与本浏览器的外观'))
+        scopeTab('global', '全局配置', '跟着插件与这台机器走：初始化分支、远程同步、快捷命令、git 位置、提交身份（--global）、换行符（--global）与本浏览器的外观'))
       const plugin = usePluginConfig()
       const autoPushNote = useAutoPush()
       const [snap, setSnap] = React.useState(null)
@@ -270,14 +270,14 @@
       const nameNow = configOf('user.name')
       const emailNow = configOf('user.email')
       const autocrlf = configOf('core.autocrlf')
-      const eol = configOf('core.eol')
+      const safecrlf = configOf('core.safecrlf')
       const inside = snap != null && snap.insideRepo === true
       const nameMissing = inside && text(nameNow.effective).length === 0
       const emailMissing = inside && text(emailNow.effective).length === 0
       const identMissing = nameMissing || emailMissing
       /* 「清掉本项目覆盖」作用的那几个键：填过（local 有值）的才在列。 */
       const localKeys = []
-      const ALL_KEYS = ['user.name', 'user.email', 'core.autocrlf', 'core.eol']
+      const ALL_KEYS = ['user.name', 'user.email', 'core.autocrlf', 'core.safecrlf']
       for (let i = 0; i < ALL_KEYS.length; i += 1) {
         if (text(configOf(ALL_KEYS[i]).local).length > 0) localKeys.push(ALL_KEYS[i])
       }
@@ -617,10 +617,10 @@
 
         h('div', { className: 'dsh-git-set-group' }, '换行符（git 自己的换行配置）'),
         h('div', { className: 'dsh-git-set-hint' },
-          '两条都是 git 的换行符配置，同样只写本项目（--local）：autocrlf=true 检出转 CRLF、提交转回 LF；input 只在提交时转 LF；eol 只对 text 文件生效。改动立即写进本项目 .git/config；选「跟随全局」= 清掉本项目的这条（不存在算成功）。'),
+          '两条都是 git 的换行符配置，同样只写本项目（--local）：autocrlf=true 检出转 CRLF、提交转回 LF，input 只在提交时转 LF，false 不转；safecrlf 是把关开关，换行转换不可逆（行尾抹过一遍还原不回去）时 true 让 git 拒绝、warn 只警告、false 不把关。改动立即写进本项目 .git/config；选「跟随全局」= 清掉本项目的这条（不存在算成功）。'),
 
         lineSelect('core.autocrlf', autocrlf, ['true', 'false', 'input'], '检出时把 LF 转 CRLF、提交时转回 LF（input 只在提交时转 LF，false 什么都不转）'),
-        lineSelect('core.eol', eol, ['lf', 'crlf', 'native'], 'text 文件在工作区里用哪种换行符（只对 text 文件生效）'),
+        lineSelect('core.safecrlf', safecrlf, ['true', 'false', 'warn'], '换行转换不可逆（会丢字）时的把关开关：true 让 git 拒绝这次操作、warn 只警告照做、false 不把关'),
 
         note.length > 0 ? h('div', { className: 'dsh-git-set-row dsh-git-set-hint' }, note) : null,
         problem.length > 0 ? h('div', { className: 'dsh-git-set-row dsh-git-error' }, problem) : null)

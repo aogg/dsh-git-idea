@@ -329,7 +329,7 @@ let projectReply = {
     'user.name': { local: '', global: 'Ada Lovelace', effective: 'Ada Lovelace', localOrigin: '', globalOrigin: '/home/u/.gitconfig', effectiveOrigin: '/home/u/.gitconfig' },
     'user.email': { local: '', global: 'ada@example.com', effective: 'ada@example.com', localOrigin: '', globalOrigin: '/home/u/.gitconfig', effectiveOrigin: '/home/u/.gitconfig' },
     'core.autocrlf': { local: 'input', global: '', effective: 'input', localOrigin: '.git/config', globalOrigin: '', effectiveOrigin: '.git/config' },
-    'core.eol': { local: '', global: 'native', effective: 'native', localOrigin: '', globalOrigin: '/home/u/.gitconfig', effectiveOrigin: '/home/u/.gitconfig' },
+    'core.safecrlf': { local: '', global: 'warn', effective: 'warn', localOrigin: '', globalOrigin: '/home/u/.gitconfig', effectiveOrigin: '/home/u/.gitconfig' },
   },
 }
 let configReply = { ok: true, path: '/home/u/.dsh/dsh-git-idea.json', config: { initBranch: 'main', cherryPickRecord: false, pushSetUpstream: true } }
@@ -452,10 +452,10 @@ ok('两个框都空 → 「写入本项目」禁用', writeBtn !== undefined && 
 ok('本项目覆盖过 autocrlf → 「清掉覆盖」可用，且 hint 列出覆盖的键',
   clearBtn !== undefined && clearBtn.props.disabled !== true
   && hintText(tree, '本项目覆盖了：').indexOf('core.autocrlf') >= 0)
-const eolSelect = selects(tree).find((s) => optionsOf(s).some((o) => o.props.value === 'crlf'))
-ok('core.eol 下拉落在「跟随全局」，选项里带全局当前值', eolSelect !== undefined
-  && String(eolSelect.props.value) === ''
-  && textOf(pickedOption(eolSelect)).indexOf('跟随全局（全局当前：native）') === 0)
+const safecrlfSelect = selects(tree).find((s) => optionsOf(s).some((o) => o.props.value === 'warn'))
+ok('core.safecrlf 下拉落在「跟随全局」，选项里带全局当前值', safecrlfSelect !== undefined
+  && String(safecrlfSelect.props.value) === ''
+  && textOf(pickedOption(safecrlfSelect)).indexOf('跟随全局（全局当前：warn）') === 0)
 const autocrlfSelect = selects(tree).find((s) => optionsOf(s).some((o) => o.props.value === 'input'))
 ok('core.autocrlf 下拉落在本地覆盖 input 上', autocrlfSelect !== undefined && String(autocrlfSelect.props.value) === 'input')
 
@@ -483,16 +483,16 @@ console.log('')
 console.log('=== 配置页：换行下拉选中即写、「跟随全局」即清 ===')
 await clickText(tree, '配置')
 tree = await settle()
-const eolSelect2 = selects(tree).find((s) => optionsOf(s).some((o) => o.props.value === 'crlf'))
-eolSelect2.props.onChange({ target: { value: 'lf' } })
+const safecrlfSelect2 = selects(tree).find((s) => optionsOf(s).some((o) => o.props.value === 'warn'))
+safecrlfSelect2.props.onChange({ target: { value: 'true' } })
 tree = await settle()
 lastSave = saveCalls[saveCalls.length - 1]
-ok('选 lf 立即写入 set.core.eol', lastSave != null && lastSave.set != null && lastSave.set['core.eol'] === 'lf')
-const eolSelect3 = selects(tree).find((s) => optionsOf(s).some((o) => o.props.value === 'crlf'))
-eolSelect3.props.onChange({ target: { value: '' } })
+ok('选 true 立即写入 set.core.safecrlf', lastSave != null && lastSave.set != null && lastSave.set['core.safecrlf'] === 'true')
+const safecrlfSelect3 = selects(tree).find((s) => optionsOf(s).some((o) => o.props.value === 'warn'))
+safecrlfSelect3.props.onChange({ target: { value: '' } })
 tree = await settle()
 lastSave = saveCalls[saveCalls.length - 1]
-ok('选「跟随全局」= unset core.eol', lastSave != null && Array.isArray(lastSave.unset) && lastSave.unset.join(',') === 'core.eol')
+ok('选「跟随全局」= unset core.safecrlf', lastSave != null && Array.isArray(lastSave.unset) && lastSave.unset.join(',') === 'core.safecrlf')
 
 console.log('')
 console.log('=== 配置页：bridge 版（没有会话 props）明说不行，不装能用 ===')

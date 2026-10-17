@@ -302,11 +302,12 @@ const ok = (label, value) => console.log('  ' + (value ? '✓' : '✗') + ' ' + 
    fetch / pull / push 到底带不带那几个参数。这个套件盯的就是这三块，加上它们唯一
    一处会动手的地方：推送没有上游的分支时，面板会不会自己把那一步走完。
 
-   1. 提交身份：此刻生效的那一份（连来源一起）、缺哪一半、预填、写入时带的 scope
+   1. 提交身份：此刻生效的那一份（连来源一起）、缺哪一半、预填、写入固定落 --global
    2. 空框不写：`git config user.name ''` 正是那个错误的来路，面板不制造它
-   3. git 位置：PATH 上的 / 设置里写的 / 写错了 / 一个都没有，四种话各不相同
-   4. 远程同步：三个开关，以及「也就是」那行照着实参说
-   5. 推送没有上游：开着就自己走完，关着就问一句；走完的那次不再重试
+   3. 落点只剩 global：写本地那条路整个拆掉，会话只跟着选沙箱
+   4. git 位置：PATH 上的 / 设置里写的 / 写错了 / 一个都没有，四种话各不相同
+   5. 远程同步：三个开关，以及「也就是」那行照着实参说
+   6. 推送没有上游：开着就自己走完，关着就问一句；走完的那次不再重试
 
    两条关于这个骨架的注意（踩过）：同一个组件的两次渲染要用**同一个 label**，否则
    fiber 是新的、组件等于重新挂载（状态和 effect 都会重来）；而 `timer.timeout` 在这
@@ -406,8 +407,8 @@ ok('两个输入框预填了此刻生效的那一份',
   && String(inputFor(st, '邮箱').props.value) === 'ada@example.com')
 ok('有身份时没有警告', byClass(st, 'dsh-git-warn').length === 0)
 const radios = collect(st).filter(function (n) { return n.type === 'input' && n.props.type === 'radio' })
-ok('写入范围默认是这台机器（--global），也就是 git 自己建议的那一条',
-  radios.length === 2 && radios[0].props.checked === true && radios[1].props.checked === false)
+ok('写进哪里不再挑：radio 一个都没有，一行静态说明落点（--global）',
+  radios.length === 0 && rowTexts(st).join(' | ').indexOf('写进这台机器的 git 配置（--global）') >= 0)
 
 inputFor(st, '邮箱').props.onChange({ target: { value: 'new@example.com' } })
 await wait(5)
@@ -426,39 +427,34 @@ ok('写完之后页面把结果说出来（写到哪、写了哪两个字段）'
   rowTexts(st).join(' | ').indexOf('已写进这台机器的 git 配置') >= 0
   && rowTexts(st).join(' | ').indexOf('user.name') >= 0)
 
-/* ── 3. 只对这个仓库：谁记着这个页面在哪个会话里 ── */
+/* ── 3. 落点只剩 global：会话只是让沙箱策略跟对人 ── */
 
 console.log('')
-console.log('== 只对这个仓库 ==')
+console.log('== 只剩 global：落点固定这台机器，会话只跟着走 ==')
 /* 面板本来就带着会话：sessionId 是 props 一路递进「全局配置」的提交身份组的，
-   不必再借 chip 的记忆。先开一次新页（重新读身份），再在同一次挂载里切范围。 */
+   不必再借 chip 的记忆；写本地的那条路（连 radio 一起）已经整个拆掉。 */
 st = await sectionTree('gp43-ident')
-collect(st).filter(function (n) { return n.type === 'input' && n.props.type === 'radio' })[1].props.onChange()
-await wait(5)
-st = await settle('pop')
-const localBtn = btnWith(st, '写入 git 配置')
-ok('切到「只对这个仓库」之后按钮仍然可按（这个会话有仓库）', localBtn !== undefined && localBtn.props.disabled !== true)
-ok('这一行说得出「这个仓库」到底是哪个', rowTexts(st).join(' | ').indexOf('这个仓库 = /tmp/ws') >= 0)
-localBtn.props.onClick()
+const globalBtn = btnWith(st, '写入 git 配置')
+ok('radio 一个都没有（写本地的那条路拆掉了）',
+  collect(st).filter(function (n) { return n.type === 'input' && n.props.type === 'radio' }).length === 0)
+ok('「这个仓库 = …」那行不再出现（落点与仓库无关）',
+  rowTexts(st).join(' | ').indexOf('这个仓库 = ') < 0)
+ok('按钮不再看仓库脸色（global 不需要仓库）', globalBtn !== undefined && globalBtn.props.disabled !== true)
+globalBtn.props.onClick()
 await wait(20)
 st = await settle('pop')
 console.log('  第二次写出去的:', JSON.stringify(identitySaves[1]))
-ok('本地 scope 带着 session id（Host 靠它解出仓库，也靠它选沙箱）',
-  identitySaves.length === 2 && identitySaves[1].scope === 'local' && identitySaves[1].sessionId === 's-1')
-ok('落点也换成了这个仓库', rowTexts(st).join(' | ').indexOf('已写进 /tmp/ws 的 .git/config') >= 0)
+ok('scope 固定 global、session id 照带（Host 靠它选沙箱）',
+  identitySaves.length === 2 && identitySaves[1].scope === 'global' && identitySaves[1].sessionId === 's-1')
+ok('落点还是这台机器的 git 配置', rowTexts(st).join(' | ').indexOf('已写进这台机器的 git 配置') >= 0)
 
-/* 不知道是哪个仓库时：那条路要关掉并说清，而不是猜一个路径往里写。 */
+/* 不知道是哪个仓库时也一样：global 从来不需要仓库。 */
 identityReply = Object.assign({}, identityReply, { repo: null, insideRepo: false })
 st = await sectionTree('gp43-ident-nowhere')
-console.log('  不知道仓库时:', JSON.stringify(rowTexts(st).filter(function (x) { return x.indexOf('还不知道') >= 0 })[0] || ''))
-ok('不知道仓库时，页面上写着这件事', rowTexts(st).join(' | ').indexOf('还解不出仓库路径') >= 0)
-/* 全局那一份仍然可以写（它不需要知道是哪个仓库）；要写本地就没有落点，按钮关掉。 */
-ok('这时候全局那份照旧能写', btnWith(st, '写入 git 配置').props.disabled !== true)
-collect(st).filter(function (n) { return n.type === 'input' && n.props.type === 'radio' })[1].props.onChange()
-await wait(5)
-st = await settle('pop')
-ok('选「只对这个仓库」而不知道是哪个仓库时，按钮关掉（不猜一个路径往里写）',
-  btnWith(st, '写入 git 配置').props.disabled === true)
+ok('不知道仓库时按钮照旧可按（global 不需要仓库）',
+  btnWith(st, '写入 git 配置').props.disabled !== true)
+ok('「还解不出仓库路径」那行也一并拆掉了',
+  rowTexts(st).join(' | ').indexOf('还解不出仓库路径') < 0)
 identityReply = Object.assign({}, identityReply, { repo: '/tmp/ws', insideRepo: true })
 
 /* ── 4. git 位置 ── */

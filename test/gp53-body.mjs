@@ -1,6 +1,6 @@
-/* ═══ gp53：推送兜底挑远端 + 配置页「远端」组（客户端这一半）═══
+/* ═══ gp53：推送兜底挑远端 + 配置页「远端」组 + 全局换行组（客户端这一半）═══
  *
- * 盯两片：
+ * 盯三片：
  *   1. guessPushRemote（70-branchpicker.js 的纯函数，从产物里单独求值 —— gp50 对
  *      53-merge3.js 的同款做法）：git/refs 的答复里 remote 是按远端分组的表，挑的
  *      规矩与右键推送 ctxPush 先立的那条一致 —— 有 origin 用 origin（哪怕排在
@@ -14,14 +14,19 @@
  *      bump（分支树的「远程」分组才有得刷）；新表照重读的答复重画；删除两段式：
  *      第一次「删除」只上膛，「确认删除」才发 {remove:{name}}；工作区不是仓库
  *      （insideRepo:false）→ 控件全禁用 + 说明行说人话；读失败落在组自己的说明行，
- *      不占页面底部那条 problem。 */
+ *      不占页面底部那条 problem；
+ *   3. 全局配置档的「换行符」组（79-globalconfig.js 的 GitCrlfGroup）：进全局档问
+ *      一次 git/global-config（带会话），两行下拉各显示当前全局值与来源；选中即写
+ *      （即清），写走 git/global-config-save、首项「不设置」＝ unset，读写都带
+ *      sessionId，答复里的 config 为准重画不回显输入；宿主还是旧版（is not
+ *      registered 重试耗尽）→ 两个下拉禁用 + 一行灰字给出路，不甩错误原文。 */
 
-/* ── mock：配置页的两个读与一个写按用例给答复 ── */
+/* ── mock：配置页的读与写按用例给答复 ── */
 let projectReply = { ok: true, repo: '/tmp/ws', insideRepo: true, config: {
   'user.name': { local: 'Ada', global: '', effective: 'Ada', localOrigin: '.git/config', globalOrigin: '', effectiveOrigin: '.git/config' },
   'user.email': { local: '', global: 'ada@example.com', effective: 'ada@example.com', localOrigin: '', globalOrigin: '/home/u/.gitconfig', effectiveOrigin: '/home/u/.gitconfig' },
   'core.autocrlf': { local: '', global: '', effective: '', localOrigin: '', globalOrigin: '', effectiveOrigin: '' },
-  'core.eol': { local: '', global: '', effective: '', localOrigin: '', globalOrigin: '', effectiveOrigin: '' },
+  'core.safecrlf': { local: '', global: '', effective: '', localOrigin: '', globalOrigin: '', effectiveOrigin: '' },
 } }
 /* 两个远端：origin 的 push 与 fetch 相同（答复里 pushUrl 是空串），fork 真的不同。 */
 const TABLE_2 = [
@@ -31,11 +36,50 @@ const TABLE_2 = [
 let remoteSnapReply = { ok: true, repo: '/tmp/ws', insideRepo: true, remotes: TABLE_2 }
 let remoteSaveReply = null
 const remoteSaveCalls = []
+/* 全局换行组（79-globalconfig.js 的 GitCrlfGroup）的读与写按用例给答复：结构照 host
+   侧 globalConfigSnapshot / globalConfigSave —— 两个键各一对 {global, globalOrigin}，
+   没配＝双空串。globalReadFailure 非 null 时读按原样拒绝（宿主旧版那节用它造
+   is not registered，走的是 callHost 真重试的那条路）。 */
+let globalReply = { ok: true, config: {
+  'core.autocrlf': { global: 'input', globalOrigin: '~/.gitconfig' },
+  'core.safecrlf': { global: '', globalOrigin: '' },
+} }
+let globalReadFailure = null
+const globalSaveCalls = []
 const realCall53 = host.call
+/* 与 host 侧 globalConfigSave 同一条「写后回读」的约定：答复 = 新快照 + written/unset。 */
+const fakeGlobalSave = function (args) {
+  globalSaveCalls.push(args)
+  const next = JSON.parse(JSON.stringify(globalReply.config))
+  const written = []
+  const unset = []
+  if (args != null && args.set != null) {
+    for (const key of Object.keys(args.set)) {
+      if (next[key] === undefined) continue
+      next[key] = Object.assign({}, next[key], { global: args.set[key], globalOrigin: '~/.gitconfig' })
+      written.push(key)
+    }
+  }
+  if (Array.isArray(args != null ? args.unset : null)) {
+    for (const key of args.unset) {
+      if (next[key] === undefined) continue
+      next[key] = Object.assign({}, next[key], { global: '', globalOrigin: '' })
+      unset.push(key)
+    }
+  }
+  globalReply = Object.assign({}, globalReply, { config: next })
+  return Promise.resolve(Object.assign({ written: written, unset: unset }, globalReply))
+}
 host.call = function (method, args) {
   if (method === 'git/project-config') { calls.push({ method: method, args: args }); return Promise.resolve(projectReply) }
   if (method === 'git/remotes') { calls.push({ method: method, args: args }); return Promise.resolve(remoteSnapReply) }
   if (method === 'git/remotes-save') { calls.push({ method: method, args: args }); remoteSaveCalls.push(args); return Promise.resolve(remoteSaveReply) }
+  if (method === 'git/global-config') {
+    calls.push({ method: method, args: args })
+    if (globalReadFailure !== null) return Promise.reject(new Error(globalReadFailure))
+    return Promise.resolve(globalReply)
+  }
+  if (method === 'git/global-config-save') { calls.push({ method: method, args: args }); return fakeGlobalSave(args) }
   return realCall53(method, args)
 }
 
@@ -169,3 +213,97 @@ remoteSnapReply = { ok: false, stderr: 'git 的原话：权限不给' }
 let treeC = await openConfigOn('gp53c', 's-53c')
 ok('说明行是「远端列表没读出来：」+ git 原话', saysOn(treeC, '远端列表没读出来：git 的原话：权限不给'))
 ok('页面底部那条 problem 没被占（dsh-git-error 一行都没有）', byClass(treeC, 'dsh-git-error').length === 0)
+
+/* ── 全局换行组取景：下拉按首项之外特有的选项值认（autocrlf 独有 input、safecrlf
+   独有 warn）；提示行沿用 saysOn。进全局档 = 先点「配置」页签再点「全局配置」，
+   GitCrlfGroup 这才挂载、这才发读。 ── */
+const selects53 = (t) => collect(t).filter((n) => n.type === 'select')
+const optionsOf53 = (s) => (Array.isArray(s.props.children) ? s.props.children : [s.props.children]).filter((o) => o != null && o.type === 'option')
+const select53 = (t, unique) => selects53(t).find((s) => optionsOf53(s).some((o) => o.props.value === unique))
+const openGlobalOn = async function (label, sid) {
+  let t = null
+  for (let i = 0; i < 4; i += 1) { t = await renderUntilStable(makeElement(popover, { sessionId: sid }), label); await wait(10) }
+  const cfg = buttons(t).find((b) => textOf(b) === '配置')
+  if (cfg === undefined) throw new Error('点不到「配置」页签')
+  cfg.props.onClick()
+  for (let i = 0; i < 4; i += 1) { t = await renderUntilStable(makeElement(popover, { sessionId: sid }), label); await wait(10) }
+  const globalBtn = buttons(t).find((b) => textOf(b) === '全局配置')
+  if (globalBtn === undefined) throw new Error('点不到「全局配置」')
+  globalBtn.props.onClick()
+  for (let i = 0; i < 4; i += 1) { t = await renderUntilStable(makeElement(popover, { sessionId: sid }), label); await wait(10) }
+  return t
+}
+/* 宿主旧版那节要走 callHost 的真重试：is not registered 会连吃 24 次 120ms 的重试
+   定时器，替身把定时器补演到点，读才落得进 ok:false。 */
+const pumpRetries = async function () {
+  for (let i = 0; i < 30; i += 1) {
+    const pending = timers.filter((t) => t.kind === 'timeout' && t.dead !== true)
+    if (pending.length === 0) return
+    for (const t of pending) { t.dead = true; t.cb() }
+    await wait(5)
+  }
+}
+/* 全局档自己的重渲染：fiber 按 label 认，settle() 只会重画 openPanel 的 'pop'，
+   下面各段必须留在自己 openGlobalOn 用过的那把 label 与 session 上。 */
+const rerenderOn = async function (label, sid) {
+  let t = null
+  for (let i = 0; i < 4; i += 1) { t = await renderUntilStable(makeElement(popover, { sessionId: sid }), label); await wait(10) }
+  return t
+}
+
+console.log('')
+console.log('== 全局换行组：进档读一次，两行各带当前全局值与来源 ==')
+globalReadFailure = null
+let markG = calls.length
+let treeG = await openGlobalOn('gp53-global', 's-53g')
+ok('进全局档问了一次 git/global-config（只带会话）',
+  callsOf53(markG, 'git/global-config').length === 1
+  && callsOf53(markG, 'git/global-config')[0].args.sessionId === 's-53g'
+  && callsOf53(markG, 'git/global-config')[0].args.repo === undefined)
+ok('组头把话说全：「换行符（这台机器的 git 换行配置）」',
+  collect(treeG).some((n) => hasClass53(n, 'dsh-git-set-group') && textOf(n) === '换行符（这台机器的 git 换行配置）'))
+const autocrlfG = select53(treeG, 'input')
+const safecrlfG = select53(treeG, 'warn')
+ok('两条下拉都在：core.autocrlf 落在全局值 input 上，core.safecrlf 没配落在首项上',
+  autocrlfG !== undefined && String(autocrlfG.props.value) === 'input'
+  && safecrlfG !== undefined && String(safecrlfG.props.value) === '')
+ok('首项固定「不设置（清掉 --global 的这条）」',
+  autocrlfG !== undefined && textOf(optionsOf53(autocrlfG)[0]) === '不设置（清掉 --global 的这条）')
+ok('行的提示带当前全局值与来源：input（来自 ~/.gitconfig）／没配的说未配置',
+  saysOn(treeG, '当前全局：input（来自 ~/.gitconfig）') && saysOn(treeG, '当前全局：未配置'))
+ok('两个下拉此刻都可用', autocrlfG.props.disabled !== true && safecrlfG.props.disabled !== true)
+
+console.log('')
+console.log('== 全局换行组：选中即写（即清），读写都带会话，答复 config 为准重画 ==')
+safecrlfG.props.onChange({ target: { value: 'true' } })
+treeG = await rerenderOn('gp53-global', 's-53g')
+let lastGlobal = globalSaveCalls[globalSaveCalls.length - 1]
+ok('选 true 立即发 set.core.safecrlf=true + 会话，unset 不带',
+  globalSaveCalls.length === 1 && lastGlobal.set != null && lastGlobal.set['core.safecrlf'] === 'true'
+  && lastGlobal.sessionId === 's-53g' && lastGlobal.unset === undefined)
+ok('提示行说写进了哪台机器的哪条：已写进这台机器的 git 配置：core.safecrlf = true',
+  saysOn(treeG, '已写进这台机器的 git 配置：core.safecrlf = true'))
+ok('重画照答复的 config：行的当前全局换成 true（来自 ~/.gitconfig）',
+  saysOn(treeG, '当前全局：true（来自 ~/.gitconfig）'))
+select53(treeG, 'warn').props.onChange({ target: { value: '' } })
+treeG = await rerenderOn('gp53-global', 's-53g')
+lastGlobal = globalSaveCalls[globalSaveCalls.length - 1]
+ok('选「不设置」= unset core.safecrlf（清掉 --global 的这条）',
+  globalSaveCalls.length === 2 && Array.isArray(lastGlobal.unset)
+  && lastGlobal.unset.join(',') === 'core.safecrlf' && lastGlobal.set === undefined
+  && lastGlobal.sessionId === 's-53g')
+ok('清掉之后提示行也换个说法：这台机器不再有这条默认值',
+  saysOn(treeG, '已清掉 --global 的 core.safecrlf：这台机器不再有这条默认值'))
+
+console.log('')
+console.log('== 全局换行组：宿主还是旧版时，灰字给出路、下拉禁用，不甩错误原文 ==')
+globalSaveCalls.length = 0
+globalReadFailure = 'host.call("git/global-config") is not registered: the host half must declare it with harness.handle("git/global-config", fn).'
+let treeOld = await openGlobalOn('gp53-global-old', 's-53gold')
+await pumpRetries()
+treeOld = await rerenderOn('gp53-global-old', 's-53gold')
+ok('宿主旧版判据来自重试耗尽后的答复：两个下拉都禁用',
+  select53(treeOld, 'input').props.disabled === true && select53(treeOld, 'warn').props.disabled === true)
+ok('一行灰字给出路（重启 DSH 后才能读写）',
+  saysOn(treeOld, '重启 DSH') && saysOn(treeOld, '宿主旧版'))
+ok('不甩错误原文：is not registered 不上屏', textOf(treeOld).indexOf('is not registered') < 0)
