@@ -206,7 +206,7 @@
         if (row.kind === 'ctx') {
           const shown = crText(row.text, showCr)
           out.push({
-            kind: 'ctx',
+            kind: 'ctx', cls: ' dsh-git-dl-ctx',
             left: { no: row.old, sign: ' ', text: shown, miss: null },
             right: { no: row.next, sign: ' ', text: shown, miss: null },
           })
@@ -230,7 +230,8 @@
       const rightText = crText(add.text, showCr)
       const words = wordDiff(leftText, rightText)
       return {
-        kind: 'pair',
+        /* 配对行同时是一删一加：行类把两个都挂上（底色在半列上，行类只管身份）。 */
+        kind: 'pair', cls: ' dsh-git-dl-del dsh-git-dl-add',
         left: { no: del.old, sign: '-', text: leftText, miss: words === null ? null : words.left },
         right: { no: add.next, sign: '+', text: rightText, miss: words === null ? null : words.right },
       }
@@ -241,8 +242,8 @@
       const cell = { no: kind === 'del' ? row.old : row.next, sign: row.sign, text: crText(row.text, showCr), miss: null }
       const empty = { no: '', sign: '', text: '', miss: null }
       return kind === 'del'
-        ? { kind: 'del', left: cell, right: empty }
-        : { kind: 'add', left: empty, right: cell }
+        ? { kind: 'del', cls: ' dsh-git-dl-del', left: cell, right: empty }
+        : { kind: 'add', cls: ' dsh-git-dl-add', left: empty, right: cell }
     }
 
     /* 一格的底色归属跟着记号走：+ 绿、- 红、空格上下文、空串是留空的半列。 */
@@ -295,7 +296,7 @@
             h('div', { key: 'f', colSpan: 2, className: 'dsh-git-dfull' }, row.text)))
           continue
         }
-        shown.push(h('div', { key: 'r' + i, className: 'dsh-git-dline dsh-git-dl-' + row.kind },
+        shown.push(h('div', { key: 'r' + i, className: 'dsh-git-dline' + row.cls },
           h('div', { key: 'o', className: 'dsh-git-dhalf dsh-git-dhalf-old' + halfMark(row.left) },
             h('span', { key: 'no', className: 'dsh-git-dno' }, row.left.no),
             h('span', { key: 'sg', className: 'dsh-git-dsign' }, row.left.sign),
