@@ -109,28 +109,210 @@
       return out
     }
 
+    /* ── 词级（行内）差异 ──
+
+       配上对的一行往往只差几个词：整行底色里再标出片段，改动一眼就在。token 切分
+       保留空白连续段（/(\s+|\w+|.)/g：空白一段一个、单词一段一个、其余逐字符 ——
+       对中文正好退化为逐字对比），两边求 LCS，不在公共子序列里的 token 就是各自
+       要包起来的片段。
+
+       护栏：任一侧超长（>1000 字符）或 token 超过上限就放弃、整行原样 —— 一个
+       几千行的补丁配一个 O(n·m) 的 DP，不能让打开差异变卡；两道线都是给最坏情形
+       的，常见的一行代码只有十几个 token。行尾的 \r 也按 token 参与：CRLF↔LF 的
+       差别因此能被词级高亮标出来。 */
+    const WORD_MAX_CHARS = 1000
+    const WORD_MAX_TOKENS = 220
+    const CR_GLYPH = '⏎'
+
+    function wordTokens(line) {
+      return line.match(/(\s+|\w+|.)/g) || []
+    }
+
+    /* 标记走到段落：相邻的同记号 token 合成一段，一段只花一个 <span>。 */
+    function wordSegments(tokens, marks) {
+      const out = []
+      for (let i = 0; i < tokens.length; i += 1) {
+        const miss = marks[i] === true
+        const last = out.length > 0 ? out[out.length - 1] : null
+        if (last !== null && last.m === miss) last.t += tokens[i]
+        else out.push({ t: tokens[i], m: miss })
+      }
+      return out
+    }
+
+    /* 两边各返回 [{t, m}]（m = 不在公共子序列里，要上底色）；null = 放弃高亮。 */
+    function wordDiff(leftText, rightText) {
+      if (leftText === rightText) return null
+      if (leftText.length > WORD_MAX_CHARS || rightText.length > WORD_MAX_CHARS) return null
+      const a = wordTokens(leftText)
+      const b = wordTokens(rightText)
+      if (a.length > WORD_MAX_TOKENS || b.length > WORD_MAX_TOKENS) return null
+      const n = a.length
+      const m = b.length
+      /* 表只有 (n+1)×(m+1) 格，一个 Int32Array 装下；从后往前填，dp[i][j] 是
+         a[i..] 与 b[j..] 的公共子序列长。 */
+      const width = m + 1
+      const dp = new Int32Array((n + 1) * width)
+      for (let i = n - 1; i >= 0; i -= 1) {
+        for (let j = m - 1; j >= 0; j -= 1) {
+          dp[i * width + j] = a[i] === b[j]
+            ? dp[(i + 1) * width + j + 1] + 1
+            : Math.max(dp[(i + 1) * width + j], dp[i * width + j + 1])
+        }
+      }
+      const left = new Array(n)
+      const right = new Array(m)
+      let i = 0
+      let j = 0
+      while (i < n && j < m) {
+        if (a[i] === b[j]) { i += 1; j += 1 }
+        else if (dp[(i + 1) * width + j] >= dp[i * width + j + 1]) { left[i] = true; i += 1 }
+        else { right[j] = true; j += 1 }
+      }
+      while (i < n) { left[i] = true; i += 1 }
+      while (j < m) { right[j] = true; j += 1 }
+      return { left: wordSegments(a, left), right: wordSegments(b, right) }
+    }
+
+    /* ── 配对：diffRows 的统一行数组 → 左右对比的行数组 ──
+
+       连续的 del 块与紧随的 add 块按下标配对（第 i 个 del 配第 i 个 add），多出的
+       del 左半有内容右半留空，多出的 add 相反；ctx 行左右 1:1；hunk / meta / note
+       横跨两列整行显示。夹在块中间的「\ No newline at end of file」不拆散配对
+       （它正是 EOF 的差异：先成对，再整行补在块尾）。词级差异在这里一次算好，
+       PatchBody 的渲染循环里不再碰它 —— 虚拟窗口滑到哪就画哪，算却只算一遍。 */
+    function pairRows(raw, showCr) {
+      const out = []
+      let i = 0
+      while (i < raw.length) {
+        const row = raw[i]
+        if (row.kind === 'del' || row.kind === 'add') {
+          const dels = []
+          const adds = []
+          const notes = []
+          while (i < raw.length && (raw[i].kind === 'del' || raw[i].kind === 'add' || raw[i].kind === 'note')) {
+            if (raw[i].kind === 'del') dels.push(raw[i])
+            else if (raw[i].kind === 'add') adds.push(raw[i])
+            else notes.push(raw[i])
+            i += 1
+          }
+          const paired = Math.min(dels.length, adds.length)
+          for (let k = 0; k < paired; k += 1) out.push(pairRow(dels[k], adds[k], showCr))
+          for (let k = paired; k < dels.length; k += 1) out.push(halfRow('del', dels[k], showCr))
+          for (let k = paired; k < adds.length; k += 1) out.push(halfRow('add', adds[k], showCr))
+          for (let k = 0; k < notes.length; k += 1) out.push({ kind: 'note', full: true, text: notes[k].text })
+          continue
+        }
+        if (row.kind === 'ctx') {
+          const shown = crText(row.text, showCr)
+          out.push({
+            kind: 'ctx',
+            left: { no: row.old, sign: ' ', text: shown, miss: null },
+            right: { no: row.next, sign: ' ', text: shown, miss: null },
+          })
+        } else {
+          out.push({ kind: row.kind, full: true, text: row.text })
+        }
+        i += 1
+      }
+      return out
+    }
+
+    /* 行尾的 \r：勾上就留着（渲染时画成 ⏎，且参与词级对比）；没勾就剥掉。
+       white-space:pre 下裸 \r 会被浏览器当换行、撑破 18px 的行高，所以无论勾不勾
+       它都不能以文本的形式进 DOM —— 不勾时剥掉，勾上时由 crChildren 画成字形。 */
+    function crText(line, showCr) {
+      return showCr === true ? line : line.replace(/\r$/, '')
+    }
+
+    function pairRow(del, add, showCr) {
+      const leftText = crText(del.text, showCr)
+      const rightText = crText(add.text, showCr)
+      const words = wordDiff(leftText, rightText)
+      return {
+        kind: 'pair',
+        left: { no: del.old, sign: '-', text: leftText, miss: words === null ? null : words.left },
+        right: { no: add.next, sign: '+', text: rightText, miss: words === null ? null : words.right },
+      }
+    }
+
+    /* 多出的那半：有内容的一侧整行底色，另一侧留空（没有行号、没有记号）。 */
+    function halfRow(kind, row, showCr) {
+      const cell = { no: kind === 'del' ? row.old : row.next, sign: row.sign, text: crText(row.text, showCr), miss: null }
+      const empty = { no: '', sign: '', text: '', miss: null }
+      return kind === 'del'
+        ? { kind: 'del', left: cell, right: empty }
+        : { kind: 'add', left: empty, right: cell }
+    }
+
+    /* 一格的底色归属跟着记号走：+ 绿、- 红、空格上下文、空串是留空的半列。 */
+    function halfMark(cell) {
+      if (cell.sign === '+') return ' dsh-git-dhalf-add'
+      if (cell.sign === '-') return ' dsh-git-dhalf-del'
+      if (cell.sign === ' ') return ' dsh-git-dhalf-ctx'
+      return ' dsh-git-dhalf-empty'
+    }
+
+    /* 一格的文字：\r 一律画成暗色 ⏎（裸 \r 不能进 DOM 文本）；带词级记号的段落
+       包一层浅底 span —— 底色由左右半列的类各给各的，字形与文字共用一套类名。 */
+    function crChildren(cell) {
+      const out = []
+      const segments = cell.miss !== null ? cell.miss : [{ t: cell.text, m: false }]
+      for (let s = 0; s < segments.length; s += 1) {
+        const seg = segments[s]
+        const parts = seg.t.split('\r')
+        for (let p = 0; p < parts.length; p += 1) {
+          if (p > 0) {
+            out.push(h('span', { key: 'cr' + s + '-' + p, className: 'dsh-git-dcr' + (seg.m === true ? ' dsh-git-dmiss' : '') }, CR_GLYPH))
+          }
+          if (parts[p].length > 0) {
+            out.push(seg.m === true
+              ? h('span', { key: 'w' + s + '-' + p, className: 'dsh-git-dmiss' }, parts[p])
+              : parts[p])
+          }
+        }
+      }
+      return out
+    }
+
     /* One section's body. A patch can be thousands of lines and the pane shows
        twenty-odd of them, so it is windowed exactly like the history list: same
        arithmetic, same spacers, and "everything" while no height can be
-       measured. */
+       measured. The rows it paints are the paired ones: the pairing and the
+       word-level marks are computed once per (patch, 回车符开关) in the memo —
+       toggling the checkbox repaints what is already in hand and never re-asks
+       git. */
     function PatchBody(props) {
-      const rows = useMemo(function () { return diffRows(props.patch) }, [props.patch])
+      const showCr = props.showCr === true
+      const rows = useMemo(function () { return pairRows(diffRows(props.patch), showCr) }, [props.patch, showCr])
       const win = useVirtualWindow('diff:' + props.id, rows.length, DIFF_ROW_H)
       const shown = []
       for (let i = win.first; i < win.last; i += 1) {
         const row = rows[i]
+        if (row.full === true) {
+          /* hunk / meta / note：一格横跨两列整行。 */
+          shown.push(h('div', { key: 'r' + i, className: 'dsh-git-dline dsh-git-dl-' + row.kind },
+            h('div', { key: 'f', colSpan: 2, className: 'dsh-git-dfull' }, row.text)))
+          continue
+        }
         shown.push(h('div', { key: 'r' + i, className: 'dsh-git-dline dsh-git-dl-' + row.kind },
-          h('span', { key: 'o', className: 'dsh-git-dno' }, row.old),
-          h('span', { key: 'n', className: 'dsh-git-dno' }, row.next),
-          h('span', { key: 's', className: 'dsh-git-dsign' }, row.sign),
-          h('span', { key: 't', className: 'dsh-git-dtext' }, row.text)))
+          h('div', { key: 'o', className: 'dsh-git-dhalf dsh-git-dhalf-old' + halfMark(row.left) },
+            h('span', { key: 'no', className: 'dsh-git-dno' }, row.left.no),
+            h('span', { key: 'sg', className: 'dsh-git-dsign' }, row.left.sign),
+            h('span', { key: 'tx', className: 'dsh-git-dtext' }, crChildren(row.left))),
+          h('div', { key: 'n', className: 'dsh-git-dhalf dsh-git-dhalf-new' + halfMark(row.right) },
+            h('span', { key: 'no', className: 'dsh-git-dno' }, row.right.no),
+            h('span', { key: 'sg', className: 'dsh-git-dsign' }, row.right.sign),
+            h('span', { key: 'tx', className: 'dsh-git-dtext' }, crChildren(row.right)))))
       }
       const padTop = win.first * DIFF_ROW_H
       const padBottom = (rows.length - win.last) * DIFF_ROW_H
       return h('div', { className: 'dsh-git-diff', ref: win.attach, onScroll: win.measure },
         h('div', { className: 'dsh-git-diffwrap', style: { minHeight: (rows.length * DIFF_ROW_H) + 'px' } },
           padTop > 0 ? h('div', { key: 'pad-top', style: { height: padTop + 'px' } }) : null,
-          shown,
+          /* 行放进一张表：列宽由整张表按内容分，左右两列的边界才逐行对齐 —— 每行
+             各排各的（flex / 各自的 50%）做不到，谁的内容长边界就歪到谁那边。 */
+          h('div', { key: 'table', className: 'dsh-git-dtable' }, shown),
           padBottom > 0 ? h('div', { key: 'pad-bottom', style: { height: padBottom + 'px' } }) : null))
     }
 
@@ -163,7 +345,7 @@
       } else if (reply.empty === true) {
         body = h('div', { className: 'dsh-git-pane dsh-git-dim' }, '没有差异')
       } else {
-        body = h(PatchBody, { id: row.req.key, patch: reply.text })
+        body = h(PatchBody, { id: row.req.key, patch: reply.text, showCr: props.showCr })
       }
       return h('div', { key: 'sec-' + row.req.key, className: 'dsh-git-diffsec-wrap' },
         props.labeled === true && row.req.label.length > 0
@@ -356,6 +538,11 @@
 
     function DiffView(props) {
       const target = props.target
+      /* 回车符开关是这个浏览器自己的显示偏好（20-prefs.js 的 settings 层）。在
+         这里读一次、往下传到 PatchBody：勾选只把已拿到的补丁换个画法（配对与词级
+         差异在同一个 useMemo 里重算），一个 git/diff 都不会重发。 */
+      const settings = useGitSettings()
+      const showCr = settings.diffShowCr === true
       const requests = diffRequests(target)
       const shape = diffShape(requests, target)
       const [rows, setRows] = React.useState(null)
@@ -459,6 +646,24 @@
         staged,
         viewFile,
         diffIconButton('again', '⟳', '重新读取这个文件的差异', props.onRefresh),
+        /* ── 回车符开关 ──
+
+           勾选框就是变更树那只（stageBox，同一份构造：class、字形、点击不惊动行），
+           文案跟在框后面，点框或点文案都翻。勾上后行尾的 \r 画成暗色 ⏎ 并参与词级
+           高亮 —— 「内容相同、只有行尾 CRLF↔LF 差别」的一对行，有 \r 的那一侧的 ⏎
+           会被标出来；不勾时行尾 \r 一律剥掉（裸 \r 在 white-space:pre 下是换行，
+           撑破行高）。状态存进 settings 层（diffShowCr），刷新后还在。放在 ⟳ 之后、
+           ☰ 之前，跟视图开关聚在一起；提交那一路同样有用，所以不受暂存框那两道守卫
+           管。 */
+        h('span', {
+          key: 'cr', className: 'dsh-git-diffcr',
+          title: '显示行尾的回车符（CR，\\r）：行尾画成 ⏎ 并参与词级高亮；状态记在这个浏览器里',
+          onClick: function () { saveSettings(Object.assign({}, settings, { diffShowCr: showCr !== true })) },
+        },
+          stageBox('crbox', showCr === true ? 'all' : 'none',
+            showCr === true ? '隐藏回车符' : '显示回车符（\\r）',
+            function () { saveSettings(Object.assign({}, settings, { diffShowCr: showCr !== true })) }),
+          '回车符'),
         /* 有来源列表可列时才给这个开关：没有列表的 diff（详情已不在、快照没到），
            按下去也没有东西会响应。 */
         props.rail != null
@@ -475,7 +680,7 @@
       else {
         const labeled = rows.length > 1
         const sections = []
-        for (let i = 0; i < rows.length; i += 1) sections.push(h(DiffSection, { key: 's' + i, row: rows[i], labeled: labeled }))
+        for (let i = 0; i < rows.length; i += 1) sections.push(h(DiffSection, { key: 's' + i, row: rows[i], labeled: labeled, showCr: showCr }))
         body = h('div', { key: 'body', className: 'dsh-git-diffbody' }, sections)
       }
 

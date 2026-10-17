@@ -25,6 +25,10 @@
       /* 配置页（80-panel.js）停在两档作用域的哪一档：'project' | 'global'。同样是
          这个浏览器自己的读法偏好，与仓库、与插件都无关。 */
       configScope: 'project',
+      /* 差异视图的「回车符」开关（55-diff.js）：勾上后行尾的 \r 画成 ⏎ 并参与
+         词级高亮 —— 这是「怎么读一个补丁」的偏好，不是 git 该做什么，所以落在
+         这一层。默认不勾：绝大多数仓库用 LF，多一个字形只是噪音。 */
+      diffShowCr: false,
     }
     let gitSettings = Object.assign({}, SETTINGS_DEFAULTS)
     let settingsLoaded = false
@@ -49,6 +53,7 @@
       out.hoverSwitch = raw.hoverSwitch !== false
       out.changesView = raw.changesView === 'flat' ? 'flat' : 'tree'
       out.configScope = raw.configScope === 'global' ? 'global' : 'project'
+      out.diffShowCr = raw.diffShowCr === true
       if (out.watchSlowSec < out.watchFastSec) out.watchSlowSec = out.watchFastSec
       return out
     }

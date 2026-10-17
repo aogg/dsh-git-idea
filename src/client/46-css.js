@@ -437,7 +437,14 @@ textarea.dsh-git-input{resize:vertical}
 /* ── 一个文件的差异 ──
    等宽字体、两列行号、三个记号（+ - 空格），和 IDEA 的 diff 一个读法。加/删的
    底色用固定 rgba 而不是主题令牌：主题里没有「淡绿的一块」这种令牌，而 14% 的
-   透明色在浅色和深色底上都读得出来（取自 LANE_COLORS 里的 #22a06b / #d64545）。 */
+   透明色在浅色和深色底上都读得出来（取自 LANE_COLORS 里的 #22a06b / #d64545）。
+
+   布局是左右对比：所有行放进一张表（dsh-git-dtable），左列旧行、右列新行，各带
+   自己的行号沟 —— 列宽由整张表按内容自动分，左右两列的边界才逐行对齐（每行各排
+   各的 flex 做不到：谁的内容长，边界就歪到谁那边）。hunk / meta / note 是一格
+   colspan=2 的整行（dsh-git-dfull）。词级高亮（dsh-git-dmiss）是行底色同色系更浓
+   的一档（.30 上下），底色跟半列走：左列红系、右列绿系。行尾回车符画成暗色 ⏎
+   （dsh-git-dcr）：裸 \r 在 white-space:pre 下是换行，永远不能进 DOM 文本。 */
 .dsh-git-diffview{flex:1;display:flex;flex-direction:column;min-height:0;min-width:0}
 .dsh-git-diffhead{display:flex;align-items:center;gap:6px;flex:none;padding:5px 8px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2)}
 .dsh-git-diffpath{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
@@ -450,17 +457,27 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-diffsec{display:flex;align-items:center;gap:8px;flex:none;padding:3px 8px;font-size:11px;font-weight:600;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-2);border-bottom:1px solid var(--dsw-alias-border-l1)}
 .dsh-git-diff{flex:1;min-height:0;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:18px}
 .dsh-git-diffwrap{min-width:100%;width:max-content}
-.dsh-git-dline{display:flex;height:18px;box-sizing:border-box;white-space:pre}
-.dsh-git-dno{flex:none;width:44px;padding-right:8px;text-align:right;color:var(--dsw-alias-label-secondary);opacity:.6;-webkit-user-select:none;user-select:none}
-.dsh-git-dsign{flex:none;width:12px;color:var(--dsw-alias-label-secondary);-webkit-user-select:none;user-select:none}
-.dsh-git-dtext{flex:1;padding-right:10px}
-.dsh-git-dl-add{background:rgba(34,160,107,.14)}
-.dsh-git-dl-add .dsh-git-dsign{color:var(--dsw-alias-state-success-primary)}
-.dsh-git-dl-del{background:rgba(214,69,69,.14)}
-.dsh-git-dl-del .dsh-git-dsign{color:var(--dsw-alias-state-error-primary)}
+.dsh-git-dtable{display:table;table-layout:auto;width:100%}
+.dsh-git-dline{display:table-row;height:18px}
+.dsh-git-dhalf{display:table-cell;white-space:pre;vertical-align:top}
+.dsh-git-dhalf-old{border-right:1px solid var(--dsw-alias-border-l1)}
+.dsh-git-dfull{display:table-cell;white-space:pre;vertical-align:top}
+.dsh-git-dno{display:inline-block;width:44px;padding-right:8px;text-align:right;color:var(--dsw-alias-label-secondary);opacity:.6;-webkit-user-select:none;user-select:none}
+.dsh-git-dsign{display:inline-block;width:12px;color:var(--dsw-alias-label-secondary);-webkit-user-select:none;user-select:none}
+.dsh-git-dtext{padding-right:10px}
+.dsh-git-dhalf-add{background:rgba(34,160,107,.14)}
+.dsh-git-dhalf-add .dsh-git-dsign{color:var(--dsw-alias-state-success-primary)}
+.dsh-git-dhalf-del{background:rgba(214,69,69,.14)}
+.dsh-git-dhalf-del .dsh-git-dsign{color:var(--dsw-alias-state-error-primary)}
+.dsh-git-dmiss{border-radius:2px}
+.dsh-git-dhalf-del .dsh-git-dmiss{background:rgba(214,69,69,.30)}
+.dsh-git-dhalf-add .dsh-git-dmiss{background:rgba(34,160,107,.32)}
+.dsh-git-dcr{color:var(--dsw-alias-label-secondary);opacity:.7;font-size:10px}
 .dsh-git-dl-hunk{color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-layer-2)}
 .dsh-git-dl-meta{color:var(--dsw-alias-label-secondary)}
 .dsh-git-dl-note{color:var(--dsw-alias-label-secondary)}
+/* 头部的回车符开关：框是 stageBox 那只，文案跟在后面，点文案也翻。 */
+.dsh-git-diffcr{display:inline-flex;align-items:center;gap:1px;flex:none;font-size:11px;color:var(--dsw-alias-label-secondary);cursor:pointer;white-space:nowrap;-webkit-user-select:none;user-select:none}
 
 /* ── 仓库切换列表 ──
     一个工作区里嵌着多个仓库时，左栏分支树和变更页各有一列这样的行。它刻意不用
