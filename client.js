@@ -881,6 +881,10 @@ return {
       /* 配置页（80-panel.js）停在两档作用域的哪一档：'project' | 'global'。同样是
          这个浏览器自己的读法偏好，与仓库、与插件都无关。 */
       configScope: 'project',
+      /* 差异视图的「回车符」开关（55-diff.js）：勾上后行尾的 \r 画成 ⏎ 并参与
+         词级高亮 —— 这是「怎么读一个补丁」的偏好，不是 git 该做什么，所以落在
+         这一层。默认不勾：绝大多数仓库用 LF，多一个字形只是噪音。 */
+      diffShowCr: false,
     }
     let gitSettings = Object.assign({}, SETTINGS_DEFAULTS)
     let settingsLoaded = false
@@ -905,6 +909,7 @@ return {
       out.hoverSwitch = raw.hoverSwitch !== false
       out.changesView = raw.changesView === 'flat' ? 'flat' : 'tree'
       out.configScope = raw.configScope === 'global' ? 'global' : 'project'
+      out.diffShowCr = raw.diffShowCr === true
       if (out.watchSlowSec < out.watchFastSec) out.watchSlowSec = out.watchFastSec
       return out
     }
@@ -1421,22 +1426,32 @@ return {
       }
 
       const rows = []
-      /* 标题行就是折叠开关，也是折叠后唯一剩下的一行：生效仓库的短名带着 ●（和行里
-         同一个记号）留在标题上，收起来了也知道现在在哪个仓库上。 */
+      /* 标题行就是折叠开关，也是折叠后唯一剩下的一行。收起后中间那格记谁分模式：
+         多选（log/changes）照旧记生效仓库（●，和行里同一个记号）—— 收起来了也知
+         道面板在哪个仓库上；受控单选（配置页）记**本页编辑目标**（✎）—— 这一格在
+         配置页的语义是「本页在编辑哪个」，写的是上面选中的仓库，不是生效仓库；目标
+         还没读到（picked 还是空串）就不记。 */
+      /* 收起时标题行要挂的那格「现在在哪」：见上面的说明 —— 记号分模式（● / ✎）。 */
+      const foldNow = picking
+        ? (folded && picked.length > 0
+          ? h('span', { key: 'now', className: 'dsh-git-repo-now', title: picked + '\n本页正在编辑的仓库（提交身份、远端、换行符都改它；不改生效仓库）' },
+            '✎ ' + repoShortName(labels, picked))
+          : null)
+        : (folded && effective.length > 0
+          ? h('span', { key: 'now', className: 'dsh-git-repo-now', title: effective + '\n当前生效仓库' },
+            '● ' + repoShortName(labels, effective))
+          : null)
       rows.push(h('div', {
         key: 'repo-head',
         className: 'dsh-git-repo-head',
-        title: folded ? '展开仓库列表' : '收起仓库列表（当前生效仓库仍显示在标题行）',
+        title: folded ? '展开仓库列表' : '收起仓库列表（' + (picking ? '本页正在编辑的仓库' : '当前生效仓库') + '仍显示在标题行）',
         onClick: function () { setFolded(!folded) },
       },
         h('span', { key: 'c', className: 'dsh-git-repo-caret' + (folded ? ' dsh-git-repo-caret-off' : '') },
           h(Icon, { name: 'down', size: 10 })),
         h('span', { key: 'i', className: 'dsh-git-repo-head-ico' }, h(Icon, { name: 'repo', size: 12 })),
         h('span', { key: 't', className: 'dsh-git-repo-head-name' }, '仓库 ' + String(shown.length)),
-        folded && effective.length > 0
-          ? h('span', { key: 'now', className: 'dsh-git-repo-now', title: effective + '\n当前生效仓库' },
-            '● ' + repoShortName(labels, effective))
-          : null,
+        foldNow,
         list.phase === 'scanning' || list.phase === 'idle'
           ? h('span', { key: 's', className: 'dsh-git-repo-note' }, '正在扫描…')
           : (list.phase === 'failed'
@@ -2322,6 +2337,18 @@ textarea.dsh-git-input{resize:vertical}
     剩余宽度、可断行 —— 断不开的长地址会把行尾那排按钮挤出面板。等宽字体与分支名、
     提交哈希同一习惯。 */
 .dsh-git-set-url{flex:1 1 200px;min-width:0;word-break:break-all;font-family:ui-monospace,monospace}
+/* ── 项目档的「仓库」外框（80-panel.js GitConfigPane）──
+    受切换仓库影响的三组（提交身份 / 远端 / 换行符）收进「仓库」一组内：外框只是
+    一道描边、底色不填 —— 里面的仓库列表（dsh-git-repo-box）自带 layer-2 浅底，外框
+    再填一层浅底两块就糊在一起了。切换器在外框里当头一块；三个下级组再收进
+    scope-body：左缩进一道竖线，树子级的读法 —— 这三块属于上面选中的那个仓库。
+    组头原本有 margin/padding/border-top 三件套分隔，在外框与 scope-body 的首行
+    （紧贴自己容器的上缘）会画出双线，:first-child 让掉；其余组头照旧，下级组之间
+    的分隔线原样保留。缩进只吃 padding 不吃 min-width，面板拖窄时行照旧换行不破。 */
+.dsh-git-set-scope{display:flex;flex-direction:column;gap:14px;margin-top:6px;padding:10px 10px 12px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px}
+.dsh-git-set-scope-body{display:flex;flex-direction:column;gap:14px;margin-top:2px;padding-left:12px;border-left:2px solid var(--dsw-alias-border-l2)}
+.dsh-git-set-scope > .dsh-git-set-group:first-child,
+.dsh-git-set-scope-body > .dsh-git-set-group:first-child{margin-top:0;padding-top:0;border-top:0}
 .dsh-git-hidden{display:none}
 /* Only while the header's switcher is open: the card hangs off the header and
    must be allowed past the panel's own clip, or a panel dragged short enough
@@ -2432,7 +2459,14 @@ textarea.dsh-git-input{resize:vertical}
 /* ── 一个文件的差异 ──
    等宽字体、两列行号、三个记号（+ - 空格），和 IDEA 的 diff 一个读法。加/删的
    底色用固定 rgba 而不是主题令牌：主题里没有「淡绿的一块」这种令牌，而 14% 的
-   透明色在浅色和深色底上都读得出来（取自 LANE_COLORS 里的 #22a06b / #d64545）。 */
+   透明色在浅色和深色底上都读得出来（取自 LANE_COLORS 里的 #22a06b / #d64545）。
+
+   布局是左右对比：所有行放进一张表（dsh-git-dtable），左列旧行、右列新行，各带
+   自己的行号沟 —— 列宽由整张表按内容自动分，左右两列的边界才逐行对齐（每行各排
+   各的 flex 做不到：谁的内容长，边界就歪到谁那边）。hunk / meta / note 是一格
+   colspan=2 的整行（dsh-git-dfull）。词级高亮（dsh-git-dmiss）是行底色同色系更浓
+   的一档（.30 上下），底色跟半列走：左列红系、右列绿系。行尾回车符画成暗色 ⏎
+   （dsh-git-dcr）：裸 \r 在 white-space:pre 下是换行，永远不能进 DOM 文本。 */
 .dsh-git-diffview{flex:1;display:flex;flex-direction:column;min-height:0;min-width:0}
 .dsh-git-diffhead{display:flex;align-items:center;gap:6px;flex:none;padding:5px 8px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2)}
 .dsh-git-diffpath{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
@@ -2445,17 +2479,27 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-diffsec{display:flex;align-items:center;gap:8px;flex:none;padding:3px 8px;font-size:11px;font-weight:600;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-2);border-bottom:1px solid var(--dsw-alias-border-l1)}
 .dsh-git-diff{flex:1;min-height:0;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:18px}
 .dsh-git-diffwrap{min-width:100%;width:max-content}
-.dsh-git-dline{display:flex;height:18px;box-sizing:border-box;white-space:pre}
-.dsh-git-dno{flex:none;width:44px;padding-right:8px;text-align:right;color:var(--dsw-alias-label-secondary);opacity:.6;-webkit-user-select:none;user-select:none}
-.dsh-git-dsign{flex:none;width:12px;color:var(--dsw-alias-label-secondary);-webkit-user-select:none;user-select:none}
-.dsh-git-dtext{flex:1;padding-right:10px}
-.dsh-git-dl-add{background:rgba(34,160,107,.14)}
-.dsh-git-dl-add .dsh-git-dsign{color:var(--dsw-alias-state-success-primary)}
-.dsh-git-dl-del{background:rgba(214,69,69,.14)}
-.dsh-git-dl-del .dsh-git-dsign{color:var(--dsw-alias-state-error-primary)}
+.dsh-git-dtable{display:table;table-layout:auto;width:100%}
+.dsh-git-dline{display:table-row;height:18px}
+.dsh-git-dhalf{display:table-cell;white-space:pre;vertical-align:top}
+.dsh-git-dhalf-old{border-right:1px solid var(--dsw-alias-border-l1)}
+.dsh-git-dfull{display:table-cell;white-space:pre;vertical-align:top}
+.dsh-git-dno{display:inline-block;width:44px;padding-right:8px;text-align:right;color:var(--dsw-alias-label-secondary);opacity:.6;-webkit-user-select:none;user-select:none}
+.dsh-git-dsign{display:inline-block;width:12px;color:var(--dsw-alias-label-secondary);-webkit-user-select:none;user-select:none}
+.dsh-git-dtext{padding-right:10px}
+.dsh-git-dhalf-add{background:rgba(34,160,107,.14)}
+.dsh-git-dhalf-add .dsh-git-dsign{color:var(--dsw-alias-state-success-primary)}
+.dsh-git-dhalf-del{background:rgba(214,69,69,.14)}
+.dsh-git-dhalf-del .dsh-git-dsign{color:var(--dsw-alias-state-error-primary)}
+.dsh-git-dmiss{border-radius:2px}
+.dsh-git-dhalf-del .dsh-git-dmiss{background:rgba(214,69,69,.30)}
+.dsh-git-dhalf-add .dsh-git-dmiss{background:rgba(34,160,107,.32)}
+.dsh-git-dcr{color:var(--dsw-alias-label-secondary);opacity:.7;font-size:10px}
 .dsh-git-dl-hunk{color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-layer-2)}
 .dsh-git-dl-meta{color:var(--dsw-alias-label-secondary)}
 .dsh-git-dl-note{color:var(--dsw-alias-label-secondary)}
+/* 头部的回车符开关：框是 stageBox 那只，文案跟在后面，点文案也翻。 */
+.dsh-git-diffcr{display:inline-flex;align-items:center;gap:1px;flex:none;font-size:11px;color:var(--dsw-alias-label-secondary);cursor:pointer;white-space:nowrap;-webkit-user-select:none;user-select:none}
 
 /* ── 仓库切换列表 ──
     一个工作区里嵌着多个仓库时，左栏分支树和变更页各有一列这样的行。它刻意不用
@@ -4725,28 +4769,211 @@ textarea.dsh-git-input{resize:vertical}
       return out
     }
 
+    /* ── 词级（行内）差异 ──
+
+       配上对的一行往往只差几个词：整行底色里再标出片段，改动一眼就在。token 切分
+       保留空白连续段（/(\s+|\w+|.)/g：空白一段一个、单词一段一个、其余逐字符 ——
+       对中文正好退化为逐字对比），两边求 LCS，不在公共子序列里的 token 就是各自
+       要包起来的片段。
+
+       护栏：任一侧超长（>1000 字符）或 token 超过上限就放弃、整行原样 —— 一个
+       几千行的补丁配一个 O(n·m) 的 DP，不能让打开差异变卡；两道线都是给最坏情形
+       的，常见的一行代码只有十几个 token。行尾的 \r 也按 token 参与：CRLF↔LF 的
+       差别因此能被词级高亮标出来。 */
+    const WORD_MAX_CHARS = 1000
+    const WORD_MAX_TOKENS = 220
+    const CR_GLYPH = '⏎'
+
+    function wordTokens(line) {
+      return line.match(/(\s+|\w+|.)/g) || []
+    }
+
+    /* 标记走到段落：相邻的同记号 token 合成一段，一段只花一个 <span>。 */
+    function wordSegments(tokens, marks) {
+      const out = []
+      for (let i = 0; i < tokens.length; i += 1) {
+        const miss = marks[i] === true
+        const last = out.length > 0 ? out[out.length - 1] : null
+        if (last !== null && last.m === miss) last.t += tokens[i]
+        else out.push({ t: tokens[i], m: miss })
+      }
+      return out
+    }
+
+    /* 两边各返回 [{t, m}]（m = 不在公共子序列里，要上底色）；null = 放弃高亮。 */
+    function wordDiff(leftText, rightText) {
+      if (leftText === rightText) return null
+      if (leftText.length > WORD_MAX_CHARS || rightText.length > WORD_MAX_CHARS) return null
+      const a = wordTokens(leftText)
+      const b = wordTokens(rightText)
+      if (a.length > WORD_MAX_TOKENS || b.length > WORD_MAX_TOKENS) return null
+      const n = a.length
+      const m = b.length
+      /* 表只有 (n+1)×(m+1) 格，一个 Int32Array 装下；从后往前填，dp[i][j] 是
+         a[i..] 与 b[j..] 的公共子序列长。 */
+      const width = m + 1
+      const dp = new Int32Array((n + 1) * width)
+      for (let i = n - 1; i >= 0; i -= 1) {
+        for (let j = m - 1; j >= 0; j -= 1) {
+          dp[i * width + j] = a[i] === b[j]
+            ? dp[(i + 1) * width + j + 1] + 1
+            : Math.max(dp[(i + 1) * width + j], dp[i * width + j + 1])
+        }
+      }
+      const left = new Array(n)
+      const right = new Array(m)
+      let i = 0
+      let j = 0
+      while (i < n && j < m) {
+        if (a[i] === b[j]) { i += 1; j += 1 }
+        else if (dp[(i + 1) * width + j] >= dp[i * width + j + 1]) { left[i] = true; i += 1 }
+        else { right[j] = true; j += 1 }
+      }
+      while (i < n) { left[i] = true; i += 1 }
+      while (j < m) { right[j] = true; j += 1 }
+      return { left: wordSegments(a, left), right: wordSegments(b, right) }
+    }
+
+    /* ── 配对：diffRows 的统一行数组 → 左右对比的行数组 ──
+
+       连续的 del 块与紧随的 add 块按下标配对（第 i 个 del 配第 i 个 add），多出的
+       del 左半有内容右半留空，多出的 add 相反；ctx 行左右 1:1；hunk / meta / note
+       横跨两列整行显示。夹在块中间的「\ No newline at end of file」不拆散配对
+       （它正是 EOF 的差异：先成对，再整行补在块尾）。词级差异在这里一次算好，
+       PatchBody 的渲染循环里不再碰它 —— 虚拟窗口滑到哪就画哪，算却只算一遍。 */
+    function pairRows(raw, showCr) {
+      const out = []
+      let i = 0
+      while (i < raw.length) {
+        const row = raw[i]
+        if (row.kind === 'del' || row.kind === 'add') {
+          const dels = []
+          const adds = []
+          const notes = []
+          while (i < raw.length && (raw[i].kind === 'del' || raw[i].kind === 'add' || raw[i].kind === 'note')) {
+            if (raw[i].kind === 'del') dels.push(raw[i])
+            else if (raw[i].kind === 'add') adds.push(raw[i])
+            else notes.push(raw[i])
+            i += 1
+          }
+          const paired = Math.min(dels.length, adds.length)
+          for (let k = 0; k < paired; k += 1) out.push(pairRow(dels[k], adds[k], showCr))
+          for (let k = paired; k < dels.length; k += 1) out.push(halfRow('del', dels[k], showCr))
+          for (let k = paired; k < adds.length; k += 1) out.push(halfRow('add', adds[k], showCr))
+          for (let k = 0; k < notes.length; k += 1) out.push({ kind: 'note', full: true, text: notes[k].text })
+          continue
+        }
+        if (row.kind === 'ctx') {
+          const shown = crText(row.text, showCr)
+          out.push({
+            kind: 'ctx', cls: ' dsh-git-dl-ctx',
+            left: { no: row.old, sign: ' ', text: shown, miss: null },
+            right: { no: row.next, sign: ' ', text: shown, miss: null },
+          })
+        } else {
+          out.push({ kind: row.kind, full: true, text: row.text })
+        }
+        i += 1
+      }
+      return out
+    }
+
+    /* 行尾的 \r：勾上就留着（渲染时画成 ⏎，且参与词级对比）；没勾就剥掉。
+       white-space:pre 下裸 \r 会被浏览器当换行、撑破 18px 的行高，所以无论勾不勾
+       它都不能以文本的形式进 DOM —— 不勾时剥掉，勾上时由 crChildren 画成字形。 */
+    function crText(line, showCr) {
+      return showCr === true ? line : line.replace(/\r$/, '')
+    }
+
+    function pairRow(del, add, showCr) {
+      const leftText = crText(del.text, showCr)
+      const rightText = crText(add.text, showCr)
+      const words = wordDiff(leftText, rightText)
+      return {
+        /* 配对行同时是一删一加：行类把两个都挂上（底色在半列上，行类只管身份）。 */
+        kind: 'pair', cls: ' dsh-git-dl-del dsh-git-dl-add',
+        left: { no: del.old, sign: '-', text: leftText, miss: words === null ? null : words.left },
+        right: { no: add.next, sign: '+', text: rightText, miss: words === null ? null : words.right },
+      }
+    }
+
+    /* 多出的那半：有内容的一侧整行底色，另一侧留空（没有行号、没有记号）。 */
+    function halfRow(kind, row, showCr) {
+      const cell = { no: kind === 'del' ? row.old : row.next, sign: row.sign, text: crText(row.text, showCr), miss: null }
+      const empty = { no: '', sign: '', text: '', miss: null }
+      return kind === 'del'
+        ? { kind: 'del', cls: ' dsh-git-dl-del', left: cell, right: empty }
+        : { kind: 'add', cls: ' dsh-git-dl-add', left: empty, right: cell }
+    }
+
+    /* 一格的底色归属跟着记号走：+ 绿、- 红、空格上下文、空串是留空的半列。 */
+    function halfMark(cell) {
+      if (cell.sign === '+') return ' dsh-git-dhalf-add'
+      if (cell.sign === '-') return ' dsh-git-dhalf-del'
+      if (cell.sign === ' ') return ' dsh-git-dhalf-ctx'
+      return ' dsh-git-dhalf-empty'
+    }
+
+    /* 一格的文字：\r 一律画成暗色 ⏎（裸 \r 不能进 DOM 文本）；带词级记号的段落
+       包一层浅底 span —— 底色由左右半列的类各给各的，字形与文字共用一套类名。 */
+    function crChildren(cell) {
+      const out = []
+      const segments = cell.miss !== null ? cell.miss : [{ t: cell.text, m: false }]
+      for (let s = 0; s < segments.length; s += 1) {
+        const seg = segments[s]
+        const parts = seg.t.split('\r')
+        for (let p = 0; p < parts.length; p += 1) {
+          if (p > 0) {
+            out.push(h('span', { key: 'cr' + s + '-' + p, className: 'dsh-git-dcr' + (seg.m === true ? ' dsh-git-dmiss' : '') }, CR_GLYPH))
+          }
+          if (parts[p].length > 0) {
+            out.push(seg.m === true
+              ? h('span', { key: 'w' + s + '-' + p, className: 'dsh-git-dmiss' }, parts[p])
+              : parts[p])
+          }
+        }
+      }
+      return out
+    }
+
     /* One section's body. A patch can be thousands of lines and the pane shows
        twenty-odd of them, so it is windowed exactly like the history list: same
        arithmetic, same spacers, and "everything" while no height can be
-       measured. */
+       measured. The rows it paints are the paired ones: the pairing and the
+       word-level marks are computed once per (patch, 回车符开关) in the memo —
+       toggling the checkbox repaints what is already in hand and never re-asks
+       git. */
     function PatchBody(props) {
-      const rows = useMemo(function () { return diffRows(props.patch) }, [props.patch])
+      const showCr = props.showCr === true
+      const rows = useMemo(function () { return pairRows(diffRows(props.patch), showCr) }, [props.patch, showCr])
       const win = useVirtualWindow('diff:' + props.id, rows.length, DIFF_ROW_H)
       const shown = []
       for (let i = win.first; i < win.last; i += 1) {
         const row = rows[i]
-        shown.push(h('div', { key: 'r' + i, className: 'dsh-git-dline dsh-git-dl-' + row.kind },
-          h('span', { key: 'o', className: 'dsh-git-dno' }, row.old),
-          h('span', { key: 'n', className: 'dsh-git-dno' }, row.next),
-          h('span', { key: 's', className: 'dsh-git-dsign' }, row.sign),
-          h('span', { key: 't', className: 'dsh-git-dtext' }, row.text)))
+        if (row.full === true) {
+          /* hunk / meta / note：一格横跨两列整行。 */
+          shown.push(h('div', { key: 'r' + i, className: 'dsh-git-dline dsh-git-dl-' + row.kind },
+            h('div', { key: 'f', colSpan: 2, className: 'dsh-git-dfull' }, row.text)))
+          continue
+        }
+        shown.push(h('div', { key: 'r' + i, className: 'dsh-git-dline' + row.cls },
+          h('div', { key: 'o', className: 'dsh-git-dhalf dsh-git-dhalf-old' + halfMark(row.left) },
+            h('span', { key: 'no', className: 'dsh-git-dno' }, row.left.no),
+            h('span', { key: 'sg', className: 'dsh-git-dsign' }, row.left.sign),
+            h('span', { key: 'tx', className: 'dsh-git-dtext' }, crChildren(row.left))),
+          h('div', { key: 'n', className: 'dsh-git-dhalf dsh-git-dhalf-new' + halfMark(row.right) },
+            h('span', { key: 'no', className: 'dsh-git-dno' }, row.right.no),
+            h('span', { key: 'sg', className: 'dsh-git-dsign' }, row.right.sign),
+            h('span', { key: 'tx', className: 'dsh-git-dtext' }, crChildren(row.right)))))
       }
       const padTop = win.first * DIFF_ROW_H
       const padBottom = (rows.length - win.last) * DIFF_ROW_H
       return h('div', { className: 'dsh-git-diff', ref: win.attach, onScroll: win.measure },
         h('div', { className: 'dsh-git-diffwrap', style: { minHeight: (rows.length * DIFF_ROW_H) + 'px' } },
           padTop > 0 ? h('div', { key: 'pad-top', style: { height: padTop + 'px' } }) : null,
-          shown,
+          /* 行放进一张表：列宽由整张表按内容分，左右两列的边界才逐行对齐 —— 每行
+             各排各的（flex / 各自的 50%）做不到，谁的内容长边界就歪到谁那边。 */
+          h('div', { key: 'table', className: 'dsh-git-dtable' }, shown),
           padBottom > 0 ? h('div', { key: 'pad-bottom', style: { height: padBottom + 'px' } }) : null))
     }
 
@@ -4779,7 +5006,7 @@ textarea.dsh-git-input{resize:vertical}
       } else if (reply.empty === true) {
         body = h('div', { className: 'dsh-git-pane dsh-git-dim' }, '没有差异')
       } else {
-        body = h(PatchBody, { id: row.req.key, patch: reply.text })
+        body = h(PatchBody, { id: row.req.key, patch: reply.text, showCr: props.showCr })
       }
       return h('div', { key: 'sec-' + row.req.key, className: 'dsh-git-diffsec-wrap' },
         props.labeled === true && row.req.label.length > 0
@@ -4972,6 +5199,11 @@ textarea.dsh-git-input{resize:vertical}
 
     function DiffView(props) {
       const target = props.target
+      /* 回车符开关是这个浏览器自己的显示偏好（20-prefs.js 的 settings 层）。在
+         这里读一次、往下传到 PatchBody：勾选只把已拿到的补丁换个画法（配对与词级
+         差异在同一个 useMemo 里重算），一个 git/diff 都不会重发。 */
+      const settings = useGitSettings()
+      const showCr = settings.diffShowCr === true
       const requests = diffRequests(target)
       const shape = diffShape(requests, target)
       const [rows, setRows] = React.useState(null)
@@ -5075,6 +5307,24 @@ textarea.dsh-git-input{resize:vertical}
         staged,
         viewFile,
         diffIconButton('again', '⟳', '重新读取这个文件的差异', props.onRefresh),
+        /* ── 回车符开关 ──
+
+           勾选框就是变更树那只（stageBox，同一份构造：class、字形、点击不惊动行），
+           文案跟在框后面，点框或点文案都翻。勾上后行尾的 \r 画成暗色 ⏎ 并参与词级
+           高亮 —— 「内容相同、只有行尾 CRLF↔LF 差别」的一对行，有 \r 的那一侧的 ⏎
+           会被标出来；不勾时行尾 \r 一律剥掉（裸 \r 在 white-space:pre 下是换行，
+           撑破行高）。状态存进 settings 层（diffShowCr），刷新后还在。放在 ⟳ 之后、
+           ☰ 之前，跟视图开关聚在一起；提交那一路同样有用，所以不受暂存框那两道守卫
+           管。 */
+        h('span', {
+          key: 'cr', className: 'dsh-git-diffcr',
+          title: '显示行尾的回车符（CR，\\r）：行尾画成 ⏎ 并参与词级高亮；状态记在这个浏览器里',
+          onClick: function () { saveSettings(Object.assign({}, settings, { diffShowCr: showCr !== true })) },
+        },
+          stageBox('crbox', showCr === true ? 'all' : 'none',
+            showCr === true ? '隐藏回车符' : '显示回车符（\\r）',
+            function () { saveSettings(Object.assign({}, settings, { diffShowCr: showCr !== true })) }),
+          '回车符'),
         /* 有来源列表可列时才给这个开关：没有列表的 diff（详情已不在、快照没到），
            按下去也没有东西会响应。 */
         props.rail != null
@@ -5091,7 +5341,7 @@ textarea.dsh-git-input{resize:vertical}
       else {
         const labeled = rows.length > 1
         const sections = []
-        for (let i = 0; i < rows.length; i += 1) sections.push(h(DiffSection, { key: 's' + i, row: rows[i], labeled: labeled }))
+        for (let i = 0; i < rows.length; i += 1) sections.push(h(DiffSection, { key: 's' + i, row: rows[i], labeled: labeled, showCr: showCr }))
         body = h('div', { key: 'body', className: 'dsh-git-diffbody' }, sections)
       }
 
@@ -8351,11 +8601,14 @@ textarea.dsh-git-input{resize:vertical}
 
        这一页分两档作用域，切换排在页首（记号用头部视图切换同一套 dsh-git-cview）：
 
-       · 项目配置 —— 关于哪个仓库由页首的「仓库」组挑（多仓库时那一格列出工作区
-         扫到与手动登记的全部仓库，默认当前生效仓库；24-repos.js 的受控单选变体），
-         分组有：会话完成后的刷新/推送、只写 **本项目** .git/config 的提交身份、
-         git 自己管换行符的两个键（core.autocrlf / core.safecrlf）、远端表（长在
-         .git/config 里，走 git remote 自己的三条子命令，74-identity.js）。
+       · 项目配置 —— 排两块：插件级的「会话完成」一组留在外框之外（它 setPlugin，
+         不跟本页编辑目标走）；之后「仓库」一大组 —— 顶部用 24-repos.js 的受控单选
+         变体挑本页在编辑哪个仓库（多仓库时列出工作区扫到与手动登记的全部仓库，
+         默认当前生效仓库），受切换仓库影响的三组收在它里面做下级（缩进 + 左侧
+         竖线，46-css.js 的 dsh-git-set-scope / -scope-body，组头点名目标仓库）：
+         只写该仓库 .git/config 的提交身份、git 自己管换行符的两个键
+         （core.autocrlf / core.safecrlf）、远端表（长在 .git/config 里，走
+         git remote 自己的三条子命令，74-identity.js）。
        · 全局配置 —— 跟着插件与这台机器走（79-globalconfig.js 的 GitGlobalConfigPane，
          原先是 DSH 设置面板里的「dsh-git-idea配置」页，2026-10 起搬到这里）：初始化
          分支、远程同步实参、快捷命令、git 位置、提交身份（--global）、换行符
@@ -8525,6 +8778,24 @@ textarea.dsh-git-input{resize:vertical}
         if (one.length === 0 || one === targetRepo) return
         adoptTarget(one)
       }
+
+      /* ── 三个下级组的组头：点名当前编辑目标的短名 ──
+
+         「这三组写的是哪个仓库」是它们最要紧的一句话，收进「仓库」组之后由组头自己
+         回答：短名取 24-repos.js 的同一份清单、同一份标签（repoLabelMap / repoShortName，
+         与切换器行、两处分组头同一个来源），仓库一换组头跟着换。目标还没读到
+         （effective 没回来、也没存过选择）时没有短名可点，退回原来的泛称文案。 */
+      const cfgLabels = repoLabelMap(pickable)
+      const targetShortName = targetRepo.length > 0 ? repoShortName(cfgLabels, targetRepo) : ''
+      const identGroupTitle = targetShortName.length > 0
+        ? '提交身份（只写 ' + targetShortName + ' 的 .git/config）'
+        : '提交身份（只写这个项目的 .git/config）'
+      const remoteGroupTitle = targetShortName.length > 0
+        ? '远端（' + targetShortName + ' 的 remote 清单）'
+        : '远端（这个仓库的 remote 清单）'
+      const crlfGroupTitle = targetShortName.length > 0
+        ? '换行符（' + targetShortName + ' 的 git 换行配置）'
+        : '换行符（git 自己的换行配置）'
 
       /* 只把 session id 交给 Host（全局配置 GitIdentityGroup 同一条路）：路径由 Host
           从会话的工作区解出来，写配置的沙箱策略也跟着这个会话走。多仓库之后这页
@@ -8861,33 +9132,10 @@ textarea.dsh-git-input{resize:vertical}
 
       return h('div', { className: 'dsh-git-set dsh-git-config' },
         scopeTabs,
-        /* ── 仓库组（多仓库）：下面三组读写的都是这里选中的仓库 ── */
-        h('div', { className: 'dsh-git-set-group' }, '仓库（这一页在编辑哪个仓库）'),
-        h('div', { className: 'dsh-git-set-hint' },
-          '下面的提交身份、远端、换行符编辑的都是这里选中的仓库，默认是当前生效仓库（带 ● 的行）。单击行只换本页的编辑目标 —— 面板的生效仓库（历史、提交、推送用的那个）不跟着换，要换生效仓库去「历史」或「变更」页的仓库列表。会话工作区本身不是仓库时这组照常可用：把仓库目录「＋ 添加目录」登记进来，就能直接配置它。'),
-        h(RepoSwitcher, {
-          key: 'cfg-repos',
-          sessionId: sessionId, pane: 'config', list: repoList, effective: effective,
-          pick: targetRepo,
-          onSingle: function (path) { pickRepo(path) },
-          /* 「＋ 添加目录」与历史页是同一份持久清单、同一套报错话术（saveManualRepo /
-             repoSaveProblem 都在 24-repos.js）；加成功的那一下顺手把新仓库选为本页
-             目标 —— 读者加它就是要在它身上做配置。移除的正好是本页目标时退回
-             生效仓库，别留在一条刚被移除的路径上。 */
-          onAdd: function (path) {
-            return saveManualRepo(sessionId, { add: path }).then(function (data) {
-              adoptTarget(text(path))
-              return data
-            })
-          },
-          onRemove: function (path) {
-            return saveManualRepo(sessionId, { remove: path }).then(function (data) {
-              if (text(path) === targetRepo) adoptTarget('')
-              return data
-            })
-          },
-        }),
 
+        /* ── 会话完成（插件级）：setPlugin 写的是插件自己的配置，不跟本页编辑目标
+           走 —— 留在「仓库」组外、放最前；自动推送提示里照实说「作用于生效仓库、
+           不随本页正在编辑的仓库走」。 ── */
         h('div', { className: 'dsh-git-set-group' }, '会话完成'),
         h('div', { className: 'dsh-git-set-hint' }, sessionHint),
 
@@ -8915,111 +9163,144 @@ textarea.dsh-git-input{resize:vertical}
             autoPushNote == null ? '还没有自动推送过'
               : (cmdClock(autoPushNote.time) + ' · ' + (autoPushNote.ok === true ? '成功' : '失败') + '：' + text(autoPushNote.detail)))),
 
-        h('div', { className: 'dsh-git-set-group' }, '提交身份（只写这个项目的 .git/config）'),
-        h('div', { className: 'dsh-git-set-hint' },
-          '这里只写 --local，全局那份不受影响。要改这台机器的那一份，切到上面的「全局配置 → 提交身份」—— 那边才选得到写进哪台机器。'),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('span', { className: 'dsh-git-set-label' }, '此刻生效'),
-          h('span', { className: identMissing === true ? 'dsh-git-set-hint dsh-git-warn' : 'dsh-git-set-hint' },
-            snap == null ? '正在读取…'
-              : (inside !== true
-                ? '这个会话的工作区还不是 Git 仓库 —— 下面只能看全局那份'
-                : (identMissing === true
-                  ? '还缺：' + (nameMissing === true ? '名字' : '') + (nameMissing === true && emailMissing === true ? '/' : '') + (emailMissing === true ? '邮箱' : '') + ' —— 提交会被 git 拒绝'
-                  : (source(nameNow.effective, nameNow.effectiveOrigin) + ' · ' + source(emailNow.effective, emailNow.effectiveOrigin)))))),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('span', { className: 'dsh-git-set-label' }, '名字（user.name）'),
-          h('input', {
-            className: 'dsh-git-input dsh-git-set-input',
-            placeholder: globalPlaceholder(nameNow.global),
-            value: name,
-            disabled: inside !== true,
-            onChange: function (event) { setName(event.target.value) },
-          })),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('span', { className: 'dsh-git-set-label' }, '邮箱（user.email）'),
-          h('input', {
-            className: 'dsh-git-input dsh-git-set-input',
-            placeholder: globalPlaceholder(emailNow.global),
-            value: email,
-            disabled: inside !== true,
-            onChange: function (event) { setEmail(event.target.value) },
-          })),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('button', {
-            type: 'button', className: 'dsh-git-btn dsh-git-primary',
-            disabled: busy || inside !== true || (nameDraft.length === 0 && emailDraft.length === 0),
-            title: '把填了的键写进' + (targetRepo.length > 0 ? ' ' + targetRepo + ' ' : '本项目')
-              + '的 .git/config；空着的框一个字节都不写',
-            onClick: function () {
-              const setPayload = {}
-              if (nameDraft.length > 0) setPayload['user.name'] = nameDraft
-              if (emailDraft.length > 0) setPayload['user.email'] = emailDraft
-              /* 提示行点名落点：多仓库之后「本项目」不再只有一个候选，写到哪要说全。 */
-              run({ set: setPayload }, '已写进 ' + (targetRepo.length > 0 ? targetRepo : '本项目') + ' 的 .git/config')
+        /* ── 「仓库」一组：顶部挑本页编辑目标（受控单选，行为不动），受切换仓库影响
+           的三组收在外框里做下级 —— 缩进 + 左侧竖线（46-css.js 的 dsh-git-set-scope
+           / -scope-body），一眼读出「这三块属于上面选中的那个仓库」；组头点名目标
+           短名（identGroupTitle / remoteGroupTitle / crlfGroupTitle）。 ── */
+        h('div', { className: 'dsh-git-set-scope' },
+          h('div', { className: 'dsh-git-set-group' }, '仓库（这一页在编辑哪个仓库）'),
+          h('div', { className: 'dsh-git-set-hint' },
+            '收在本组内的提交身份、远端、换行符三个下级组，读写的都是这里选中的仓库，默认是当前生效仓库（带 ● 的行）。单击行只换本页的编辑目标 —— 面板的生效仓库（历史、提交、推送用的那个）不跟着换，要换生效仓库去「历史」或「变更」页的仓库列表。会话工作区本身不是仓库时这组照常可用：把仓库目录「＋ 添加目录」登记进来，就能直接配置它。'),
+          h(RepoSwitcher, {
+            key: 'cfg-repos',
+            sessionId: sessionId, pane: 'config', list: repoList, effective: effective,
+            pick: targetRepo,
+            onSingle: function (path) { pickRepo(path) },
+            /* 「＋ 添加目录」与历史页是同一份持久清单、同一套报错话术（saveManualRepo /
+               repoSaveProblem 都在 24-repos.js）；加成功的那一下顺手把新仓库选为本页
+               目标 —— 读者加它就是要在它身上做配置。移除的正好是本页目标时退回
+               生效仓库，别留在一条刚被移除的路径上。 */
+            onAdd: function (path) {
+              return saveManualRepo(sessionId, { add: path }).then(function (data) {
+                adoptTarget(text(path))
+                return data
+              })
             },
-          }, busy ? '写入中…' : '写入本项目'),
-          h('button', {
-            type: 'button', className: 'dsh-git-btn',
-            disabled: busy || inside !== true || localKeys.length === 0,
-            title: '对填过的键执行 git config --local --unset（本来就没配也算成功）',
-            onClick: function () { run({ unset: localKeys }, '已清掉本项目覆盖，用回全局') },
-          }, '清掉本项目覆盖，用回全局'),
-          h('span', { className: 'dsh-git-set-hint' },
-            localKeys.length > 0 ? '本项目覆盖了：' + localKeys.join('、') : '本项目没有覆盖任何键')),
-
-        /* 组头行：标题吃剩余宽度，⟳ 贴行尾。不管读数成没成、宿主新不新版它都在 ——
-           宿主旧版时它就是重启 DSH 之后的那把重试钥匙（remoteReload）；busy 或自己
-           在飞时禁用。画法用差异头部同款的图标键（.dsh-git-tool-ico，55-diff.js 的
-           diffIconButton 同一套类），这一页不新造按钮长相。 */
-        h('div', { className: 'dsh-git-set-group dsh-git-set-group-row' },
-          h('span', null, '远端（这个仓库的 remote 清单）'),
-          h('button', {
-            type: 'button', className: 'dsh-git-tool dsh-git-tool-ico',
-            disabled: busy || remoteRefreshing,
-            title: '重新读取远端清单（git remote -v，不进缓存）—— 宿主旧版时报错属预期，重启 DSH 后这里能把清单读出来',
-            onClick: function () { remoteReload() },
-          }, '⟳')),
-        h('div', { className: 'dsh-git-set-hint' }, remoteGroupHint),
-
-        remoteRows,
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('span', { className: 'dsh-git-set-label' }, '新远端'),
-          h('input', {
-            className: 'dsh-git-input dsh-git-set-input',
-            placeholder: '名字（如 origin / upstream）',
-            value: rName,
-            disabled: busy || remoteInside !== true,
-            onChange: function (event) { setRName(event.target.value) },
-            onKeyDown: function (event) { if (event.key === 'Enter') remoteAdd() },
+            onRemove: function (path) {
+              return saveManualRepo(sessionId, { remove: path }).then(function (data) {
+                if (text(path) === targetRepo) adoptTarget('')
+                return data
+              })
+            },
           }),
-          h('input', {
-            className: 'dsh-git-input dsh-git-set-input',
-            placeholder: '地址（https://… 或 git@…）',
-            value: rUrl,
-            disabled: busy || remoteInside !== true,
-            onChange: function (event) { setRUrl(event.target.value) },
-            onKeyDown: function (event) { if (event.key === 'Enter') remoteAdd() },
-          }),
-          h('button', {
-            type: 'button', className: 'dsh-git-btn dsh-git-primary',
-            disabled: busy || remoteInside !== true || rNameDraft.length === 0 || rUrlDraft.length === 0,
-            title: 'git remote add <名字> <地址>；成功后框清空，可以接着添下一个',
-            onClick: function () { remoteAdd() },
-          }, '添加远端'),
-          h('span', { className: 'dsh-git-set-hint' }, '名字不能有空白；地址删除后就没了，git 不会替你记住。')),
 
-        h('div', { className: 'dsh-git-set-group' }, '换行符（git 自己的换行配置）'),
-        h('div', { className: 'dsh-git-set-hint' },
-          '两条都是 git 的换行符配置，同样只写本项目（--local）：autocrlf=true 检出转 CRLF、提交转回 LF，input 只在提交时转 LF，false 不转；safecrlf 是把关开关，换行转换不可逆（行尾抹过一遍还原不回去）时 true 让 git 拒绝、warn 只警告、false 不把关。改动立即写进本项目 .git/config；选「跟随全局」= 清掉本项目的这条（不存在算成功）。'),
+          /* 下面三个下级组读写的都是这里选中的仓库。 */
+          h('div', { className: 'dsh-git-set-scope-body' },
+            h('div', { className: 'dsh-git-set-group' }, identGroupTitle),
+            h('div', { className: 'dsh-git-set-hint' },
+              '这里只写 --local，全局那份不受影响。要改这台机器的那一份，切到上面的「全局配置 → 提交身份」—— 那边才选得到写进哪台机器。'),
 
-        lineSelect('core.autocrlf', autocrlf, ['true', 'false', 'input'], '检出时把 LF 转 CRLF、提交时转回 LF（input 只在提交时转 LF，false 什么都不转）'),
-        lineSelect('core.safecrlf', safecrlf, ['true', 'false', 'warn'], '换行转换不可逆（会丢字）时的把关开关：true 让 git 拒绝这次操作、warn 只警告照做、false 不把关'),
+            h('div', { className: 'dsh-git-set-row' },
+              h('span', { className: 'dsh-git-set-label' }, '此刻生效'),
+              h('span', { className: identMissing === true ? 'dsh-git-set-hint dsh-git-warn' : 'dsh-git-set-hint' },
+                snap == null ? '正在读取…'
+                  : (inside !== true
+                    ? '这个会话的工作区还不是 Git 仓库 —— 下面只能看全局那份'
+                    : (identMissing === true
+                      ? '还缺：' + (nameMissing === true ? '名字' : '') + (nameMissing === true && emailMissing === true ? '/' : '') + (emailMissing === true ? '邮箱' : '') + ' —— 提交会被 git 拒绝'
+                      : (source(nameNow.effective, nameNow.effectiveOrigin) + ' · ' + source(emailNow.effective, emailNow.effectiveOrigin)))))),
+
+            h('div', { className: 'dsh-git-set-row' },
+              h('span', { className: 'dsh-git-set-label' }, '名字（user.name）'),
+              h('input', {
+                className: 'dsh-git-input dsh-git-set-input',
+                placeholder: globalPlaceholder(nameNow.global),
+                value: name,
+                disabled: inside !== true,
+                onChange: function (event) { setName(event.target.value) },
+              })),
+
+            h('div', { className: 'dsh-git-set-row' },
+              h('span', { className: 'dsh-git-set-label' }, '邮箱（user.email）'),
+              h('input', {
+                className: 'dsh-git-input dsh-git-set-input',
+                placeholder: globalPlaceholder(emailNow.global),
+                value: email,
+                disabled: inside !== true,
+                onChange: function (event) { setEmail(event.target.value) },
+              })),
+
+            h('div', { className: 'dsh-git-set-row' },
+              h('button', {
+                type: 'button', className: 'dsh-git-btn dsh-git-primary',
+                disabled: busy || inside !== true || (nameDraft.length === 0 && emailDraft.length === 0),
+                title: '把填了的键写进' + (targetRepo.length > 0 ? ' ' + targetRepo + ' ' : '本项目')
+                  + '的 .git/config；空着的框一个字节都不写',
+                onClick: function () {
+                  const setPayload = {}
+                  if (nameDraft.length > 0) setPayload['user.name'] = nameDraft
+                  if (emailDraft.length > 0) setPayload['user.email'] = emailDraft
+                  /* 提示行点名落点：多仓库之后「本项目」不再只有一个候选，写到哪要说全。 */
+                  run({ set: setPayload }, '已写进 ' + (targetRepo.length > 0 ? targetRepo : '本项目') + ' 的 .git/config')
+                },
+              }, busy ? '写入中…' : '写入本项目'),
+              h('button', {
+                type: 'button', className: 'dsh-git-btn',
+                disabled: busy || inside !== true || localKeys.length === 0,
+                title: '对填过的键执行 git config --local --unset（本来就没配也算成功）',
+                onClick: function () { run({ unset: localKeys }, '已清掉本项目覆盖，用回全局') },
+              }, '清掉本项目覆盖，用回全局'),
+              h('span', { className: 'dsh-git-set-hint' },
+                localKeys.length > 0 ? '本项目覆盖了：' + localKeys.join('、') : '本项目没有覆盖任何键')),
+
+            /* 组头行：标题吃剩余宽度，⟳ 贴行尾。不管读数成没成、宿主新不新版它都在 ——
+               宿主旧版时它就是重启 DSH 之后的那把重试钥匙（remoteReload）；busy 或自己
+               在飞时禁用。画法用差异头部同款的图标键（.dsh-git-tool-ico，55-diff.js 的
+               diffIconButton 同一套类），这一页不新造按钮长相。 */
+            h('div', { className: 'dsh-git-set-group dsh-git-set-group-row' },
+              h('span', null, remoteGroupTitle),
+              h('button', {
+                type: 'button', className: 'dsh-git-tool dsh-git-tool-ico',
+                disabled: busy || remoteRefreshing,
+                title: '重新读取远端清单（git remote -v，不进缓存）—— 宿主旧版时报错属预期，重启 DSH 后这里能把清单读出来',
+                onClick: function () { remoteReload() },
+              }, '⟳')),
+            h('div', { className: 'dsh-git-set-hint' }, remoteGroupHint),
+
+            remoteRows,
+
+            h('div', { className: 'dsh-git-set-row' },
+              h('span', { className: 'dsh-git-set-label' }, '新远端'),
+              h('input', {
+                className: 'dsh-git-input dsh-git-set-input',
+                placeholder: '名字（如 origin / upstream）',
+                value: rName,
+                disabled: busy || remoteInside !== true,
+                onChange: function (event) { setRName(event.target.value) },
+                onKeyDown: function (event) { if (event.key === 'Enter') remoteAdd() },
+              }),
+              h('input', {
+                className: 'dsh-git-input dsh-git-set-input',
+                placeholder: '地址（https://… 或 git@…）',
+                value: rUrl,
+                disabled: busy || remoteInside !== true,
+                onChange: function (event) { setRUrl(event.target.value) },
+                onKeyDown: function (event) { if (event.key === 'Enter') remoteAdd() },
+              }),
+              h('button', {
+                type: 'button', className: 'dsh-git-btn dsh-git-primary',
+                disabled: busy || remoteInside !== true || rNameDraft.length === 0 || rUrlDraft.length === 0,
+                title: 'git remote add <名字> <地址>；成功后框清空，可以接着添下一个',
+                onClick: function () { remoteAdd() },
+              }, '添加远端'),
+              h('span', { className: 'dsh-git-set-hint' }, '名字不能有空白；地址删除后就没了，git 不会替你记住。')),
+
+            h('div', { className: 'dsh-git-set-group' }, crlfGroupTitle),
+            h('div', { className: 'dsh-git-set-hint' },
+              '两条都是 git 的换行符配置，同样只写上面选中的仓库（--local）：autocrlf=true 检出转 CRLF、提交转回 LF，input 只在提交时转 LF，false 不转；safecrlf 是把关开关，换行转换不可逆（行尾抹过一遍还原不回去）时 true 让 git 拒绝、warn 只警告、false 不把关。改动立即写进该仓库的 .git/config；选「跟随全局」= 清掉该仓库的这条（不存在算成功）。'),
+
+            lineSelect('core.autocrlf', autocrlf, ['true', 'false', 'input'], '检出时把 LF 转 CRLF、提交时转回 LF（input 只在提交时转 LF，false 什么都不转）'),
+            lineSelect('core.safecrlf', safecrlf, ['true', 'false', 'warn'], '换行转换不可逆（会丢字）时的把关开关：true 让 git 拒绝这次操作、warn 只警告照做、false 不把关'))),
 
         note.length > 0 ? h('div', { className: 'dsh-git-set-row dsh-git-set-hint' }, note) : null,
         problem.length > 0 ? h('div', { className: 'dsh-git-set-row dsh-git-error' }, problem) : null)
