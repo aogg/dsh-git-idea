@@ -78,8 +78,12 @@ function sh(cmd, cwd) {
   })
 }
 await sh('rm -rf ' + IDENT_HOME + ' /tmp/gp34d-ident /tmp/gp34d-ident2 && mkdir -p ' + IDENT_HOME + ' /tmp/gp34d-ident /tmp/gp34d-ident2')
-await sh('git init -q -b main . && echo a > a.txt && git add -A', '/tmp/gp34d-ident')
-await sh('git init -q -b main . && echo b > b.txt && git add -A', '/tmp/gp34d-ident2')
+/* 「没配 user.* → git 拒绝签名」在这两块 fixture 里要**确定性**成立：裸机器上 git
+   会用 /etc/passwd 的 gecos + hostname 自己猜一个身份，`git var GIT_AUTHOR_IDENT`
+   于是照样成功（换一台机器这个套件就从绿变红）。user.useConfigOnly=true 把「猜」
+   关掉 —— 没配就是缺，配了就签得出来，跟跑测试的机器是谁无关。 */
+await sh('git init -q -b main . && git config user.useConfigOnly true && echo a > a.txt && git add -A', '/tmp/gp34d-ident')
+await sh('git init -q -b main . && git config user.useConfigOnly true && echo b > b.txt && git add -A', '/tmp/gp34d-ident2')
 const realGit = (await sh('command -v git')).out.trim()
 const guards = []
 const check = (label, value) => {

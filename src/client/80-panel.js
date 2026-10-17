@@ -612,6 +612,7 @@
             key: 'cfg-repos',
             sessionId: sessionId, pane: 'config', list: repoList, effective: effective,
             pick: targetRepo,
+            onSingle: function (path) { pickRepo(path) },
             /* 「＋ 添加目录」与历史页是同一份持久清单、同一套报错话术（saveManualRepo /
                repoSaveProblem 都在 24-repos.js）；加成功的那一下顺手把新仓库选为本页
                目标 —— 读者加它就是要在它身上做配置。移除的正好是本页目标时退回
