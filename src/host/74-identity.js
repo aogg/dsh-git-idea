@@ -153,7 +153,7 @@ async function identitySave(input) {
 
    「提交身份」在配置页有两档：全局档能写 --global（选机器）也能写 --local（选仓
    库），项目档属于会话、常常开在别的仓库上，要的恰恰是另一件事：**只**管当前这个
-   项目 —— 两个身份键之外，git 自己管换行符的两个键（core.autocrlf / core.eol）也
+   项目 —— 两个身份键之外，git 自己管换行符的两个键（core.autocrlf / core.safecrlf）也
    是同一性质：写进仓库的 .git/config，终端里的 git、IDEA、钩子看到的是同一个答案，
    跟着项目走而不是跟着某台浏览器。
 
@@ -163,12 +163,16 @@ async function identitySave(input) {
    程自己的目录（identitySnapshot 顶部注释里有被 fixture 抓出来的先例），这时只回
    答机器级那份并明说 insideRepo:false。 */
 
-const PROJECT_CONFIG_KEYS = ['user.name', 'user.email', 'core.autocrlf', 'core.eol']
-const PROJECT_CONFIG_REGEXP = '^(user\\.(name|email)|core\\.(autocrlf|eol))$'
-/* autocrlf 与 eol 的合法值。git 对大小写不挑（`TRUE` 也收），但这份配置的读者是
+const PROJECT_CONFIG_KEYS = ['user.name', 'user.email', 'core.autocrlf', 'core.safecrlf']
+const PROJECT_CONFIG_REGEXP = '^(user\\.(name|email)|core\\.(autocrlf|safecrlf))$'
+/* autocrlf 与 safecrlf 的合法值。git 对大小写不挑（`TRUE` 也收），但这份配置的读者是
    人，收进来时就归一成 git 文档里的小写。 */
 const AUTOCRLF_VALUES = ['true', 'false', 'input']
-const EOL_VALUES = ['lf', 'crlf', 'native']
+/* safecrlf 的合法值，git 的语义是给换行转换把关：转换不可逆（行尾抹过一遍还原不回
+   去、真丢字）时，true 让 git 拒绝这次操作、warn 只警告照做、false 不把关。它在这里
+   接替 core.eol，是因为 eol 只挑工作区存哪种行尾、拦不住转换本身丢字，把关的活归
+   safecrlf。 */
+const SAFECRLF_VALUES = ['true', 'false', 'warn']
 
 /* `file:/path<TAB>key value` → { key: {value, origin} }。同一把问询里同一个键出现
    多行时（local 和 global 都写了它），后面那行覆盖前面 —— `--get-regexp` 按配置文
@@ -237,7 +241,7 @@ async function projectConfigSnapshot(input) {
      · 键白名单就是上面四个 —— 请求里的别的键直接丢掉，不猜；
      · user.* 走 cleanIdentValue（控制字符与前导 - 的规矩见它自己的注释），空 = 这一
        项跳过（`git config user.name ''` 正是「empty ident name」的来路）；
-     · autocrlf / eol 只收各自的清单，别的值报错 —— 这两个键写错了不报错的那天，
+     · autocrlf / safecrlf 只收各自的清单，别的值报错 —— 这两个键写错了不报错的那天，
        git 会拿它把整棵树的换行符改一遍。 */
 async function projectConfigSave(input) {
   const target = repoFrom(input, null)
@@ -261,7 +265,7 @@ async function projectConfigSave(input) {
       continue
     }
     const wanted = isStr(raw) ? raw.trim().toLowerCase() : ''
-    const allowed = key === 'core.autocrlf' ? AUTOCRLF_VALUES : EOL_VALUES
+    const allowed = key === 'core.autocrlf' ? AUTOCRLF_VALUES : SAFECRLF_VALUES
     if (allowed.indexOf(wanted) < 0) {
       return { ok: false, error: 'bad-value', key: key, stderr: key + ' 只接受 ' + allowed.join(' / ') }
     }
@@ -294,6 +298,91 @@ async function projectConfigSave(input) {
   /* 读回来而不是回显输入（identitySave 同一个原则）：写进去的值 git 怎么归一的、
      生效的那份现在是谁，都以此刻的问询为准。 */
   const after = await projectConfigSnapshotFrom(input, target, true)
+  return Object.assign({ written: setKeys, unset: unsetKeys }, after)
+}
+
+/* ─────────────── 换行符的全局档：只写 --global ───────────────
+
+   换行符那两个键还有第二个家：~/.gitconfig。项目档（上一节）答的是「这个仓库怎么
+   办」，全局档答的是「这台机器默认怎么办」—— 没有自己的答案的仓库都吃这一份。它
+   没有项目档那三把问询：local 与「生效」都是仓库的问题，跟 ~/.gitconfig 无关，而
+   --global 按定义与目录无关（identitySnapshot 里 global 那把问询的同一句话），所以
+   读不需要仓库；写也没有「写进哪个仓库」的门 —— 沙箱策略只能来自会话（identitySave
+   的 global 分支同一个先例）。 */
+
+const GLOBAL_CONFIG_KEYS = ['core.autocrlf', 'core.safecrlf']
+const GLOBAL_CONFIG_REGEXP = '^(core\\.(autocrlf|safecrlf))$'
+
+/* 全局档快照：一把 `--global --show-origin --get-regexp` 同时答「是什么」和「从哪个
+   文件来的」，输出照 parseProjectConfig 拆（键集是项目档的子集，同一套拆法与覆盖
+   规则）。没配 = 空串，origin 摘成读者能对上号的路径（originLabel，projectConfigEntry
+   同一口径）。 */
+async function globalConfigSnapshot(input) {
+  const args = input != null && isStr(input.sessionId) ? { sessionId: input.sessionId } : {}
+  const one = await gitC(args, ['config', '--global', '--show-origin', '--get-regexp', GLOBAL_CONFIG_REGEXP], null, {})
+  const raw = parseProjectConfig(one.stdout)
+  const config = {}
+  for (let i = 0; i < GLOBAL_CONFIG_KEYS.length; i += 1) {
+    const key = GLOBAL_CONFIG_KEYS[i]
+    const entry = raw[key]
+    config[key] = {
+      global: entry != null ? entry.value : '',
+      globalOrigin: entry != null ? originLabel(entry.origin) : '',
+    }
+  }
+  return { ok: true, config: config }
+}
+
+/* 写进 ~/.gitconfig。三道门照 projectConfigSave 的次序与措辞，全在写之前过（一部分
+   非法就一个字节都不写，别让读者拿到半份改动）：
+     · 键白名单只收 GLOBAL_CONFIG_KEYS 两个 —— 请求里的别的键直接丢掉，不猜；
+     · 值 trim + 归一成小写后只收各自的清单（AUTOCRLF_VALUES / SAFECRLF_VALUES），
+       别的值报 bad-value —— 全局这份管着所有没自答的仓库，写错波及的面更大；
+     · set 与 unset 全空报 empty —— 一个字节都不写。
+   写是 `git config --global <key> <value>`，清是 --unset。沙箱参数照 identitySave 的
+   global 分支：有 sessionId 就带上 —— 全局写没有仓库可指名，会话是唯一能说出该用
+   哪份写策略的东西。 */
+async function globalConfigSave(input) {
+  const set = input != null && input.set != null && typeof input.set === 'object' && !Array.isArray(input.set) ? input.set : {}
+  const unsetRaw = input != null && Array.isArray(input.unset) ? input.unset : []
+  const setKeys = []
+  const setValues = {}
+  for (let i = 0; i < GLOBAL_CONFIG_KEYS.length; i += 1) {
+    const key = GLOBAL_CONFIG_KEYS[i]
+    if (Object.prototype.hasOwnProperty.call(set, key) !== true) continue
+    const wanted = isStr(set[key]) ? set[key].trim().toLowerCase() : ''
+    const allowed = key === 'core.autocrlf' ? AUTOCRLF_VALUES : SAFECRLF_VALUES
+    if (allowed.indexOf(wanted) < 0) {
+      return { ok: false, error: 'bad-value', key: key, stderr: key + ' 只接受 ' + allowed.join(' / ') }
+    }
+    setKeys.push(key)
+    setValues[key] = wanted
+  }
+  const unsetKeys = []
+  for (let i = 0; i < unsetRaw.length && unsetKeys.length < GLOBAL_CONFIG_KEYS.length; i += 1) {
+    const key = unsetRaw[i]
+    if (GLOBAL_CONFIG_KEYS.indexOf(key) < 0 || unsetKeys.indexOf(key) >= 0) continue
+    unsetKeys.push(key)
+  }
+  if (setKeys.length === 0 && unsetKeys.length === 0) {
+    return { ok: false, error: 'empty', stderr: '没有要写也没有要清的键' }
+  }
+  const args = input != null && isStr(input.sessionId) ? { sessionId: input.sessionId } : {}
+  for (let i = 0; i < setKeys.length; i += 1) {
+    const key = setKeys[i]
+    const one = await git(args, ['config', '--global', key, setValues[key]], null, {})
+    if (one.exitCode !== 0) return { ok: false, error: 'write-failed', key: key, stderr: one.stderr, stdout: one.stdout, sandboxDenied: one.sandboxDenied === true, noGit: gitMissing(one) }
+  }
+  for (let i = 0; i < unsetKeys.length; i += 1) {
+    const key = unsetKeys[i]
+    const one = await git(args, ['config', '--global', '--unset', key], null, {})
+    /* 退出码 5 = 本来就没配（git config(1) 的说法）。「清掉」要的就是回到没有的状态，
+       本来没有正是目的地，算成功 —— projectConfigSave 的同一条注释。 */
+    if (one.exitCode !== 0 && one.exitCode !== 5) return { ok: false, error: 'unset-failed', key: key, stderr: one.stderr, stdout: one.stdout, sandboxDenied: one.sandboxDenied === true, noGit: gitMissing(one) }
+  }
+  /* 读回来而不是回显输入（identitySave / projectConfigSave 的同一个原则）：写进去的
+     值 git 怎么记下的，以此刻的问询为准。 */
+  const after = await globalConfigSnapshot(input)
   return Object.assign({ written: setKeys, unset: unsetKeys }, after)
 }
 

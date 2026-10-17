@@ -1,22 +1,25 @@
 import fs from 'node:fs'
 import { spawn } from 'node:child_process'
 
-/* ── 面板「配置」页的 Host 半侧：git/project-config 读与写 ──
+/* ── 面板「配置」页的 Host 半侧：git/project-config 与 git/global-config 读与写 ──
  *
- * 钉六件事：
+ * 钉七件事：
  *   1. 读：四个键各答 local / global / 生效与来源（--show-origin 那把）；不知道是哪个
  *      仓库时只答 global 并明说 insideRepo:false —— 绝不拿 dsh 进程自己的目录冒充
  *      仓库（74-identity.js 顶部那个被 fixture 抓出来的坑，这里再钉一次）；
  *   2. set 写 --local：user.* 与 core.* 都落在仓库的 .git/config 里，答复是「读回来」
  *      的新快照（不是回显输入）；
  *   3. 键白名单：set 里混进白名单外的键被丢掉，一个字节不写；
- *   4. 值校验：autocrlf 只收 true/false/input、eol 只收 lf/crlf/native，非法直接报
- *      错且什么都不写；user.* 走 cleanIdentValue —— 控制字符与前导 - 拒；
+ *   4. 值校验：autocrlf 只收 true/false/input、safecrlf 只收 true/false/warn，非法直接
+ *      报错且什么都不写；user.* 走 cleanIdentValue —— 控制字符与前导 - 拒；
  *   5. unset 用 --unset：本来的键清掉；本来就没配（退出码 5）也算成功 —— 清两次
  *      第二次不报错；
  *   6. 这两条不进「命令」页记录（设置类动作，git/identity-save 同一个先例）；
  *      plugin 配置归一化的新键（refreshOnComplete 缺省 true、pushOnAllComplete 缺省
- *      false、乱输入归位、原有键不丢）也在 git/config-save 上顺手钉住。 */
+ *      false、乱输入归位、原有键不丢）也在 git/config-save 上顺手钉住；
+ *   7. 全局档（git/global-config 两条）：读写只碰 --global，落在临时 HOME 的
+ *      .gitconfig —— 空读、'TRUE' 归一、非法值、unset 读回空串、退出码 5 容忍、
+ *      set/unset 全空报 empty。 */
 
 const body = fs.readFileSync(process.env.GP_SRC || new URL('../host.js', import.meta.url).pathname, 'utf8')
 
@@ -79,16 +82,19 @@ console.log('=== 读：四个键的 local / global / 生效与来源 ===')
   const a = makeBody()
   const empty = await a.H('git/project-config')({ repo: R })
   check('干净仓库：ok，四个键都在，全是空', empty.ok === true && empty.insideRepo === true && empty.repo === R
-    && ['user.name', 'user.email', 'core.autocrlf', 'core.eol'].every((k) => empty.config[k] != null)
-    && empty.config['user.name'].effective === '' && empty.config['core.eol'].local === '')
-  await sh(`git config --global user.name 'Ada Lovelace' && git config --global user.email ada@example.com && git config --global core.eol native`, '/tmp')
+    && ['user.name', 'user.email', 'core.autocrlf', 'core.safecrlf'].every((k) => empty.config[k] != null)
+    && empty.config['user.name'].effective === '' && empty.config['core.safecrlf'].local === '')
+  /* 全局值取 warn 不取 true：safecrlf=true 会把后面「git/flush」那组的 git add -A
+   * （本地 autocrlf=true、工作区是 LF 文件、索引还是旧 stat）整个 fatal 掉，warn 只
+   * 警告照做，正好也演示了它自己的语义。 */
+  await sh(`git config --global user.name 'Ada Lovelace' && git config --global user.email ada@example.com && git config --global core.safecrlf warn`, '/tmp')
   const withGlobal = await makeBody().H('git/project-config')({ repo: R })
   check('global 配了：global 与生效都答它，来源指到全局文件',
     withGlobal.config['user.name'].global === 'Ada Lovelace'
     && withGlobal.config['user.name'].effective === 'Ada Lovelace'
     && withGlobal.config['user.name'].effectiveOrigin.indexOf('.gitconfig') >= 0
     && withGlobal.config['user.name'].local === ''
-    && withGlobal.config['core.eol'].global === 'native')
+    && withGlobal.config['core.safecrlf'].global === 'warn')
   await sh(`git config --local core.autocrlf input`, R)
   const withLocal = await makeBody().H('git/project-config')({ repo: R })
   check('local 配了：local 答它，生效换成它、来源换成 .git/config',
@@ -118,10 +124,10 @@ console.log('=== 写：set 落 --local，键白名单外的键被丢掉 ===')
     seen.some((c) => c.indexOf("git 'config' '--local' 'user.name'") >= 0))
   check('答复是回读不是回显：生效与来源都换成 .git/config',
     first.config['user.name'].effective === 'Repo Only' && first.config['user.name'].effectiveOrigin === '.git/config')
-  const sneaky = await a.H('git/project-config-save')({ repo: R, set: { 'core.eol': 'lf', 'evil.key': 'boom' } })
-  check('白名单外的键直接丢掉，白名单内的照写', sneaky.ok === true && sneaky.written.join(',') === 'core.eol'
+  const sneaky = await a.H('git/project-config-save')({ repo: R, set: { 'core.safecrlf': 'warn', 'evil.key': 'boom' } })
+  check('白名单外的键直接丢掉，白名单内的照写', sneaky.ok === true && sneaky.written.join(',') === 'core.safecrlf'
     && (await sh('git config --local --get evil.key', R)).code !== 0
-    && (await sh('git config --local --get core.eol', R)).out.trim() === 'lf')
+    && (await sh('git config --local --get core.safecrlf', R)).out.trim() === 'warn')
   const upper = await a.H('git/project-config-save')({ repo: R, set: { 'core.autocrlf': 'TRUE' } })
   check('autocrlf 收下来归一成小写', upper.ok === true && (await sh('git config --local --get core.autocrlf', R)).out.trim() === 'true')
 }
@@ -132,12 +138,12 @@ console.log('=== 写：非法值一律拒绝，且一个字节都不写 ===')
   const a = makeBody({ HOME: HOME, GIT_CONFIG_GLOBAL: GLOBAL })
   const before = (await sh('cat ' + R + '/.git/config', '/tmp')).out
   const badCrlf = await a.H('git/project-config-save')({ repo: R, set: { 'core.autocrlf': 'auto' } })
-  const badEol = await a.H('git/project-config-save')({ repo: R, set: { 'core.eol': 'system' } })
+  const badSafecrlf = await a.H('git/project-config-save')({ repo: R, set: { 'core.safecrlf': 'native' } })
   const badName = await a.H('git/project-config-save')({ repo: R, set: { 'user.name': 'a\nb' } })
   const badDash = await a.H('git/project-config-save')({ repo: R, set: { 'user.email': '-x' } })
   const emptySet = await a.H('git/project-config-save')({ repo: R, set: { 'user.name': '  ' } })
   check('autocrlf 非法值被拒', badCrlf.ok !== true && badCrlf.error === 'bad-value')
-  check('eol 非法值被拒', badEol.ok !== true && badEol.error === 'bad-value')
+  check('safecrlf 非法值被拒（eol 老值 native 对它也不再合法）', badSafecrlf.ok !== true && badSafecrlf.error === 'bad-value')
   check('user.name 的控制字符被拒（cleanIdentValue 的规矩）', badName.ok !== true)
   check('前导 - 被拒', badDash.ok !== true)
   check('空值 = 没有要写的键，也不算成功', emptySet.ok !== true)
@@ -151,17 +157,61 @@ console.log('=== 清：unset 用 --unset，退出码 5（本来就没配）算�
 {
   const seen = []
   const a = makeBody({ HOME: HOME, GIT_CONFIG_GLOBAL: GLOBAL }, seen)
-  const one = await a.H('git/project-config-save')({ repo: R, unset: ['core.eol'] })
+  const one = await a.H('git/project-config-save')({ repo: R, unset: ['core.safecrlf'] })
   check('清掉配过的键：ok，本地那份没了，生效落回全局',
-    one.ok === true && one.unset.join(',') === 'core.eol'
-    && (await sh('git config --local --get core.eol', R)).code !== 0
-    && one.config['core.eol'].effective === 'native')
-  check('命令形状：config --local --unset <k>', seen.some((c) => c.indexOf("git 'config' '--local' '--unset' 'core.eol'") >= 0))
-  const twice = await a.H('git/project-config-save')({ repo: R, unset: ['core.eol'] })
+    one.ok === true && one.unset.join(',') === 'core.safecrlf'
+    && (await sh('git config --local --get core.safecrlf', R)).code !== 0
+    && one.config['core.safecrlf'].effective === 'warn')
+  check('命令形状：config --local --unset <k>', seen.some((c) => c.indexOf("git 'config' '--local' '--unset' 'core.safecrlf'") >= 0))
+  const twice = await a.H('git/project-config-save')({ repo: R, unset: ['core.safecrlf'] })
   const thrice = await a.H('git/project-config-save')({ repo: R, unset: ['user.name'] })
   check('再清一次（本来就没配）照样 ok —— 退出码 5 就是目的地',
-    twice.ok === true && twice.unset.join(',') === 'core.eol'
+    twice.ok === true && twice.unset.join(',') === 'core.safecrlf'
     && thrice.ok === true && (await sh('git config --local --get user.name', R)).code !== 0)
+}
+
+console.log('')
+console.log('=== 全局档：git/global-config 读写只碰 --global ===')
+{
+  /* 独立的临时 HOME：全局档没有仓库可指名，自己的 .gitconfig 就是全部落点 —— 与
+   * 文件顶部同一套隔离（HOME / GIT_CONFIG_GLOBAL 压进环境，谁也摸不到真配置），只是
+   * 这里各用各的一份，空读才真的是空。 */
+  const GHOME = '/tmp/gp49-ghome'
+  const GGLOBAL = GHOME + '/.gitconfig'
+  const genv = { HOME: GHOME, GIT_CONFIG_GLOBAL: GGLOBAL }
+  await sh(`rm -rf ${GHOME} && mkdir -p ${GHOME}`, '/tmp')
+  const blank = await makeBody(genv).H('git/global-config')({})
+  check('空读：ok，两个键都在、值与来源都是空串',
+    blank.ok === true
+    && blank.config['core.autocrlf'].global === '' && blank.config['core.autocrlf'].globalOrigin === ''
+    && blank.config['core.safecrlf'].global === '' && blank.config['core.safecrlf'].globalOrigin === '')
+  const seen = []
+  const w = makeBody(genv, seen)
+  const saved = await w.H('git/global-config-save')({ set: { 'core.autocrlf': 'TRUE' } })
+  check("set 'TRUE'：ok，written 列出键，读回归一成小写 'true' 且来源指到 .gitconfig",
+    saved.ok === true && saved.written.join(',') === 'core.autocrlf'
+    && saved.config['core.autocrlf'].global === 'true'
+    && saved.config['core.autocrlf'].globalOrigin.indexOf('.gitconfig') >= 0)
+  check('确实落在临时 HOME 的 .gitconfig（--global）',
+    (await sh('git config --global --get core.autocrlf', '/tmp', genv)).out.trim() === 'true')
+  check('命令形状：config --global <k> <v>', seen.some((c) => c.indexOf("git 'config' '--global' 'core.autocrlf' 'true'") >= 0))
+  const badAuto = await w.H('git/global-config-save')({ set: { 'core.autocrlf': 'auto' } })
+  const badNative = await w.H('git/global-config-save')({ set: { 'core.safecrlf': 'native' } })
+  check('非法值被拒且一个字节不写（eol 老值 native 对 safecrlf 也不再合法）',
+    badAuto.ok !== true && badAuto.error === 'bad-value' && badNative.ok !== true && badNative.error === 'bad-value'
+    && (await sh('git config --global --get core.safecrlf', '/tmp', genv)).code !== 0)
+  const sneaky = await w.H('git/global-config-save')({ set: { 'user.name': 'Nope' } })
+  check('白名单外的键直接丢掉：丢到一概不剩就是 empty',
+    sneaky.ok !== true && sneaky.error === 'empty'
+    && (await sh('git config --global --get user.name', '/tmp', genv)).code !== 0)
+  const cleared = await w.H('git/global-config-save')({ unset: ['core.autocrlf'] })
+  check('unset 后读回空串', cleared.ok === true && cleared.unset.join(',') === 'core.autocrlf'
+    && cleared.config['core.autocrlf'].global === '')
+  const again = await w.H('git/global-config-save')({ unset: ['core.autocrlf'] })
+  check('再清一次（本来就没配）照样 ok —— 退出码 5 就是目的地',
+    again.ok === true && again.unset.join(',') === 'core.autocrlf')
+  const nothing = await w.H('git/global-config-save')({ set: {}, unset: [] })
+  check('set 与 unset 全空报 empty，一个字节不写', nothing.ok !== true && nothing.error === 'empty')
 }
 
 console.log('')

@@ -76,6 +76,13 @@ onRpc('git/project-config', function (input) { return projectConfigSnapshot(inpu
 
 onRpc('git/project-config-save', function (input) { return projectConfigSave(input) })
 
+/* 全局档的换行符（74-identity.js）：与项目档并排的两条，读写都只碰 ~/.gitconfig 那份
+    —— 全局档的换行符只写 --global，与目录无关、不需要仓库，写它的沙箱策略来自会话
+    （git/identity-save 的 global 分支同一个先例）。 */
+onRpc('git/global-config', function (input) { return globalConfigSnapshot(input) })
+
+onRpc('git/global-config-save', function (input) { return globalConfigSave(input) })
+
 /* 远端（74-identity.js）：读一条 `git remote -v`；写是 add / set-url / remove 三条
     子命令，走 panelMutate 进「命令」页 —— 远端表是 fetch / pull / push 都吃的仓库
     自家数据，与 stage / pull 同一条变更路（project-config-save「设置类动作不进命令
