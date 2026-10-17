@@ -313,7 +313,8 @@ const ok = (label, value) => console.log('  ' + (value ? '✓' : '✗') + ' ' + 
    11. 一组一个框；勾上新文件之后它留在那一组里（不跳进变更列表）
    12. 未跟踪条目的两种形状（字符串 / 对象）
    13. 勾一下只动那一行：不变暗、不挪窝、不跳组，改动排队
-   14. 提交的文件列表里也有目录行，而且和引用树是同一份构造 */
+   14. 提交的文件列表里也有目录行，而且和引用树是同一份构造
+   17b. 左右对比的行模型：多行块配对、空半、整行 colSpan=2、词级高亮与护栏、回车符开关 */
 
 const L = function () {
   let out = ''
@@ -442,16 +443,47 @@ ok('两段各有一个小节标题', sections.length === 2 && sections[0].indexO
 ok('小节标题里也带各自的数', sections[0].indexOf('+1') > 0 && sections[1].indexOf('+2') > 0)
 
 /* @@ -3,3 +3,4 @@：上下文行占 3/3，删除行占旧 4，两个新增行占新 4、5，
-   最后一行上下文占旧 5/新 6。 */
+   最后一行上下文占旧 5/新 6。左右对比（side-by-side）之后行是成对的：连续的 del
+   块与紧随的 add 块按下标配对，「new line」和它替换掉的「old line」同占一行 ——
+   左右各一个半列（dsh-git-dhalf-old/-new，各带自己的行号沟/记号/正文），行类把
+   dsh-git-dl-del 与 dsh-git-dl-add 一起挂上，底色在半列上（halfMark 跟记号走）。 */
 const addRows = byClass(tree, 'dsh-git-dl-add')
 const delRows = byClass(tree, 'dsh-git-dl-del')
-const newLine = addRows.find(function (r) { return textOf(r).indexOf('new line') >= 0 })
-const newNos = newLine === undefined ? [] : byClass(newLine, 'dsh-git-dno').map(function (n) { return textOf(n) })
-ok('新增行的行号落在新文件一侧', newNos.length === 2 && newNos[0] === '' && newNos[1] === '4')
-const extraNos = byClass(addRows.find(function (r) { return textOf(r).indexOf('extra') >= 0 }) || {}, 'dsh-git-dno').map(function (n) { return textOf(n) })
-ok('紧接着的下一个新增行是 5', extraNos[1] === '5')
-const delNos = byClass(delRows.find(function (r) { return textOf(r).indexOf('old line') >= 0 }) || {}, 'dsh-git-dno').map(function (n) { return textOf(n) })
-ok('删除行只出现在旧文件一侧', delNos[0] === '4' && delNos[1] === '')
+const halfOf = function (row, side) {
+  return byClass(row, side === 'old' ? 'dsh-git-dhalf-old' : 'dsh-git-dhalf-new')[0]
+}
+const gutterOf = function (half) {
+  const no = byClass(half, 'dsh-git-dno')[0]
+  return no === undefined ? undefined : textOf(no)
+}
+const signOf = function (half) {
+  const sg = byClass(half, 'dsh-git-dsign')[0]
+  return sg === undefined ? undefined : textOf(sg)
+}
+const halfTextOf = function (half) {
+  const tx = byClass(half, 'dsh-git-dtext')[0]
+  return tx === undefined ? undefined : textOf(tx)
+}
+const newPair = addRows.find(function (r) { return textOf(r).indexOf('new line') >= 0 })
+const oldHalf = newPair === undefined ? undefined : halfOf(newPair, 'old')
+const newHalf = newPair === undefined ? undefined : halfOf(newPair, 'new')
+ok('配对行同时挂 del/add 两类（两个行类清单里是同一行，左右各一个半列）',
+  newPair !== undefined && addRows.indexOf(newPair) >= 0 && delRows.indexOf(newPair) >= 0
+  && oldHalf !== undefined && newHalf !== undefined)
+ok('新增行的行号落在新文件一侧（右半的沟是新号 4，记号 +，正文是加上的那行）',
+  gutterOf(newHalf) === '4' && signOf(newHalf) === '+' && halfTextOf(newHalf) === 'new line')
+ok('配对的删除行在旧文件一侧：同一行左半的沟是配上的旧号 4，记号 −，正文是删掉的那行',
+  gutterOf(oldHalf) === '4' && signOf(oldHalf) === '-' && halfTextOf(oldHalf) === 'old line')
+ok('删除行只出现在旧文件一侧（右半的正文里没有删掉的内容）',
+  halfTextOf(newHalf) !== undefined && halfTextOf(newHalf).indexOf('old line') < 0)
+const extraRow = addRows.find(function (r) { return textOf(r).indexOf('extra') >= 0 })
+const extraOld = extraRow === undefined ? undefined : halfOf(extraRow, 'old')
+const extraNew = extraRow === undefined ? undefined : halfOf(extraRow, 'new')
+ok('紧接着的下一个新增行是 5（行号在右半的沟里，记号 +）',
+  gutterOf(extraNew) === '5' && signOf(extraNew) === '+' && halfTextOf(extraNew) === 'extra')
+ok('多出那半的对面留空：没有行号、没有记号、没有正文（dhalf-empty）',
+  extraOld !== undefined && gutterOf(extraOld) === '' && signOf(extraOld) === '' && halfTextOf(extraOld) === ''
+  && String(extraOld.props.className).indexOf('dsh-git-dhalf-empty') >= 0)
 ok('文件头不计进增删数（+++/--- 是头，不是行）', addRows.every(function (r) { return textOf(r).indexOf('+++') < 0 }))
 ok('@@ 那一行单独成一类', byClass(tree, 'dsh-git-dl-hunk').length === 2)
 
@@ -2073,7 +2105,10 @@ ok('未暂存的文件，差异头部的框一开始就是空的',
   boxNow !== undefined && String(boxNow.props.className).indexOf('dsh-git-cbox-on') < 0
   && textOf(boxNow) === '☐' && boxNow.props.title === '暂存')
 
-/* 提交那一路：读的是某一次提交的补丁，「暂存」对它无从谈起 —— 框不画。 */
+/* 提交那一路：读的是某一次提交的补丁，「暂存」对它无从谈起 —— 暂存的框不画。
+   头部现在恒有「回车符」开关，那只框也是 dsh-git-cbox（包在 dsh-git-diffcr 里），
+   所以识别口径按真实意图改成「头部不许有暂存那只框，只许有回车符那只」：按 key
+   （crbox / stagebox）与悬停话术认框，而不是数 dsh-git-cbox 的个数。 */
 toolByTitle(tree, '返回文件列表').props.onClick()
 await wait(10)
 tree = await settle()
@@ -2086,7 +2121,19 @@ tree = await settle()
 changeRow(tree, 'new.txt').props.onClick()
 await wait(10)
 tree = await settle()
-ok('提交那一路（kind === \'commit\'）头部没有勾选框', headBoxes(tree).length === 0)
+const commitHead = byClass(tree, 'dsh-git-diffhead')[0]
+const commitCr = commitHead === undefined ? undefined : byClass(commitHead, 'dsh-git-diffcr')[0]
+const commitBoxes = commitHead === undefined ? [] : byClass(commitHead, 'dsh-git-cbox')
+ok('提交那一路（kind === \'commit\'）头部没有暂存勾选框（有框也只在回车符开关里）',
+  commitHead !== undefined && commitCr !== undefined
+  && commitBoxes.length === 1 && commitBoxes[0].key === 'crbox'
+  && String(commitBoxes[0].props.title).indexOf('回车符') >= 0
+  && commitBoxes.every(function (b) { return b.props.title !== '暂存' && b.props.title !== '取消暂存' }))
+ok('提交那一路的回车符开关在：框与「回车符」文案同包在 dsh-git-diffcr 里，默认不勾',
+  commitCr !== undefined && textOf(commitCr).indexOf('回车符') >= 0
+  && byClass(commitCr, 'dsh-git-cbox').length === 1
+  && String(commitBoxes[0].props.className).indexOf('dsh-git-cbox-on') < 0
+  && textOf(commitBoxes[0]) === '☐')
 
 /* 源码规矩：框只有一份构造、两处调用；两道守卫都在 55-diff.js 里 —— 少一道就
    会出现点了必败的框，或者提交那一路凭空多出一只框。 */
@@ -2104,6 +2151,262 @@ ok('两道守卫都在：kind 不是 file 不画、宿主没接 onStage 不画',
   && diffBoxSource.indexOf("typeof props.onStage !== 'function'") >= 0)
 
 host.call = boxSaved
+tree = await settle()
+
+/* ═══ 17b. 左右对比的行模型：多行块配对、空半、整行、词级高亮、回车符开关 ═══
+   统一视图改成左右对比之后，「一行」不再是同一个种类：连续的 del 块与紧随的 add
+   块按下标配对（第 i 个 del 配第 i 个 add），配上的是一行（行类挂 del+add，左右
+   各一个半列）；多出的 del 左半有内容、右半留空，多出的 add 相反；ctx 左右 1:1；
+   hunk / meta / note 横跨两列（一格 colSpan=2 的 dsh-git-dfull）。配上对的行还做
+   词级（LCS）差异高亮：差异片段包 dsh-git-dmiss，超长就放弃；行尾的 \r 由头部的
+   「回车符」开关管 —— 关了剥掉，开了画成 ⏎ 并参与词级对比（settings 层的
+   diffShowCr，切换只重画、不重发 git/diff）。 */
+
+console.log('')
+console.log('== 左右对比：多行块的配对 ==')
+
+const sideSaved = host.call
+/* 护栏的料：两个 1200 字符的行（> WORD_MAX_CHARS 的 1000），一对就该放弃高亮。 */
+const LONG_A = 'x'.repeat(1200)
+const LONG_B = 'y'.repeat(1200)
+const PATCH_SIDE = L(
+  'diff --git a/side.js b/side.js',
+  'index 1111111..2222222 100644',
+  '--- a/side.js',
+  '+++ b/side.js',
+  '@@ -1,2 +1,2 @@',
+  ' common head',
+  '-drop one',
+  '-drop two',
+  '+keep one',
+  '+keep two',
+  '@@ -10,3 +10,4 @@ later',
+  ' ctx tail',
+  '-only old',
+  '-only old two',
+  '+only new',
+  '+plus extra',
+  '+plus extra two',
+  '@@ -20,3 +20,2 @@ deep',
+  ' ctx deep',
+  '-solo old',
+  '-solo old two',
+  '+solo new')
+const PATCH_WORDS = L(
+  'diff --git a/words.txt b/words.txt',
+  'index 1111111..2222222 100644',
+  '--- a/words.txt',
+  '+++ b/words.txt',
+  '@@ -1,2 +1,2 @@',
+  '-foo bar',
+  '+foo baz',
+  '@@ -5,2 +5,3 @@ mid',
+  '-solo old',
+  '+solo new',
+  '+plain added whole',
+  '@@ -9,2 +9,2 @@ end',
+  '-' + LONG_A,
+  '+' + LONG_B)
+const PATCH_CR = L(
+  'diff --git a/crfile.txt b/crfile.txt',
+  'index 1111111..2222222 100644',
+  '--- a/crfile.txt',
+  '+++ b/crfile.txt',
+  '@@ -1,3 +1,3 @@',
+  ' cr context\r',
+  '-same tail\r',
+  '+same tail',
+  '+cr added')
+host.call = function (method, args) {
+  if (method === 'git/panel') {
+    calls.push({ method: method, args: args })
+    return Promise.resolve({
+      ok: true, repo: '/tmp/ws', branch: 'main', detached: false, upstream: '', ahead: 0, behind: 0,
+      sequencer: null,
+      staged: [], unstaged: [{ path: 'side.js', code: 'M' }, { path: 'words.txt', code: 'M' }, { path: 'crfile.txt', code: 'M' }],
+      untracked: [], unmerged: [],
+    })
+  }
+  if (method === 'git/diff') {
+    diffCalls.push(args)
+    if (args.path === 'side.js') {
+      return Promise.resolve({ ok: true, mode: args.mode, path: args.path, text: PATCH_SIDE, added: 4, removed: 3, binary: false, truncated: false, empty: false })
+    }
+    if (args.path === 'words.txt') {
+      return Promise.resolve({ ok: true, mode: args.mode, path: args.path, text: PATCH_WORDS, added: 3, removed: 2, binary: false, truncated: false, empty: false })
+    }
+    if (args.path === 'crfile.txt') {
+      return Promise.resolve({ ok: true, mode: args.mode, path: args.path, text: PATCH_CR, added: 2, removed: 1, binary: false, truncated: false, empty: false })
+    }
+    return Promise.resolve({ ok: true, mode: args.mode, path: args.path, text: '', added: 0, removed: 0, binary: false, truncated: false, empty: true })
+  }
+  return sideSaved(method, args)
+}
+
+/* 上一节停在提交那一路的差异里：先退出来，再回变更页。 */
+toolByTitle(tree, '返回文件列表').props.onClick()
+await wait(10)
+tree = await settle()
+press(buttons(tree).find(function (b) { return textOf(b).indexOf('变更') >= 0 }), 'onClick')
+await wait(10)
+tree = await settle()
+changeRow(tree, 'side.js').props.onClick()
+await wait(10)
+tree = await settle()
+
+/* 第 i 个 del 配第 i 个 add：两删两加的块配成两行 —— 第一行左半是第 1 个删、
+   右半是第 1 个加，第二行是第 2 个对第 2 个，不许错位。 */
+const pairOne = byClass(tree, 'dsh-git-dline').find(function (r) { return textOf(r).indexOf('drop one') >= 0 })
+const pairTwo = byClass(tree, 'dsh-git-dline').find(function (r) { return textOf(r).indexOf('drop two') >= 0 })
+ok('两删两加配成两行：第 1 个删配第 1 个加（左 drop one / 右 keep one，沟 2/2）',
+  pairOne !== undefined && halfTextOf(halfOf(pairOne, 'old')) === 'drop one'
+  && halfTextOf(halfOf(pairOne, 'new')) === 'keep one'
+  && gutterOf(halfOf(pairOne, 'old')) === '2' && gutterOf(halfOf(pairOne, 'new')) === '2')
+ok('第 2 个删配第 2 个加（左 drop two / 右 keep two，沟 3/3 —— 不都配第 1 个加）',
+  pairTwo !== undefined && halfTextOf(halfOf(pairTwo, 'old')) === 'drop two'
+  && halfTextOf(halfOf(pairTwo, 'new')) === 'keep two'
+  && gutterOf(halfOf(pairTwo, 'old')) === '3' && gutterOf(halfOf(pairTwo, 'new')) === '3')
+
+/* 配对按「整块」的序来（夹在中间的行不断块）：2 删 3 加的块 —— 前两对配上，
+   第 3 个加多出来；2 删 1 加的块 —— 第 2 个删多出来。 */
+const pairThree = byClass(tree, 'dsh-git-dline').find(function (r) { return textOf(r).indexOf('only old two') >= 0 })
+ok('同块里第 2 个删配第 2 个加（only old two ↔ plus extra，沟 12/12）',
+  pairThree !== undefined && halfTextOf(halfOf(pairThree, 'old')) === 'only old two'
+  && halfTextOf(halfOf(pairThree, 'new')) === 'plus extra'
+  && gutterOf(halfOf(pairThree, 'old')) === '12' && gutterOf(halfOf(pairThree, 'new')) === '12')
+const loneAdd = byClass(tree, 'dsh-git-dl-add').find(function (r) { return textOf(r).indexOf('plus extra two') >= 0 })
+ok('多出的 add 右半有行号、记号、正文（13 / + / plus extra two），行类不带 del',
+  loneAdd !== undefined && gutterOf(halfOf(loneAdd, 'new')) === '13'
+  && signOf(halfOf(loneAdd, 'new')) === '+' && halfTextOf(halfOf(loneAdd, 'new')) === 'plus extra two'
+  && String(loneAdd.props.className).indexOf('dsh-git-dl-del') < 0)
+ok('多出的 add 左半留空：没有行号、没有记号、没有正文（dhalf-empty）',
+  loneAdd !== undefined && gutterOf(halfOf(loneAdd, 'old')) === '' && signOf(halfOf(loneAdd, 'old')) === ''
+  && halfTextOf(halfOf(loneAdd, 'old')) === ''
+  && String(halfOf(loneAdd, 'old').props.className).indexOf('dsh-git-dhalf-empty') >= 0)
+const loneDel = byClass(tree, 'dsh-git-dl-del').find(function (r) { return textOf(r).indexOf('solo old two') >= 0 })
+ok('多出的 del 左半有行号、记号、正文（22 / − / solo old two），行类不带 add',
+  loneDel !== undefined && gutterOf(halfOf(loneDel, 'old')) === '22'
+  && signOf(halfOf(loneDel, 'old')) === '-' && halfTextOf(halfOf(loneDel, 'old')) === 'solo old two'
+  && String(loneDel.props.className).indexOf('dsh-git-dl-add') < 0)
+ok('多出的 del 右半留空：没有行号、没有记号、没有正文（dhalf-empty）',
+  loneDel !== undefined && gutterOf(halfOf(loneDel, 'new')) === '' && signOf(halfOf(loneDel, 'new')) === ''
+  && halfTextOf(halfOf(loneDel, 'new')) === ''
+  && String(halfOf(loneDel, 'new').props.className).indexOf('dsh-git-dhalf-empty') >= 0)
+
+/* ctx：左右 1:1，行号各就各位，记号都是空格，半列底色跟着 ctx 走。 */
+const ctxRow = byClass(tree, 'dsh-git-dl-ctx').find(function (r) { return textOf(r).indexOf('ctx tail') >= 0 })
+ok('ctx 行左右 1:1：旧号 10 在左半、新号 10 在右半，记号都是空格，正文两边一样',
+  ctxRow !== undefined && gutterOf(halfOf(ctxRow, 'old')) === '10' && gutterOf(halfOf(ctxRow, 'new')) === '10'
+  && signOf(halfOf(ctxRow, 'old')) === ' ' && signOf(halfOf(ctxRow, 'new')) === ' '
+  && halfTextOf(halfOf(ctxRow, 'old')) === 'ctx tail' && halfTextOf(halfOf(ctxRow, 'new')) === 'ctx tail')
+ok('ctx 行两个半列的底色都是 dhalf-ctx',
+  ctxRow !== undefined && String(halfOf(ctxRow, 'old').props.className).indexOf('dsh-git-dhalf-ctx') >= 0
+  && String(halfOf(ctxRow, 'new').props.className).indexOf('dsh-git-dhalf-ctx') >= 0)
+
+/* hunk / meta：整行横跨两列 —— 一格 colSpan=2 的 dsh-git-dfull，行里没有半列。 */
+const hunkRow = byClass(tree, 'dsh-git-dl-hunk')[0]
+const hunkFull = hunkRow === undefined ? undefined : byClass(hunkRow, 'dsh-git-dfull')[0]
+ok('hunk 行整行显示：一格 colSpan=2 的 dsh-git-dfull，行里没有左右半列',
+  hunkRow !== undefined && hunkFull !== undefined && hunkFull.props.colSpan === 2
+  && byClass(hunkRow, 'dsh-git-dhalf').length === 0
+  && textOf(hunkFull).indexOf('@@ -1,2 +1,2 @@') === 0)
+const metaRow = byClass(tree, 'dsh-git-dl-meta')[0]
+const metaFull = metaRow === undefined ? undefined : byClass(metaRow, 'dsh-git-dfull')[0]
+ok('meta 行（diff --git 头）同样整行 colSpan=2',
+  metaRow !== undefined && metaFull !== undefined && metaFull.props.colSpan === 2
+  && textOf(metaFull).indexOf('diff --git a/side.js') === 0)
+
+console.log('')
+console.log('== 词级（行内）差异 ==')
+
+toolByTitle(tree, '返回文件列表').props.onClick()
+await wait(10)
+tree = await settle()
+changeRow(tree, 'words.txt').props.onClick()
+await wait(10)
+tree = await settle()
+
+/* −foo bar / +foo baz：公共的「foo ba」是裸文本，差异尾巴各包一个 dmiss。 */
+const wordPair = byClass(tree, 'dsh-git-dline').find(function (r) { return textOf(r).indexOf('foo bar') >= 0 })
+const wordOldText = wordPair === undefined ? undefined : byClass(halfOf(wordPair, 'old'), 'dsh-git-dtext')[0]
+const wordNewText = wordPair === undefined ? undefined : byClass(halfOf(wordPair, 'new'), 'dsh-git-dtext')[0]
+ok('配上对的行做词级高亮：−foo bar / +foo baz 一共只有两个 dmiss 片段（左右各一）',
+  wordPair !== undefined && byClass(wordPair, 'dsh-git-dmiss').length === 2
+  && byClass(halfOf(wordPair, 'old'), 'dsh-git-dmiss').length === 1
+  && byClass(halfOf(wordPair, 'new'), 'dsh-git-dmiss').length === 1)
+ok('公共部分不在 span 里：左半正文是裸文本「foo 」在前，dmiss 只包住 bar',
+  wordOldText !== undefined && Array.isArray(wordOldText.props.children)
+  && wordOldText.props.children[0] === 'foo '
+  && String(wordOldText.props.children[1].props.className).indexOf('dsh-git-dmiss') >= 0
+  && textOf(wordOldText.props.children[1]) === 'bar')
+ok('右半同样：裸文本「foo 」在前，dmiss 只包住 baz',
+  wordNewText !== undefined && Array.isArray(wordNewText.props.children)
+  && wordNewText.props.children[0] === 'foo '
+  && String(wordNewText.props.children[1].props.className).indexOf('dsh-git-dmiss') >= 0
+  && textOf(wordNewText.props.children[1]) === 'baz')
+
+/* 没配上对的行（halfRow）不做词级高亮。 */
+const pureAdd = byClass(tree, 'dsh-git-dl-add').find(function (r) { return textOf(r).indexOf('plain added whole') >= 0 })
+ok('没配上对的纯 add 行整行不高亮（一个 dmiss 都没有）',
+  pureAdd !== undefined && byClass(pureAdd, 'dsh-git-dmiss').length === 0
+  && halfTextOf(halfOf(pureAdd, 'new')) === 'plain added whole')
+
+/* 护栏：任一侧超长（>1000 字符）就放弃，整行原样 —— 两个 1200 字符的行一对，
+   一个 dmiss 都不该有，行也不能因此缺字。 */
+const longPair = byClass(tree, 'dsh-git-dline').find(function (r) { return textOf(r).indexOf(LONG_A) >= 0 })
+ok('超过 1000 字符的一对行放弃词级高亮（护栏生效），整行原样画出',
+  longPair !== undefined && byClass(longPair, 'dsh-git-dmiss').length === 0
+  && halfTextOf(halfOf(longPair, 'old')) === LONG_A && halfTextOf(halfOf(longPair, 'new')) === LONG_B)
+
+console.log('')
+console.log('== 回车符开关 ==')
+
+toolByTitle(tree, '返回文件列表').props.onClick()
+await wait(10)
+tree = await settle()
+const crStoreOf = function () {
+  const raw = store['dsh.git-idea.settings']
+  if (raw === undefined || raw === null) return null
+  try { return JSON.parse(raw) } catch (failure) { return null }
+}
+ok('默认不勾：存储里要么还没有这项、要么经过 normalizeSettings 落成 false',
+  crStoreOf() === null || crStoreOf().diffShowCr !== true)
+changeRow(tree, 'crfile.txt').props.onClick()
+await wait(10)
+tree = await settle()
+const crCallsBefore = diffCalls.length
+ok('CRLF 补丁默认关：行尾 \\r 剥掉 —— 一个 ⏎ 字形（dsh-git-dcr）都不画',
+  byClass(tree, 'dsh-git-dcr').length === 0)
+ok('关着的时候裸 \\r 也不进 DOM 文本', textOf(tree).indexOf('\r') < 0)
+
+/* 点头部的「回车符」开关（框与文案同一个 span）：只重画，不重发 git/diff。 */
+press(byClass(tree, 'dsh-git-diffcr')[0], 'onClick')
+await wait(10)
+tree = await settle()
+ok('勾上之后行尾画成 ⏎：ctx 行左右各一个 + 配对行有 \\r 的那半一个（共 3 个）',
+  byClass(tree, 'dsh-git-dcr').length === 3)
+ok('开了之后裸 \\r 照样不进 DOM 文本（字形是 ⏎，不是 \\r 字符）', textOf(tree).indexOf('\r') < 0)
+ok('内容相同、只有行尾 \\r 差别的那对：有 \\r 一侧的 ⏎ 同时带 dmiss（参与词级对比），且只有它带',
+  byClass(tree, 'dsh-git-dcr').filter(function (n) { return String(n.props.className).indexOf('dsh-git-dmiss') >= 0 }).length === 1)
+const crBoxNow = byClass(byClass(tree, 'dsh-git-diffcr')[0], 'dsh-git-cbox')[0]
+ok('开关自己的框亮了（dsh-git-cbox-on / ☑，与变更树同一套 class）',
+  crBoxNow !== undefined && String(crBoxNow.props.className).indexOf('dsh-git-cbox-on') >= 0
+  && textOf(crBoxNow) === '☑')
+ok('切换只重画不重发：git/diff 一次都没多问', diffCalls.length === crCallsBefore)
+ok('设置写进了存储层且经过 normalizeSettings：diffShowCr 为 true，其余默认值一并就位',
+  crStoreOf() !== null && crStoreOf().diffShowCr === true
+  && crStoreOf().watchEnabled === true && crStoreOf().watchFastSec === 3 && crStoreOf().watchSlowSec === 5)
+
+/* 再点一下回到默认：⏎ 消失，diffShowCr 存回 false，git/diff 还是一次没多问。 */
+press(byClass(tree, 'dsh-git-diffcr')[0], 'onClick')
+await wait(10)
+tree = await settle()
+ok('再点一下回到关：⏎ 消失、diffShowCr 存回 false、git/diff 一次没多问',
+  byClass(tree, 'dsh-git-dcr').length === 0 && textOf(tree).indexOf('\r') < 0
+  && crStoreOf() !== null && crStoreOf().diffShowCr === false
+  && diffCalls.length === crCallsBefore)
+
+host.call = sideSaved
 tree = await settle()
 
 /* ═══ 18. 提交信息草稿：按仓库存进 Host，提交成功不再清空 ═══
