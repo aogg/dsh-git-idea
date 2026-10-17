@@ -82,15 +82,18 @@
     /* ── 窄屏判定：量容器自己，不量视口 ──
 
        面板是浮在页面上的可拖拽弹层，「手机窄屏」对它来说不是视口有多宽，而是
-       .dsh-git-changes 这块地有多宽 —— 视口很宽、面板被拖到 500px 时提交栏照样
-       占掉大半；matchMedia 只认视口，量不到「面板被拖窄」这回事。所以判定用
-       容器的 clientWidth：挂载后量（useLayoutEffect 在排版后、绘制前跑，不会先
-       闪一帧宽屏），window resize 时复量 —— 面板跟着窗口变的最后一环仍落在这个
-       容器上，一条监听就够。
+       折叠要管的那块地有多宽 —— 视口很宽、面板被拖到 500px 时提交栏（304px）和
+       详情栏（280px）照样占掉大半；matchMedia 只认视口，量不到「面板被拖窄」
+       这回事。所以判定用容器的 clientWidth：挂载后量（useLayoutEffect 在排版后、
+       绘制前跑，不会先闪一帧宽屏），window resize 时复量 —— 面板跟着窗口变的最
+       后一环仍落在这个容器上，一条监听就够。
 
-       阈值 560px：提交栏固定 304px，树那侧还得装下「勾选框 14 + 状态字母 12 +
-       缩进 + 一截名字」，剩不到 250px 时名字只剩省略号。560 = 304 + 256，正是
-       「提交栏占掉大半宽度、树还读得动」的那条线。
+       阈值 560px，两个折叠位共用一条线：
+         变更页：提交栏固定 304px，树那侧还得装下「勾选框 14 + 状态字母 12 +
+           缩进 + 一截名字」，560 = 304 + 256，再窄名字就只剩省略号；
+         历史页：详情栏 280px，主列表至少还要留一列读得动的（80-panel.js 量
+           .dsh-git-body 用的也是这里），560 = 280 + 280。
+       两个推导落在同一个数上，一张表一个常量就够。
 
        量不到（clientWidth<=0：测试替身没有布局、真实页面还没排版的一瞬）一律按
        宽屏 —— 和 12-window.js 量不到高度就把窗口当「全部」是同一条底线：判定
@@ -98,36 +101,37 @@
        焊死了：判定瞎了，页面也和从前一字不差（测试按 dsh-git-commitpane 里的
        textarea 找输入框，替身环境正好落在这条宽屏分支上）。 */
     const CHANGES_NARROW_PX = 560
-    let changesPaneNode = null
-    const attachChangesPaneNode = function (node) { changesPaneNode = node }
-    const measureChangesNarrow = function (setNarrow) {
-      const node = changesPaneNode
+    /* 按 id 的测量槽表（12-window.js 的 scrollNodes 同款）：.dsh-git-changes 与
+       .dsh-git-body 各挂一个 id，测量逻辑共用下面这一份。React 卸载时 ref 回调
+       收到 null，槽位清掉、再量回宽屏 —— 和「量不到按宽屏」是同一条路。 */
+    const narrowNodes = {}
+    const measureNarrow = function (id, setNarrow) {
+      const node = narrowNodes[id]
       /* clientWidth 本该是整数，parseInt 把「万一不是数」挡在比较门外（数值对比
          两边都过一次转换的规矩）；量不到按 0，0 走宽屏。 */
       const width = node != null && typeof node.clientWidth === 'number' ? parseInt(node.clientWidth, 10) : 0
       setNarrow(function () { return width > 0 && width < CHANGES_NARROW_PX })
     }
-    /* ChangesPane 全面板只有一处挂载（80-panel.js），模块层一个槽位就够，不用
-       12-window.js 那张按 id 的表 —— 没有第二张嘴要量。 */
-    function useNarrowChanges() {
+    /* 每个要判窄的容器一个 hook：attach 给 JSX 的 ref（useCallback 钉住身份，
+       ref 回调不因重渲染被拆了再装 —— 12-window.js 同一条讲究），narrow 是量出
+       来的事实。量本身无依赖、每次渲染后复一遍 —— 幂等，宽度没变时 setter 原值
+       退回、不会循环；面板拖拽、展开/收起引起的重排都靠这一眼兜住。resize 监听
+       只活到组件卸载：setNarrow 与 attach 身份稳定，依赖给 [] 挂一次就好，之后
+       每次变化由上面那眼复量接手。测试替身没有 window，typeof 挡一下。 */
+    function useNarrowWidth(id) {
       const [narrow, setNarrow] = React.useState(false)
-      /* 无依赖、每次渲染后复量：量是幂等的，宽度没变时 setter 原值退回、不会
-         循环；面板拖拽、展开/收起引起的重排都靠这一眼兜住（12-window.js 的
-         虚拟窗口同一个做法）。 */
+      const attach = useCallback(function (node) { narrowNodes[id] = node }, [id])
       useLayoutEffect(function () {
-        measureChangesNarrow(setNarrow)
+        measureNarrow(id, setNarrow)
         return undefined
       })
-      /* resize 监听只需要存在到组件卸载：setNarrow 是稳定身份，依赖给 [] 让它
-         挂一次就好，之后每次变化都由上面那眼复量接手。测试替身没有 window，
-         typeof 挡一下。 */
       React.useEffect(function () {
         if (typeof window === 'undefined' || window === null || typeof window.addEventListener !== 'function') return undefined
-        const onResize = function () { measureChangesNarrow(setNarrow) }
+        const onResize = function () { measureNarrow(id, setNarrow) }
         window.addEventListener('resize', onResize)
         return function () { window.removeEventListener('resize', onResize) }
       }, [])
-      return narrow
+      return { narrow: narrow, attach: attach }
     }
 
     function ChangesPane(props) {
@@ -139,14 +143,16 @@
          布尔：勾选数一变或换了仓库，armed 自动失效 —— 第二次点确认的永远是读者正看着
          的那一组，而不是点击之间被换掉的一组。同样必须在早退之前读（hook 的规矩）。 */
       const [revertArm, setRevertArm] = React.useState('')
-      /* ── 窄屏折叠：事实与意愿，两个状态 ──
-         narrow 是量出来的「事实」（useNarrowChanges：容器窄不窄）；commitOpen 是
-         读者的「意愿」—— null＝没动过手，折叠与否跟事实走（窄=折叠、宽=展开，
-         宽屏因此完全等于现状）；点过展开/收起之后意愿留下，之后 resize 只更新
-         事实，不再替读者做主（「不强行改用户的展开态」）。会话内记忆，不进
-         prefs：面板宽窄随手势变，记住一个旧判定反而是错。两个 hook 都在早退
-         之前 —— hook 不能被分支跳过的规矩。 */
-      const narrow = useNarrowChanges()
+      /* ── 折叠：事实与意愿，两个状态 ──
+         narrow 是量出来的「事实」（useNarrowWidth('changes')：这块地窄不窄）；
+         commitOpen 是读者的「意愿」—— null＝没动过手，折叠与否跟事实走（窄=折叠、
+         宽=展开，量不到=宽屏即现状）；点过展开/收起之后意愿留下，之后 resize 只
+         更新事实，不再替读者做主（「不强行改用户的展开态」）。会话内记忆，不进
+         prefs：面板宽窄随手势变，记住一个旧判定反而是错。历史页详情栏那份同款
+         在 80-panel.js（detailOpen），两只开关互不干扰。两个 hook 都在早退之前
+         —— hook 不能被分支跳过的规矩。 */
+      const narrowSlot = useNarrowWidth('changes')
+      const narrow = narrowSlot.narrow
       const [commitOpen, setCommitOpen] = React.useState(null)
       const view = settings.changesView === 'flat' ? 'flat' : 'tree'
       const work = props.work
@@ -666,15 +672,17 @@
          变更树的显示方式 —— 把几个仓库的索引搅进同一次提交，等于把读者没看到的改动
          一起提交了。勾选框则各落各的仓库（见 makeScope 的 onSetStaged）。
 
-         ── 窄屏的两种形态 ──
-         stacked：整页切纵列（树在上、提交在下），dsh-git-changes-narrow 只在这一态
-         挂 —— 宽屏的 DOM 一个字都不动，这是不变量。折叠与否：没动过手
-         （commitOpen===null）时跟 narrow 走，动过手以后听读者的。 */
+         ── 折叠的两种形态（第二轮起不再分宽窄）──
+         stacked：整页切纵列（树在上、提交在下），dsh-git-changes-narrow 只在这一态挂。
+         折叠与否：没动过手（commitOpen===null）时跟 narrow 走，动过手以后听读者的
+         —— 宽窄只决定「默认哪边」，不决定读者改过的意愿。折叠后的展开条无论宽窄
+         都会出现：窄屏是树底下一横条，宽屏是右缘一竖条（46-css.js 的 :not 变体）。 */
       const stacked = narrow === true
       const commitCollapsed = commitOpen === null ? narrow : commitOpen === false
-      /* 折叠态的那一条：一行窄条，点一下把提交栏还回来。已暂存计数只在有活时
-         出现（「已暂存 0」是噪音）；写了草稿就亮一枚 ● —— 栏收起来了，「这里
-         有没写完的话」这件事不能跟着收走。 */
+      /* 折叠态的那一条：点一下把提交栏还回来。已暂存计数只在有活时出现（「已暂存
+         0」是噪音）；写了草稿就亮一枚 ● —— 栏收起来了，「这里有没写完的话」这件事
+         不能跟着收走。元素两种宽窄共用一份（类名、子节点一样），横竖两个长相由
+         CSS 的容器选择器分管。 */
       const commitBar = h('div', {
         key: 'commitbar',
         className: 'dsh-git-commitbar',
@@ -689,18 +697,17 @@
         stagedCount > 0
           ? h('span', { key: 'c', className: 'dsh-git-commitbar-count' }, '已暂存 ' + String(stagedCount) + ' 项')
           : null)
-      /* 提交栏本体：窄屏展开时栏头换成可点的「▾ 提交信息」（和折叠条是同一只开关
-         的两副面孔，▾ 指点我收起），宽屏保持那颗纯标题。两个分支只有栏头不同：
-         警告条、输入框、已暂存计数与按钮完全共用 —— 测试按这里面的 textarea 找
-         输入框，宽屏分支必须与从前逐字节一致。 */
+      /* 提交栏本体：栏头是可点的「▾ 提交信息」收起键，无论宽窄（第二轮起常驻 ——
+         宽屏此前没有任何收起入口）。▾ = 点我收起；收起后从「提交信息」展开条再
+         展开，和折叠条是同一只开关（commitOpen）的两副面孔。警告条、输入框、已
+         暂存计数与按钮所有宽度完全共用 —— 测试按这里面的 textarea 找输入框，
+         替身环境的宽屏分支不能有第二套结构。 */
       const side = h('div', { className: 'dsh-git-commitpane' },
-        stacked === true
-          ? h('div', {
-            className: 'dsh-git-group-title dsh-git-commitpane-fold',
-            title: '收起提交栏（收起后从下面那条再展开）',
-            onClick: function () { setCommitOpen(false) },
-          }, '▾ 提交信息')
-          : h('div', { className: 'dsh-git-group-title' }, '提交信息'),
+        h('div', {
+          className: 'dsh-git-group-title dsh-git-commitpane-fold',
+          title: '收起提交栏（收起后从「提交信息」展开条再展开）',
+          onClick: function () { setCommitOpen(false) },
+        }, '▾ 提交信息'),
         /* 先说出来，而不是等读者写完提交信息再被 git 拒一次。两条路都留着：面板
            「配置」页里能填的那个地方，和在终端里跑的两条命令（面板不一定开着）。 */
         props.work.needsIdentity === true
@@ -737,12 +744,11 @@
         }, stagedCount > 0 ? '取消全部暂存' : '全部暂存') : null)
 
       /* 左侧那列仓库侧栏与分支树那份是同一个控件（RepoSwitcher），选择态各自独立 ——
-         理由见 24-repos.js。 */
-      /* ref 挂在容器上（useNarrowChanges 量的就是它）；宽屏时 className 与子节点
-         都和从前一字不差 —— ref 不是 DOM 属性，不出现在渲染结果里。 */
+         理由见 24-repos.js。ref 挂在容器上（useNarrowWidth('changes') 量的就是它）；
+         ref 不是 DOM 属性，不出现在渲染结果里 —— 窄屏类只挂在量出窄的那一态。 */
       return h('div', {
         className: 'dsh-git-changes' + (stacked === true ? ' dsh-git-changes-narrow' : ''),
-        ref: attachChangesPaneNode,
+        ref: narrowSlot.attach,
       },
         props.repoProps == null ? null : h('div', { key: 'repos', className: 'dsh-git-reposide' },
           h(RepoSwitcher, props.repoProps)),

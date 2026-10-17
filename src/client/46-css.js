@@ -131,7 +131,7 @@
     下一次点击不可撤销）。 */
 .dsh-git-ctool-danger{color:var(--dsw-alias-state-error-primary);border-color:var(--dsw-alias-state-error-primary)}
 .dsh-git-commitpane{width:304px;flex:none;border-left:1px solid var(--dsw-alias-border-l1);padding:8px;display:flex;flex-direction:column;gap:8px}
-/* ── 窄屏的提交栏折叠（54-changes.js useNarrowChanges 判定，阈值 560px）──
+/* ── 窄屏的提交栏折叠（54-changes.js useNarrowWidth 判定，阈值 560px）──
     手机窄屏上 304px 的提交栏占掉大半宽度，默认整个收成一条，点了才全宽展开。
     这组选择器全部带 .dsh-git-changes-narrow 前缀、只挂在窄屏：宽屏一条都不命中，
     DOM 与样式和从前一字不差 —— 本功能的不变量（测试按 dsh-git-commitpane 里的
@@ -159,6 +159,34 @@
     group-title 的，读起来还是那个标题，只是可点 —— cursor 与悬停变亮说明这件事。 */
 .dsh-git-commitpane-fold{cursor:pointer}
 .dsh-git-commitpane-fold:hover{color:var(--dsw-alias-label-primary)}
+/* ── 宽屏的提交栏折叠（第二轮：收起键常驻，不再只窄屏有）──
+    宽屏的 .dsh-git-changes 是横排，折叠态的展开条不在树底下，而是右缘一条竖条：
+    28px 宽、左缘分隔线，vertical-rl 让「提交信息 ▸」顺着条竖着读，● 与计数跟着
+    竖排（base 的 margin-left:auto 是横排把计数推到远端的推法，竖条里归零）；base
+    那条 border-top 是窄屏纵列的上缘分隔线，宽屏变体里归零。选择器带
+    :not(.dsh-git-changes-narrow)，窄屏一条都不命中 —— 窄屏行为与上一版完全一致。 */
+.dsh-git-changes:not(.dsh-git-changes-narrow) .dsh-git-commitbar{width:28px;height:auto;align-self:stretch;padding:8px 0;border-top:0;border-left:1px solid var(--dsw-alias-border-l1);writing-mode:vertical-rl;justify-content:center}
+.dsh-git-changes:not(.dsh-git-changes-narrow) .dsh-git-commitbar-count{margin-left:0}
+/* ── 历史页右栏的窄屏折叠（80-panel.js 量 .dsh-git-body，阈值同 560px）──
+    dsh-git-detailbar：折叠态右缘那条竖向展开条，与宽屏的 commitbar 同一副骨架
+    （28px、左缘线、竖排文字）；dsh-git-detailwrap / dsh-git-detailfold：窄屏展开
+    态的纵排容器与顶上那条收起键 —— 同一只开关（detailOpen）的两副面孔。这些类
+    只在窄屏由 JS 挂上，宽屏 DOM 里根本不出现；CommitDetail 与 .dsh-git-detail
+    原样，detail 自己的 border-left 和 280px 都在。 */
+.dsh-git-detailbar{width:28px;flex:none;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:6px;padding:8px 0;border-left:1px solid var(--dsw-alias-border-l1);cursor:pointer;white-space:nowrap;-webkit-user-select:none;user-select:none;font-size:12px;color:var(--dsw-alias-label-primary);writing-mode:vertical-rl}
+.dsh-git-detailbar:hover{background:var(--dsw-alias-bg-layer-2)}
+.dsh-git-detailbar-label{font-weight:600}
+.dsh-git-detailbar-glyph{flex:none;color:var(--dsw-alias-label-secondary);font-size:10px}
+.dsh-git-detailbar-count{flex:none;color:var(--dsw-alias-label-secondary);font-size:11px}
+.dsh-git-detailwrap{flex:none;display:flex;flex-direction:column;min-height:0}
+/* 详情栏在本就有的 overflow:auto 之外补上「肯缩」的两眼：flex:1 占满包裹层的余高、
+    min-height:0 允许被顶上的收起键压矮 —— 没有它们内容比栏高时整块往下溢。 */
+.dsh-git-detailwrap .dsh-git-detail{flex:1;min-height:0}
+/* 收起键（▾ = 点我收起）：28px 高对齐头部 chip，横排 —— 它站在详情栏顶上。 */
+.dsh-git-detailfold{flex:none;display:flex;align-items:center;gap:6px;height:28px;padding:0 8px;border-bottom:1px solid var(--dsw-alias-border-l1);cursor:pointer;white-space:nowrap;-webkit-user-select:none;user-select:none;font-size:12px;color:var(--dsw-alias-label-primary)}
+.dsh-git-detailfold:hover{background:var(--dsw-alias-bg-layer-2)}
+.dsh-git-detailfold-label{font-weight:600}
+.dsh-git-detailfold-glyph{flex:none;color:var(--dsw-alias-label-secondary);font-size:10px}
 .dsh-git-crow{display:flex;align-items:center;gap:8px;height:26px;box-sizing:border-box;padding:0 8px;cursor:pointer;white-space:nowrap;-webkit-user-select:none;user-select:none}
 .dsh-git-crow:hover{background:var(--dsw-alias-bg-layer-2)}
 .dsh-git-crow-sel{background:var(--dsw-alias-interactive-bg-hover)}

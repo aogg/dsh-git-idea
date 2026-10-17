@@ -2307,7 +2307,7 @@ return {
     下一次点击不可撤销）。 */
 .dsh-git-ctool-danger{color:var(--dsw-alias-state-error-primary);border-color:var(--dsw-alias-state-error-primary)}
 .dsh-git-commitpane{width:304px;flex:none;border-left:1px solid var(--dsw-alias-border-l1);padding:8px;display:flex;flex-direction:column;gap:8px}
-/* ── 窄屏的提交栏折叠（54-changes.js useNarrowChanges 判定，阈值 560px）──
+/* ── 窄屏的提交栏折叠（54-changes.js useNarrowWidth 判定，阈值 560px）──
     手机窄屏上 304px 的提交栏占掉大半宽度，默认整个收成一条，点了才全宽展开。
     这组选择器全部带 .dsh-git-changes-narrow 前缀、只挂在窄屏：宽屏一条都不命中，
     DOM 与样式和从前一字不差 —— 本功能的不变量（测试按 dsh-git-commitpane 里的
@@ -2335,6 +2335,34 @@ return {
     group-title 的，读起来还是那个标题，只是可点 —— cursor 与悬停变亮说明这件事。 */
 .dsh-git-commitpane-fold{cursor:pointer}
 .dsh-git-commitpane-fold:hover{color:var(--dsw-alias-label-primary)}
+/* ── 宽屏的提交栏折叠（第二轮：收起键常驻，不再只窄屏有）──
+    宽屏的 .dsh-git-changes 是横排，折叠态的展开条不在树底下，而是右缘一条竖条：
+    28px 宽、左缘分隔线，vertical-rl 让「提交信息 ▸」顺着条竖着读，● 与计数跟着
+    竖排（base 的 margin-left:auto 是横排把计数推到远端的推法，竖条里归零）；base
+    那条 border-top 是窄屏纵列的上缘分隔线，宽屏变体里归零。选择器带
+    :not(.dsh-git-changes-narrow)，窄屏一条都不命中 —— 窄屏行为与上一版完全一致。 */
+.dsh-git-changes:not(.dsh-git-changes-narrow) .dsh-git-commitbar{width:28px;height:auto;align-self:stretch;padding:8px 0;border-top:0;border-left:1px solid var(--dsw-alias-border-l1);writing-mode:vertical-rl;justify-content:center}
+.dsh-git-changes:not(.dsh-git-changes-narrow) .dsh-git-commitbar-count{margin-left:0}
+/* ── 历史页右栏的窄屏折叠（80-panel.js 量 .dsh-git-body，阈值同 560px）──
+    dsh-git-detailbar：折叠态右缘那条竖向展开条，与宽屏的 commitbar 同一副骨架
+    （28px、左缘线、竖排文字）；dsh-git-detailwrap / dsh-git-detailfold：窄屏展开
+    态的纵排容器与顶上那条收起键 —— 同一只开关（detailOpen）的两副面孔。这些类
+    只在窄屏由 JS 挂上，宽屏 DOM 里根本不出现；CommitDetail 与 .dsh-git-detail
+    原样，detail 自己的 border-left 和 280px 都在。 */
+.dsh-git-detailbar{width:28px;flex:none;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:6px;padding:8px 0;border-left:1px solid var(--dsw-alias-border-l1);cursor:pointer;white-space:nowrap;-webkit-user-select:none;user-select:none;font-size:12px;color:var(--dsw-alias-label-primary);writing-mode:vertical-rl}
+.dsh-git-detailbar:hover{background:var(--dsw-alias-bg-layer-2)}
+.dsh-git-detailbar-label{font-weight:600}
+.dsh-git-detailbar-glyph{flex:none;color:var(--dsw-alias-label-secondary);font-size:10px}
+.dsh-git-detailbar-count{flex:none;color:var(--dsw-alias-label-secondary);font-size:11px}
+.dsh-git-detailwrap{flex:none;display:flex;flex-direction:column;min-height:0}
+/* 详情栏在本就有的 overflow:auto 之外补上「肯缩」的两眼：flex:1 占满包裹层的余高、
+    min-height:0 允许被顶上的收起键压矮 —— 没有它们内容比栏高时整块往下溢。 */
+.dsh-git-detailwrap .dsh-git-detail{flex:1;min-height:0}
+/* 收起键（▾ = 点我收起）：28px 高对齐头部 chip，横排 —— 它站在详情栏顶上。 */
+.dsh-git-detailfold{flex:none;display:flex;align-items:center;gap:6px;height:28px;padding:0 8px;border-bottom:1px solid var(--dsw-alias-border-l1);cursor:pointer;white-space:nowrap;-webkit-user-select:none;user-select:none;font-size:12px;color:var(--dsw-alias-label-primary)}
+.dsh-git-detailfold:hover{background:var(--dsw-alias-bg-layer-2)}
+.dsh-git-detailfold-label{font-weight:600}
+.dsh-git-detailfold-glyph{flex:none;color:var(--dsw-alias-label-secondary);font-size:10px}
 .dsh-git-crow{display:flex;align-items:center;gap:8px;height:26px;box-sizing:border-box;padding:0 8px;cursor:pointer;white-space:nowrap;-webkit-user-select:none;user-select:none}
 .dsh-git-crow:hover{background:var(--dsw-alias-bg-layer-2)}
 .dsh-git-crow-sel{background:var(--dsw-alias-interactive-bg-hover)}
@@ -4075,15 +4103,18 @@ textarea.dsh-git-input{resize:vertical}
     /* ── 窄屏判定：量容器自己，不量视口 ──
 
        面板是浮在页面上的可拖拽弹层，「手机窄屏」对它来说不是视口有多宽，而是
-       .dsh-git-changes 这块地有多宽 —— 视口很宽、面板被拖到 500px 时提交栏照样
-       占掉大半；matchMedia 只认视口，量不到「面板被拖窄」这回事。所以判定用
-       容器的 clientWidth：挂载后量（useLayoutEffect 在排版后、绘制前跑，不会先
-       闪一帧宽屏），window resize 时复量 —— 面板跟着窗口变的最后一环仍落在这个
-       容器上，一条监听就够。
+       折叠要管的那块地有多宽 —— 视口很宽、面板被拖到 500px 时提交栏（304px）和
+       详情栏（280px）照样占掉大半；matchMedia 只认视口，量不到「面板被拖窄」
+       这回事。所以判定用容器的 clientWidth：挂载后量（useLayoutEffect 在排版后、
+       绘制前跑，不会先闪一帧宽屏），window resize 时复量 —— 面板跟着窗口变的最
+       后一环仍落在这个容器上，一条监听就够。
 
-       阈值 560px：提交栏固定 304px，树那侧还得装下「勾选框 14 + 状态字母 12 +
-       缩进 + 一截名字」，剩不到 250px 时名字只剩省略号。560 = 304 + 256，正是
-       「提交栏占掉大半宽度、树还读得动」的那条线。
+       阈值 560px，两个折叠位共用一条线：
+         变更页：提交栏固定 304px，树那侧还得装下「勾选框 14 + 状态字母 12 +
+           缩进 + 一截名字」，560 = 304 + 256，再窄名字就只剩省略号；
+         历史页：详情栏 280px，主列表至少还要留一列读得动的（80-panel.js 量
+           .dsh-git-body 用的也是这里），560 = 280 + 280。
+       两个推导落在同一个数上，一张表一个常量就够。
 
        量不到（clientWidth<=0：测试替身没有布局、真实页面还没排版的一瞬）一律按
        宽屏 —— 和 12-window.js 量不到高度就把窗口当「全部」是同一条底线：判定
@@ -4091,36 +4122,37 @@ textarea.dsh-git-input{resize:vertical}
        焊死了：判定瞎了，页面也和从前一字不差（测试按 dsh-git-commitpane 里的
        textarea 找输入框，替身环境正好落在这条宽屏分支上）。 */
     const CHANGES_NARROW_PX = 560
-    let changesPaneNode = null
-    const attachChangesPaneNode = function (node) { changesPaneNode = node }
-    const measureChangesNarrow = function (setNarrow) {
-      const node = changesPaneNode
+    /* 按 id 的测量槽表（12-window.js 的 scrollNodes 同款）：.dsh-git-changes 与
+       .dsh-git-body 各挂一个 id，测量逻辑共用下面这一份。React 卸载时 ref 回调
+       收到 null，槽位清掉、再量回宽屏 —— 和「量不到按宽屏」是同一条路。 */
+    const narrowNodes = {}
+    const measureNarrow = function (id, setNarrow) {
+      const node = narrowNodes[id]
       /* clientWidth 本该是整数，parseInt 把「万一不是数」挡在比较门外（数值对比
          两边都过一次转换的规矩）；量不到按 0，0 走宽屏。 */
       const width = node != null && typeof node.clientWidth === 'number' ? parseInt(node.clientWidth, 10) : 0
       setNarrow(function () { return width > 0 && width < CHANGES_NARROW_PX })
     }
-    /* ChangesPane 全面板只有一处挂载（80-panel.js），模块层一个槽位就够，不用
-       12-window.js 那张按 id 的表 —— 没有第二张嘴要量。 */
-    function useNarrowChanges() {
+    /* 每个要判窄的容器一个 hook：attach 给 JSX 的 ref（useCallback 钉住身份，
+       ref 回调不因重渲染被拆了再装 —— 12-window.js 同一条讲究），narrow 是量出
+       来的事实。量本身无依赖、每次渲染后复一遍 —— 幂等，宽度没变时 setter 原值
+       退回、不会循环；面板拖拽、展开/收起引起的重排都靠这一眼兜住。resize 监听
+       只活到组件卸载：setNarrow 与 attach 身份稳定，依赖给 [] 挂一次就好，之后
+       每次变化由上面那眼复量接手。测试替身没有 window，typeof 挡一下。 */
+    function useNarrowWidth(id) {
       const [narrow, setNarrow] = React.useState(false)
-      /* 无依赖、每次渲染后复量：量是幂等的，宽度没变时 setter 原值退回、不会
-         循环；面板拖拽、展开/收起引起的重排都靠这一眼兜住（12-window.js 的
-         虚拟窗口同一个做法）。 */
+      const attach = useCallback(function (node) { narrowNodes[id] = node }, [id])
       useLayoutEffect(function () {
-        measureChangesNarrow(setNarrow)
+        measureNarrow(id, setNarrow)
         return undefined
       })
-      /* resize 监听只需要存在到组件卸载：setNarrow 是稳定身份，依赖给 [] 让它
-         挂一次就好，之后每次变化都由上面那眼复量接手。测试替身没有 window，
-         typeof 挡一下。 */
       React.useEffect(function () {
         if (typeof window === 'undefined' || window === null || typeof window.addEventListener !== 'function') return undefined
-        const onResize = function () { measureChangesNarrow(setNarrow) }
+        const onResize = function () { measureNarrow(id, setNarrow) }
         window.addEventListener('resize', onResize)
         return function () { window.removeEventListener('resize', onResize) }
       }, [])
-      return narrow
+      return { narrow: narrow, attach: attach }
     }
 
     function ChangesPane(props) {
@@ -4132,14 +4164,16 @@ textarea.dsh-git-input{resize:vertical}
          布尔：勾选数一变或换了仓库，armed 自动失效 —— 第二次点确认的永远是读者正看着
          的那一组，而不是点击之间被换掉的一组。同样必须在早退之前读（hook 的规矩）。 */
       const [revertArm, setRevertArm] = React.useState('')
-      /* ── 窄屏折叠：事实与意愿，两个状态 ──
-         narrow 是量出来的「事实」（useNarrowChanges：容器窄不窄）；commitOpen 是
-         读者的「意愿」—— null＝没动过手，折叠与否跟事实走（窄=折叠、宽=展开，
-         宽屏因此完全等于现状）；点过展开/收起之后意愿留下，之后 resize 只更新
-         事实，不再替读者做主（「不强行改用户的展开态」）。会话内记忆，不进
-         prefs：面板宽窄随手势变，记住一个旧判定反而是错。两个 hook 都在早退
-         之前 —— hook 不能被分支跳过的规矩。 */
-      const narrow = useNarrowChanges()
+      /* ── 折叠：事实与意愿，两个状态 ──
+         narrow 是量出来的「事实」（useNarrowWidth('changes')：这块地窄不窄）；
+         commitOpen 是读者的「意愿」—— null＝没动过手，折叠与否跟事实走（窄=折叠、
+         宽=展开，量不到=宽屏即现状）；点过展开/收起之后意愿留下，之后 resize 只
+         更新事实，不再替读者做主（「不强行改用户的展开态」）。会话内记忆，不进
+         prefs：面板宽窄随手势变，记住一个旧判定反而是错。历史页详情栏那份同款
+         在 80-panel.js（detailOpen），两只开关互不干扰。两个 hook 都在早退之前
+         —— hook 不能被分支跳过的规矩。 */
+      const narrowSlot = useNarrowWidth('changes')
+      const narrow = narrowSlot.narrow
       const [commitOpen, setCommitOpen] = React.useState(null)
       const view = settings.changesView === 'flat' ? 'flat' : 'tree'
       const work = props.work
@@ -4659,15 +4693,17 @@ textarea.dsh-git-input{resize:vertical}
          变更树的显示方式 —— 把几个仓库的索引搅进同一次提交，等于把读者没看到的改动
          一起提交了。勾选框则各落各的仓库（见 makeScope 的 onSetStaged）。
 
-         ── 窄屏的两种形态 ──
-         stacked：整页切纵列（树在上、提交在下），dsh-git-changes-narrow 只在这一态
-         挂 —— 宽屏的 DOM 一个字都不动，这是不变量。折叠与否：没动过手
-         （commitOpen===null）时跟 narrow 走，动过手以后听读者的。 */
+         ── 折叠的两种形态（第二轮起不再分宽窄）──
+         stacked：整页切纵列（树在上、提交在下），dsh-git-changes-narrow 只在这一态挂。
+         折叠与否：没动过手（commitOpen===null）时跟 narrow 走，动过手以后听读者的
+         —— 宽窄只决定「默认哪边」，不决定读者改过的意愿。折叠后的展开条无论宽窄
+         都会出现：窄屏是树底下一横条，宽屏是右缘一竖条（46-css.js 的 :not 变体）。 */
       const stacked = narrow === true
       const commitCollapsed = commitOpen === null ? narrow : commitOpen === false
-      /* 折叠态的那一条：一行窄条，点一下把提交栏还回来。已暂存计数只在有活时
-         出现（「已暂存 0」是噪音）；写了草稿就亮一枚 ● —— 栏收起来了，「这里
-         有没写完的话」这件事不能跟着收走。 */
+      /* 折叠态的那一条：点一下把提交栏还回来。已暂存计数只在有活时出现（「已暂存
+         0」是噪音）；写了草稿就亮一枚 ● —— 栏收起来了，「这里有没写完的话」这件事
+         不能跟着收走。元素两种宽窄共用一份（类名、子节点一样），横竖两个长相由
+         CSS 的容器选择器分管。 */
       const commitBar = h('div', {
         key: 'commitbar',
         className: 'dsh-git-commitbar',
@@ -4682,18 +4718,17 @@ textarea.dsh-git-input{resize:vertical}
         stagedCount > 0
           ? h('span', { key: 'c', className: 'dsh-git-commitbar-count' }, '已暂存 ' + String(stagedCount) + ' 项')
           : null)
-      /* 提交栏本体：窄屏展开时栏头换成可点的「▾ 提交信息」（和折叠条是同一只开关
-         的两副面孔，▾ 指点我收起），宽屏保持那颗纯标题。两个分支只有栏头不同：
-         警告条、输入框、已暂存计数与按钮完全共用 —— 测试按这里面的 textarea 找
-         输入框，宽屏分支必须与从前逐字节一致。 */
+      /* 提交栏本体：栏头是可点的「▾ 提交信息」收起键，无论宽窄（第二轮起常驻 ——
+         宽屏此前没有任何收起入口）。▾ = 点我收起；收起后从「提交信息」展开条再
+         展开，和折叠条是同一只开关（commitOpen）的两副面孔。警告条、输入框、已
+         暂存计数与按钮所有宽度完全共用 —— 测试按这里面的 textarea 找输入框，
+         替身环境的宽屏分支不能有第二套结构。 */
       const side = h('div', { className: 'dsh-git-commitpane' },
-        stacked === true
-          ? h('div', {
-            className: 'dsh-git-group-title dsh-git-commitpane-fold',
-            title: '收起提交栏（收起后从下面那条再展开）',
-            onClick: function () { setCommitOpen(false) },
-          }, '▾ 提交信息')
-          : h('div', { className: 'dsh-git-group-title' }, '提交信息'),
+        h('div', {
+          className: 'dsh-git-group-title dsh-git-commitpane-fold',
+          title: '收起提交栏（收起后从「提交信息」展开条再展开）',
+          onClick: function () { setCommitOpen(false) },
+        }, '▾ 提交信息'),
         /* 先说出来，而不是等读者写完提交信息再被 git 拒一次。两条路都留着：面板
            「配置」页里能填的那个地方，和在终端里跑的两条命令（面板不一定开着）。 */
         props.work.needsIdentity === true
@@ -4730,12 +4765,11 @@ textarea.dsh-git-input{resize:vertical}
         }, stagedCount > 0 ? '取消全部暂存' : '全部暂存') : null)
 
       /* 左侧那列仓库侧栏与分支树那份是同一个控件（RepoSwitcher），选择态各自独立 ——
-         理由见 24-repos.js。 */
-      /* ref 挂在容器上（useNarrowChanges 量的就是它）；宽屏时 className 与子节点
-         都和从前一字不差 —— ref 不是 DOM 属性，不出现在渲染结果里。 */
+         理由见 24-repos.js。ref 挂在容器上（useNarrowWidth('changes') 量的就是它）；
+         ref 不是 DOM 属性，不出现在渲染结果里 —— 窄屏类只挂在量出窄的那一态。 */
       return h('div', {
         className: 'dsh-git-changes' + (stacked === true ? ' dsh-git-changes-narrow' : ''),
-        ref: attachChangesPaneNode,
+        ref: narrowSlot.attach,
       },
         props.repoProps == null ? null : h('div', { key: 'repos', className: 'dsh-git-reposide' },
           h(RepoSwitcher, props.repoProps)),
@@ -8986,6 +9020,14 @@ textarea.dsh-git-input{resize:vertical}
       const [authors, setAuthors] = React.useState(null)
       const [graph, setGraph] = React.useState(null)
       const [detail, setDetail] = React.useState(null)
+      /* ── 历史页右栏（CommitDetail）的窄屏折叠 ──
+         narrowBody 量的是 .dsh-git-body 这块地（54-changes.js 的 useNarrowWidth，
+         同一张槽表、同一个 560px 阈值：280 的详情栏 + 主列表至少还要留一列读得
+         动的）；detailOpen 是读者的意愿 —— null＝没动过手时折叠与否跟 narrow 走
+         （窄=折叠、宽=展开即现状），动过手以后 resize 只更新事实。与变更页提交栏
+         的 commitOpen 互不干扰：两块地各量各的，两只开关各记各的。 */
+      const narrowBody = useNarrowWidth('logbody')
+      const [detailOpen, setDetailOpen] = React.useState(null)
       const [work, setWork] = React.useState(remembered === null ? null : remembered.status)
       /* The working tree, read separately from the repository's identity: on a
          Windows-mounted worktree that part alone costs seconds, and nothing on
@@ -11472,7 +11514,55 @@ textarea.dsh-git-input{resize:vertical}
           onChanged: function () { bump() },
         })
       } else {
-        body = h('div', { className: 'dsh-git-body' },
+        /* ── 右栏（CommitDetail）的窄屏折叠：三种形态，宽屏只有第三种 ──
+           折叠（窄屏默认）：CommitDetail 整个不渲染，右缘一条竖向展开条
+             dsh-git-detailbar（竖排「提交详情 ▸」，已选中提交附文件数），点了展开；
+           窄屏展开：详情栏照旧渲染，顶上加一条收起键 dsh-git-detailfold —— 与折叠
+             条是同一只开关（detailOpen）的两副面孔；外面包一层 dsh-git-detailwrap
+             纵排，CommitDetail 本体与 .dsh-git-detail 一个字没动（52-detail.js 没
+             改），group-title 的文字原样；
+           宽屏（含量不到宽度的替身）：detailNode 原样直挂 —— .dsh-git-body 的
+             className、子节点与改动前逐字节一致（ref 不进渲染结果），这是不变量。 */
+        const detailCollapsed = detailOpen === null ? narrowBody.narrow : detailOpen === false
+        const detailNode = h(CommitDetail, {
+          detail: detail, collapsed: collapsed, selectedKey: selectedKey,
+          onToggle: toggle, onSelect: function (key) { setSelectedKey(key) },
+          /* A file in a commit is the commit's own read: same path, but the
+             two states are that commit and its first parent. */
+          onOpenDiff: function (file) {
+            setDiffTarget({
+              kind: 'commit',
+              path: text(file.path),
+              from: text(file.from),
+              ref: detail != null ? text(detail.hash) : '',
+              status: text(file.status),
+            })
+          },
+        })
+        const detailSide = narrowBody.narrow === true
+          ? h('div', { className: 'dsh-git-detailwrap' },
+            h('div', {
+              className: 'dsh-git-detailfold',
+              title: '收起提交详情（收起后从右缘那条「提交详情」展开条再展开）',
+              onClick: function () { setDetailOpen(false) },
+            },
+              h('span', { className: 'dsh-git-detailfold-label' }, '提交详情'),
+              h('span', { className: 'dsh-git-detailfold-glyph' }, '▾')),
+            detailNode)
+          : detailNode
+        /* 折叠态的那一条：已选中提交时附文件数，空态/错态只写「提交详情」——
+           空着还报数是噪音。 */
+        const detailBar = h('div', {
+          className: 'dsh-git-detailbar',
+          title: '展开提交详情（提交的文件列表与信息收在这里）',
+          onClick: function () { setDetailOpen(true) },
+        },
+          h('span', { className: 'dsh-git-detailbar-label' }, '提交详情'),
+          h('span', { className: 'dsh-git-detailbar-glyph' }, '▸'),
+          detail != null && detail.ok === true && detail.files.length > 0
+            ? h('span', { className: 'dsh-git-detailbar-count' }, String(detail.files.length) + ' 个文件')
+            : null)
+        body = h('div', { className: 'dsh-git-body', ref: narrowBody.attach },
           h('div', { className: 'dsh-git-left' },
             h(RefTree, {
               refs: refs, collapsed: collapsed, selectedKey: effectiveSelection,
@@ -11510,21 +11600,7 @@ textarea.dsh-git-input{resize:vertical}
                  a page. */
               onLoadMore: function () { setMaxCount(function (n) { return n + PAGE_COMMITS }) },
             })),
-          h(CommitDetail, {
-            detail: detail, collapsed: collapsed, selectedKey: selectedKey,
-            onToggle: toggle, onSelect: function (key) { setSelectedKey(key) },
-            /* A file in a commit is the commit's own read: same path, but the
-               two states are that commit and its first parent. */
-            onOpenDiff: function (file) {
-              setDiffTarget({
-                kind: 'commit',
-                path: text(file.path),
-                from: text(file.from),
-                ref: detail != null ? text(detail.hash) : '',
-                status: text(file.status),
-              })
-            },
-          }))
+          detailCollapsed === true ? detailBar : detailSide)
       }
 
       const popProps = {

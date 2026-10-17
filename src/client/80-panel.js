@@ -647,6 +647,14 @@
       const [authors, setAuthors] = React.useState(null)
       const [graph, setGraph] = React.useState(null)
       const [detail, setDetail] = React.useState(null)
+      /* ── 历史页右栏（CommitDetail）的窄屏折叠 ──
+         narrowBody 量的是 .dsh-git-body 这块地（54-changes.js 的 useNarrowWidth，
+         同一张槽表、同一个 560px 阈值：280 的详情栏 + 主列表至少还要留一列读得
+         动的）；detailOpen 是读者的意愿 —— null＝没动过手时折叠与否跟 narrow 走
+         （窄=折叠、宽=展开即现状），动过手以后 resize 只更新事实。与变更页提交栏
+         的 commitOpen 互不干扰：两块地各量各的，两只开关各记各的。 */
+      const narrowBody = useNarrowWidth('logbody')
+      const [detailOpen, setDetailOpen] = React.useState(null)
       const [work, setWork] = React.useState(remembered === null ? null : remembered.status)
       /* The working tree, read separately from the repository's identity: on a
          Windows-mounted worktree that part alone costs seconds, and nothing on
@@ -3133,7 +3141,55 @@
           onChanged: function () { bump() },
         })
       } else {
-        body = h('div', { className: 'dsh-git-body' },
+        /* ── 右栏（CommitDetail）的窄屏折叠：三种形态，宽屏只有第三种 ──
+           折叠（窄屏默认）：CommitDetail 整个不渲染，右缘一条竖向展开条
+             dsh-git-detailbar（竖排「提交详情 ▸」，已选中提交附文件数），点了展开；
+           窄屏展开：详情栏照旧渲染，顶上加一条收起键 dsh-git-detailfold —— 与折叠
+             条是同一只开关（detailOpen）的两副面孔；外面包一层 dsh-git-detailwrap
+             纵排，CommitDetail 本体与 .dsh-git-detail 一个字没动（52-detail.js 没
+             改），group-title 的文字原样；
+           宽屏（含量不到宽度的替身）：detailNode 原样直挂 —— .dsh-git-body 的
+             className、子节点与改动前逐字节一致（ref 不进渲染结果），这是不变量。 */
+        const detailCollapsed = detailOpen === null ? narrowBody.narrow : detailOpen === false
+        const detailNode = h(CommitDetail, {
+          detail: detail, collapsed: collapsed, selectedKey: selectedKey,
+          onToggle: toggle, onSelect: function (key) { setSelectedKey(key) },
+          /* A file in a commit is the commit's own read: same path, but the
+             two states are that commit and its first parent. */
+          onOpenDiff: function (file) {
+            setDiffTarget({
+              kind: 'commit',
+              path: text(file.path),
+              from: text(file.from),
+              ref: detail != null ? text(detail.hash) : '',
+              status: text(file.status),
+            })
+          },
+        })
+        const detailSide = narrowBody.narrow === true
+          ? h('div', { className: 'dsh-git-detailwrap' },
+            h('div', {
+              className: 'dsh-git-detailfold',
+              title: '收起提交详情（收起后从右缘那条「提交详情」展开条再展开）',
+              onClick: function () { setDetailOpen(false) },
+            },
+              h('span', { className: 'dsh-git-detailfold-label' }, '提交详情'),
+              h('span', { className: 'dsh-git-detailfold-glyph' }, '▾')),
+            detailNode)
+          : detailNode
+        /* 折叠态的那一条：已选中提交时附文件数，空态/错态只写「提交详情」——
+           空着还报数是噪音。 */
+        const detailBar = h('div', {
+          className: 'dsh-git-detailbar',
+          title: '展开提交详情（提交的文件列表与信息收在这里）',
+          onClick: function () { setDetailOpen(true) },
+        },
+          h('span', { className: 'dsh-git-detailbar-label' }, '提交详情'),
+          h('span', { className: 'dsh-git-detailbar-glyph' }, '▸'),
+          detail != null && detail.ok === true && detail.files.length > 0
+            ? h('span', { className: 'dsh-git-detailbar-count' }, String(detail.files.length) + ' 个文件')
+            : null)
+        body = h('div', { className: 'dsh-git-body', ref: narrowBody.attach },
           h('div', { className: 'dsh-git-left' },
             h(RefTree, {
               refs: refs, collapsed: collapsed, selectedKey: effectiveSelection,
@@ -3171,21 +3227,7 @@
                  a page. */
               onLoadMore: function () { setMaxCount(function (n) { return n + PAGE_COMMITS }) },
             })),
-          h(CommitDetail, {
-            detail: detail, collapsed: collapsed, selectedKey: selectedKey,
-            onToggle: toggle, onSelect: function (key) { setSelectedKey(key) },
-            /* A file in a commit is the commit's own read: same path, but the
-               two states are that commit and its first parent. */
-            onOpenDiff: function (file) {
-              setDiffTarget({
-                kind: 'commit',
-                path: text(file.path),
-                from: text(file.from),
-                ref: detail != null ? text(detail.hash) : '',
-                status: text(file.status),
-              })
-            },
-          }))
+          detailCollapsed === true ? detailBar : detailSide)
       }
 
       const popProps = {
