@@ -312,7 +312,10 @@ const ok = (label, value) => console.log('  ' + (value ? '✓' : '✗') + ' ' + 
  *      repoSaveProblem）；加成功自动把新仓库选为本页目标；移除的正好是目标时退回
  *      生效仓库；missing 行只可移除、点它不发生任何事。
  *   4. 会话完成组保持插件级：自动推送仍作用于当前生效仓库，提示语照实说一句
- *      （不随本页正在编辑的仓库走）。 */
+ *      （不随本页正在编辑的仓库走）。
+ *   5. 排版：受切换仓库影响的三个组收进「仓库」外框做下级（缩进 + 左侧竖线），
+ *      组头点名目标仓库短名；切换器折叠标题行在配置页记本页编辑目标（✎），
+ *      不再是生效仓库（●）。 */
 
 /* ── mock：清单按用例给；身份/远端的答复按请求里的 repo 现做，才分得清「答的是谁」── */
 let reposReply = { ok: true, workspace: '/tmp/ws', repos: ['/tmp/lab', '/tmp/ws'], manual: [], missing: [], truncated: false }
@@ -412,6 +415,27 @@ ok('进页读快照与远端表都明说 repo:/tmp/ws + 会话',
   && callsOf56(mark56, 'git/remotes').length === 1 && lastArgs('git/remotes').repo === '/tmp/ws')
 
 console.log('')
+console.log('== 新排版：「仓库」外框内收三个下级组，组头点名目标短名 ==')
+const scopeBox56 = () => byClass(tree, 'dsh-git-set-scope')[0]
+const scopeBody56 = () => byClass(tree, 'dsh-git-set-scope-body')[0]
+const subGroups56 = () => (scopeBody56() === undefined ? [] : byClass(scopeBody56(), 'dsh-git-set-group').map(textOf))
+const subJoin56 = () => subGroups56().join('|')
+ok('外框在：仓库切换器与下级容器都收在它里面',
+  scopeBox56() !== undefined && byClass(scopeBox56(), 'dsh-git-repo-box').length === 1
+  && byClass(scopeBox56(), 'dsh-git-set-scope-body').length === 1)
+ok('三个下级组（提交身份/远端/换行符）都在 scope-body 里；会话完成组留在外框外',
+  subGroups56().length === 3
+  && subGroups56().some((s) => s.indexOf('提交身份') === 0)
+  && subGroups56().some((s) => s.indexOf('远端') === 0)
+  && subGroups56().some((s) => s.indexOf('换行符') === 0)
+  && collect(tree).some((n) => hasClass56(n, 'dsh-git-set-group') && textOf(n) === '会话完成')
+  && byClass(scopeBox56(), 'dsh-git-set-group').every((g) => textOf(g) !== '会话完成'))
+ok('三个组头都点名当前目标短名（/tmp/ws → ws）',
+  subJoin56().indexOf('提交身份（只写 ws 的 .git/config）') >= 0
+  && subJoin56().indexOf('远端（ws 的 remote 清单）') >= 0
+  && subJoin56().indexOf('换行符（ws 的 git 换行配置）') >= 0)
+
+console.log('')
 console.log('== 单击行只换本页编辑目标：Ctrl+单击也是单击，生效仓库不动，草稿清空 ==')
 const nameBox56 = () => rowInput56(tree, '名字（user.name）')
 nameBox56().props.onChange({ target: { value: 'Draft' } })
@@ -430,7 +454,23 @@ ok('「此刻生效」跟着换了仓库：Lab（来自 .git/config）', saysOn(
 ok('对着上一个仓库打的草稿被清空（不留给下一个仓库误写）',
   nameBox56() !== undefined && nameBox56().props.value === '')
 ok('远端表也换了仓库：lab 的远端是 up', saysOn(tree, 'https://example.com/lab.git'))
+ok('组头跟着换目标：三个下级组改点名 lab',
+  subJoin56().indexOf('提交身份（只写 lab 的 .git/config）') >= 0
+  && subJoin56().indexOf('远端（lab 的 remote 清单）') >= 0
+  && subJoin56().indexOf('换行符（lab 的 git 换行配置）') >= 0)
 ok('没碰任何持久化（清单的 add/remove 一次都没发）', reposSaveCalls.length === 0)
+
+console.log('')
+console.log('== 折叠标题行（pick 模式）：记本页编辑目标 ✎，不是生效仓库 ==')
+byClass(tree, 'dsh-git-repo-head')[0].props.onClick()
+tree = await settle()
+const foldNow56 = byClass(tree, 'dsh-git-repo-now')[0]
+ok('收起后标题是 ✎ lab（本页编辑目标），不是 ● ws（生效仓库）',
+  foldNow56 !== undefined && textOf(foldNow56) === '✎ lab'
+  && String(foldNow56.props.title).indexOf('/tmp/lab') === 0)
+byClass(tree, 'dsh-git-repo-head')[0].props.onClick()
+tree = await settle()
+ok('再点展开，仓库行都回来（后面的用例不受影响）', repoRows(tree).length === 2)
 
 console.log('')
 console.log('== 写入落到编辑目标：请求带 repo，答复回读为准 ==')

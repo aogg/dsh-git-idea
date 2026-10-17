@@ -435,9 +435,9 @@ ok('顶栏现在是 4 个页签，第 4 个是「配置」', buttons(byClass(tre
 await clickText(tree, '配置')
 tree = await settle()
 const groupTexts = (t) => collect(t).filter((n) => n.props.className === 'dsh-git-set-group').map(textOf)
-ok('三个分组都在：会话完成 / 提交身份 / 换行符', groupTexts(tree).join('|').indexOf('会话完成') >= 0
-  && groupTexts(tree).join('|').indexOf('提交身份（只写这个项目的 .git/config）') >= 0
-  && groupTexts(tree).join('|').indexOf('换行符（git 自己的换行配置）') >= 0)
+ok('三个分组都在：会话完成 / 提交身份 / 换行符（组头点名目标短名 ws）', groupTexts(tree).join('|').indexOf('会话完成') >= 0
+  && groupTexts(tree).join('|').indexOf('提交身份（只写 ws 的 .git/config）') >= 0
+  && groupTexts(tree).join('|').indexOf('换行符（ws 的 git 换行配置）') >= 0)
 const paneInputs = collect(tree).filter((n) => n.type === 'input' && n.props.type !== 'checkbox')
 ok('名字框的 placeholder 显示全局那份的值', paneInputs.length >= 2
   && paneInputs[0].props.placeholder === '留空 = 用全局（Ada Lovelace）')
