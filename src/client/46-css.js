@@ -315,6 +315,18 @@ textarea.dsh-git-input{resize:vertical}
     剩余宽度、可断行 —— 断不开的长地址会把行尾那排按钮挤出面板。等宽字体与分支名、
     提交哈希同一习惯。 */
 .dsh-git-set-url{flex:1 1 200px;min-width:0;word-break:break-all;font-family:ui-monospace,monospace}
+/* ── 项目档的「仓库」外框（80-panel.js GitConfigPane）──
+    受切换仓库影响的三组（提交身份 / 远端 / 换行符）收进「仓库」一组内：外框只是
+    一道描边、底色不填 —— 里面的仓库列表（dsh-git-repo-box）自带 layer-2 浅底，外框
+    再填一层浅底两块就糊在一起了。切换器在外框里当头一块；三个下级组再收进
+    scope-body：左缩进一道竖线，树子级的读法 —— 这三块属于上面选中的那个仓库。
+    组头原本有 margin/padding/border-top 三件套分隔，在外框与 scope-body 的首行
+    （紧贴自己容器的上缘）会画出双线，:first-child 让掉；其余组头照旧，下级组之间
+    的分隔线原样保留。缩进只吃 padding 不吃 min-width，面板拖窄时行照旧换行不破。 */
+.dsh-git-set-scope{display:flex;flex-direction:column;gap:14px;margin-top:6px;padding:10px 10px 12px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px}
+.dsh-git-set-scope-body{display:flex;flex-direction:column;gap:14px;margin-top:2px;padding-left:12px;border-left:2px solid var(--dsw-alias-border-l2)}
+.dsh-git-set-scope > .dsh-git-set-group:first-child,
+.dsh-git-set-scope-body > .dsh-git-set-group:first-child{margin-top:0;padding-top:0;border-top:0}
 .dsh-git-hidden{display:none}
 /* Only while the header's switcher is open: the card hangs off the header and
    must be allowed past the panel's own clip, or a panel dragged short enough

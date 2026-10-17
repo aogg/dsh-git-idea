@@ -38,11 +38,14 @@
 
        这一页分两档作用域，切换排在页首（记号用头部视图切换同一套 dsh-git-cview）：
 
-       · 项目配置 —— 关于哪个仓库由页首的「仓库」组挑（多仓库时那一格列出工作区
-         扫到与手动登记的全部仓库，默认当前生效仓库；24-repos.js 的受控单选变体），
-         分组有：会话完成后的刷新/推送、只写 **本项目** .git/config 的提交身份、
-         git 自己管换行符的两个键（core.autocrlf / core.safecrlf）、远端表（长在
-         .git/config 里，走 git remote 自己的三条子命令，74-identity.js）。
+       · 项目配置 —— 排两块：插件级的「会话完成」一组留在外框之外（它 setPlugin，
+         不跟本页编辑目标走）；之后「仓库」一大组 —— 顶部用 24-repos.js 的受控单选
+         变体挑本页在编辑哪个仓库（多仓库时列出工作区扫到与手动登记的全部仓库，
+         默认当前生效仓库），受切换仓库影响的三组收在它里面做下级（缩进 + 左侧
+         竖线，46-css.js 的 dsh-git-set-scope / -scope-body，组头点名目标仓库）：
+         只写该仓库 .git/config 的提交身份、git 自己管换行符的两个键
+         （core.autocrlf / core.safecrlf）、远端表（长在 .git/config 里，走
+         git remote 自己的三条子命令，74-identity.js）。
        · 全局配置 —— 跟着插件与这台机器走（79-globalconfig.js 的 GitGlobalConfigPane，
          原先是 DSH 设置面板里的「dsh-git-idea配置」页，2026-10 起搬到这里）：初始化
          分支、远程同步实参、快捷命令、git 位置、提交身份（--global）、换行符
@@ -212,6 +215,24 @@
         if (one.length === 0 || one === targetRepo) return
         adoptTarget(one)
       }
+
+      /* ── 三个下级组的组头：点名当前编辑目标的短名 ──
+
+         「这三组写的是哪个仓库」是它们最要紧的一句话，收进「仓库」组之后由组头自己
+         回答：短名取 24-repos.js 的同一份清单、同一份标签（repoLabelMap / repoShortName，
+         与切换器行、两处分组头同一个来源），仓库一换组头跟着换。目标还没读到
+         （effective 没回来、也没存过选择）时没有短名可点，退回原来的泛称文案。 */
+      const cfgLabels = repoLabelMap(pickable)
+      const targetShortName = targetRepo.length > 0 ? repoShortName(cfgLabels, targetRepo) : ''
+      const identGroupTitle = targetShortName.length > 0
+        ? '提交身份（只写 ' + targetShortName + ' 的 .git/config）'
+        : '提交身份（只写这个项目的 .git/config）'
+      const remoteGroupTitle = targetShortName.length > 0
+        ? '远端（' + targetShortName + ' 的 remote 清单）'
+        : '远端（这个仓库的 remote 清单）'
+      const crlfGroupTitle = targetShortName.length > 0
+        ? '换行符（' + targetShortName + ' 的 git 换行配置）'
+        : '换行符（git 自己的换行配置）'
 
       /* 只把 session id 交给 Host（全局配置 GitIdentityGroup 同一条路）：路径由 Host
           从会话的工作区解出来，写配置的沙箱策略也跟着这个会话走。多仓库之后这页
@@ -548,33 +569,10 @@
 
       return h('div', { className: 'dsh-git-set dsh-git-config' },
         scopeTabs,
-        /* ── 仓库组（多仓库）：下面三组读写的都是这里选中的仓库 ── */
-        h('div', { className: 'dsh-git-set-group' }, '仓库（这一页在编辑哪个仓库）'),
-        h('div', { className: 'dsh-git-set-hint' },
-          '下面的提交身份、远端、换行符编辑的都是这里选中的仓库，默认是当前生效仓库（带 ● 的行）。单击行只换本页的编辑目标 —— 面板的生效仓库（历史、提交、推送用的那个）不跟着换，要换生效仓库去「历史」或「变更」页的仓库列表。会话工作区本身不是仓库时这组照常可用：把仓库目录「＋ 添加目录」登记进来，就能直接配置它。'),
-        h(RepoSwitcher, {
-          key: 'cfg-repos',
-          sessionId: sessionId, pane: 'config', list: repoList, effective: effective,
-          pick: targetRepo,
-          onSingle: function (path) { pickRepo(path) },
-          /* 「＋ 添加目录」与历史页是同一份持久清单、同一套报错话术（saveManualRepo /
-             repoSaveProblem 都在 24-repos.js）；加成功的那一下顺手把新仓库选为本页
-             目标 —— 读者加它就是要在它身上做配置。移除的正好是本页目标时退回
-             生效仓库，别留在一条刚被移除的路径上。 */
-          onAdd: function (path) {
-            return saveManualRepo(sessionId, { add: path }).then(function (data) {
-              adoptTarget(text(path))
-              return data
-            })
-          },
-          onRemove: function (path) {
-            return saveManualRepo(sessionId, { remove: path }).then(function (data) {
-              if (text(path) === targetRepo) adoptTarget('')
-              return data
-            })
-          },
-        }),
 
+        /* ── 会话完成（插件级）：setPlugin 写的是插件自己的配置，不跟本页编辑目标
+           走 —— 留在「仓库」组外、放最前；自动推送提示里照实说「作用于生效仓库、
+           不随本页正在编辑的仓库走」。 ── */
         h('div', { className: 'dsh-git-set-group' }, '会话完成'),
         h('div', { className: 'dsh-git-set-hint' }, sessionHint),
 
@@ -602,111 +600,143 @@
             autoPushNote == null ? '还没有自动推送过'
               : (cmdClock(autoPushNote.time) + ' · ' + (autoPushNote.ok === true ? '成功' : '失败') + '：' + text(autoPushNote.detail)))),
 
-        h('div', { className: 'dsh-git-set-group' }, '提交身份（只写这个项目的 .git/config）'),
-        h('div', { className: 'dsh-git-set-hint' },
-          '这里只写 --local，全局那份不受影响。要改这台机器的那一份，切到上面的「全局配置 → 提交身份」—— 那边才选得到写进哪台机器。'),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('span', { className: 'dsh-git-set-label' }, '此刻生效'),
-          h('span', { className: identMissing === true ? 'dsh-git-set-hint dsh-git-warn' : 'dsh-git-set-hint' },
-            snap == null ? '正在读取…'
-              : (inside !== true
-                ? '这个会话的工作区还不是 Git 仓库 —— 下面只能看全局那份'
-                : (identMissing === true
-                  ? '还缺：' + (nameMissing === true ? '名字' : '') + (nameMissing === true && emailMissing === true ? '/' : '') + (emailMissing === true ? '邮箱' : '') + ' —— 提交会被 git 拒绝'
-                  : (source(nameNow.effective, nameNow.effectiveOrigin) + ' · ' + source(emailNow.effective, emailNow.effectiveOrigin)))))),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('span', { className: 'dsh-git-set-label' }, '名字（user.name）'),
-          h('input', {
-            className: 'dsh-git-input dsh-git-set-input',
-            placeholder: globalPlaceholder(nameNow.global),
-            value: name,
-            disabled: inside !== true,
-            onChange: function (event) { setName(event.target.value) },
-          })),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('span', { className: 'dsh-git-set-label' }, '邮箱（user.email）'),
-          h('input', {
-            className: 'dsh-git-input dsh-git-set-input',
-            placeholder: globalPlaceholder(emailNow.global),
-            value: email,
-            disabled: inside !== true,
-            onChange: function (event) { setEmail(event.target.value) },
-          })),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('button', {
-            type: 'button', className: 'dsh-git-btn dsh-git-primary',
-            disabled: busy || inside !== true || (nameDraft.length === 0 && emailDraft.length === 0),
-            title: '把填了的键写进' + (targetRepo.length > 0 ? ' ' + targetRepo + ' ' : '本项目')
-              + '的 .git/config；空着的框一个字节都不写',
-            onClick: function () {
-              const setPayload = {}
-              if (nameDraft.length > 0) setPayload['user.name'] = nameDraft
-              if (emailDraft.length > 0) setPayload['user.email'] = emailDraft
-              /* 提示行点名落点：多仓库之后「本项目」不再只有一个候选，写到哪要说全。 */
-              run({ set: setPayload }, '已写进 ' + (targetRepo.length > 0 ? targetRepo : '本项目') + ' 的 .git/config')
+        /* ── 「仓库」一组：顶部挑本页编辑目标（受控单选，行为不动），受切换仓库影响
+           的三组收在外框里做下级 —— 缩进 + 左侧竖线（46-css.js 的 dsh-git-set-scope
+           / -scope-body），一眼读出「这三块属于上面选中的那个仓库」；组头点名目标
+           短名（identGroupTitle / remoteGroupTitle / crlfGroupTitle）。 ── */
+        h('div', { className: 'dsh-git-set-scope' },
+          h('div', { className: 'dsh-git-set-group' }, '仓库（这一页在编辑哪个仓库）'),
+          h('div', { className: 'dsh-git-set-hint' },
+            '收在本组内的提交身份、远端、换行符三个下级组，读写的都是这里选中的仓库，默认是当前生效仓库（带 ● 的行）。单击行只换本页的编辑目标 —— 面板的生效仓库（历史、提交、推送用的那个）不跟着换，要换生效仓库去「历史」或「变更」页的仓库列表。会话工作区本身不是仓库时这组照常可用：把仓库目录「＋ 添加目录」登记进来，就能直接配置它。'),
+          h(RepoSwitcher, {
+            key: 'cfg-repos',
+            sessionId: sessionId, pane: 'config', list: repoList, effective: effective,
+            pick: targetRepo,
+            /* 「＋ 添加目录」与历史页是同一份持久清单、同一套报错话术（saveManualRepo /
+               repoSaveProblem 都在 24-repos.js）；加成功的那一下顺手把新仓库选为本页
+               目标 —— 读者加它就是要在它身上做配置。移除的正好是本页目标时退回
+               生效仓库，别留在一条刚被移除的路径上。 */
+            onAdd: function (path) {
+              return saveManualRepo(sessionId, { add: path }).then(function (data) {
+                adoptTarget(text(path))
+                return data
+              })
             },
-          }, busy ? '写入中…' : '写入本项目'),
-          h('button', {
-            type: 'button', className: 'dsh-git-btn',
-            disabled: busy || inside !== true || localKeys.length === 0,
-            title: '对填过的键执行 git config --local --unset（本来就没配也算成功）',
-            onClick: function () { run({ unset: localKeys }, '已清掉本项目覆盖，用回全局') },
-          }, '清掉本项目覆盖，用回全局'),
-          h('span', { className: 'dsh-git-set-hint' },
-            localKeys.length > 0 ? '本项目覆盖了：' + localKeys.join('、') : '本项目没有覆盖任何键')),
-
-        /* 组头行：标题吃剩余宽度，⟳ 贴行尾。不管读数成没成、宿主新不新版它都在 ——
-           宿主旧版时它就是重启 DSH 之后的那把重试钥匙（remoteReload）；busy 或自己
-           在飞时禁用。画法用差异头部同款的图标键（.dsh-git-tool-ico，55-diff.js 的
-           diffIconButton 同一套类），这一页不新造按钮长相。 */
-        h('div', { className: 'dsh-git-set-group dsh-git-set-group-row' },
-          h('span', null, '远端（这个仓库的 remote 清单）'),
-          h('button', {
-            type: 'button', className: 'dsh-git-tool dsh-git-tool-ico',
-            disabled: busy || remoteRefreshing,
-            title: '重新读取远端清单（git remote -v，不进缓存）—— 宿主旧版时报错属预期，重启 DSH 后这里能把清单读出来',
-            onClick: function () { remoteReload() },
-          }, '⟳')),
-        h('div', { className: 'dsh-git-set-hint' }, remoteGroupHint),
-
-        remoteRows,
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('span', { className: 'dsh-git-set-label' }, '新远端'),
-          h('input', {
-            className: 'dsh-git-input dsh-git-set-input',
-            placeholder: '名字（如 origin / upstream）',
-            value: rName,
-            disabled: busy || remoteInside !== true,
-            onChange: function (event) { setRName(event.target.value) },
-            onKeyDown: function (event) { if (event.key === 'Enter') remoteAdd() },
+            onRemove: function (path) {
+              return saveManualRepo(sessionId, { remove: path }).then(function (data) {
+                if (text(path) === targetRepo) adoptTarget('')
+                return data
+              })
+            },
           }),
-          h('input', {
-            className: 'dsh-git-input dsh-git-set-input',
-            placeholder: '地址（https://… 或 git@…）',
-            value: rUrl,
-            disabled: busy || remoteInside !== true,
-            onChange: function (event) { setRUrl(event.target.value) },
-            onKeyDown: function (event) { if (event.key === 'Enter') remoteAdd() },
-          }),
-          h('button', {
-            type: 'button', className: 'dsh-git-btn dsh-git-primary',
-            disabled: busy || remoteInside !== true || rNameDraft.length === 0 || rUrlDraft.length === 0,
-            title: 'git remote add <名字> <地址>；成功后框清空，可以接着添下一个',
-            onClick: function () { remoteAdd() },
-          }, '添加远端'),
-          h('span', { className: 'dsh-git-set-hint' }, '名字不能有空白；地址删除后就没了，git 不会替你记住。')),
 
-        h('div', { className: 'dsh-git-set-group' }, '换行符（git 自己的换行配置）'),
-        h('div', { className: 'dsh-git-set-hint' },
-          '两条都是 git 的换行符配置，同样只写本项目（--local）：autocrlf=true 检出转 CRLF、提交转回 LF，input 只在提交时转 LF，false 不转；safecrlf 是把关开关，换行转换不可逆（行尾抹过一遍还原不回去）时 true 让 git 拒绝、warn 只警告、false 不把关。改动立即写进本项目 .git/config；选「跟随全局」= 清掉本项目的这条（不存在算成功）。'),
+          /* 下面三个下级组读写的都是这里选中的仓库。 */
+          h('div', { className: 'dsh-git-set-scope-body' },
+            h('div', { className: 'dsh-git-set-group' }, identGroupTitle),
+            h('div', { className: 'dsh-git-set-hint' },
+              '这里只写 --local，全局那份不受影响。要改这台机器的那一份，切到上面的「全局配置 → 提交身份」—— 那边才选得到写进哪台机器。'),
 
-        lineSelect('core.autocrlf', autocrlf, ['true', 'false', 'input'], '检出时把 LF 转 CRLF、提交时转回 LF（input 只在提交时转 LF，false 什么都不转）'),
-        lineSelect('core.safecrlf', safecrlf, ['true', 'false', 'warn'], '换行转换不可逆（会丢字）时的把关开关：true 让 git 拒绝这次操作、warn 只警告照做、false 不把关'),
+            h('div', { className: 'dsh-git-set-row' },
+              h('span', { className: 'dsh-git-set-label' }, '此刻生效'),
+              h('span', { className: identMissing === true ? 'dsh-git-set-hint dsh-git-warn' : 'dsh-git-set-hint' },
+                snap == null ? '正在读取…'
+                  : (inside !== true
+                    ? '这个会话的工作区还不是 Git 仓库 —— 下面只能看全局那份'
+                    : (identMissing === true
+                      ? '还缺：' + (nameMissing === true ? '名字' : '') + (nameMissing === true && emailMissing === true ? '/' : '') + (emailMissing === true ? '邮箱' : '') + ' —— 提交会被 git 拒绝'
+                      : (source(nameNow.effective, nameNow.effectiveOrigin) + ' · ' + source(emailNow.effective, emailNow.effectiveOrigin)))))),
+
+            h('div', { className: 'dsh-git-set-row' },
+              h('span', { className: 'dsh-git-set-label' }, '名字（user.name）'),
+              h('input', {
+                className: 'dsh-git-input dsh-git-set-input',
+                placeholder: globalPlaceholder(nameNow.global),
+                value: name,
+                disabled: inside !== true,
+                onChange: function (event) { setName(event.target.value) },
+              })),
+
+            h('div', { className: 'dsh-git-set-row' },
+              h('span', { className: 'dsh-git-set-label' }, '邮箱（user.email）'),
+              h('input', {
+                className: 'dsh-git-input dsh-git-set-input',
+                placeholder: globalPlaceholder(emailNow.global),
+                value: email,
+                disabled: inside !== true,
+                onChange: function (event) { setEmail(event.target.value) },
+              })),
+
+            h('div', { className: 'dsh-git-set-row' },
+              h('button', {
+                type: 'button', className: 'dsh-git-btn dsh-git-primary',
+                disabled: busy || inside !== true || (nameDraft.length === 0 && emailDraft.length === 0),
+                title: '把填了的键写进' + (targetRepo.length > 0 ? ' ' + targetRepo + ' ' : '本项目')
+                  + '的 .git/config；空着的框一个字节都不写',
+                onClick: function () {
+                  const setPayload = {}
+                  if (nameDraft.length > 0) setPayload['user.name'] = nameDraft
+                  if (emailDraft.length > 0) setPayload['user.email'] = emailDraft
+                  /* 提示行点名落点：多仓库之后「本项目」不再只有一个候选，写到哪要说全。 */
+                  run({ set: setPayload }, '已写进 ' + (targetRepo.length > 0 ? targetRepo : '本项目') + ' 的 .git/config')
+                },
+              }, busy ? '写入中…' : '写入本项目'),
+              h('button', {
+                type: 'button', className: 'dsh-git-btn',
+                disabled: busy || inside !== true || localKeys.length === 0,
+                title: '对填过的键执行 git config --local --unset（本来就没配也算成功）',
+                onClick: function () { run({ unset: localKeys }, '已清掉本项目覆盖，用回全局') },
+              }, '清掉本项目覆盖，用回全局'),
+              h('span', { className: 'dsh-git-set-hint' },
+                localKeys.length > 0 ? '本项目覆盖了：' + localKeys.join('、') : '本项目没有覆盖任何键')),
+
+            /* 组头行：标题吃剩余宽度，⟳ 贴行尾。不管读数成没成、宿主新不新版它都在 ——
+               宿主旧版时它就是重启 DSH 之后的那把重试钥匙（remoteReload）；busy 或自己
+               在飞时禁用。画法用差异头部同款的图标键（.dsh-git-tool-ico，55-diff.js 的
+               diffIconButton 同一套类），这一页不新造按钮长相。 */
+            h('div', { className: 'dsh-git-set-group dsh-git-set-group-row' },
+              h('span', null, remoteGroupTitle),
+              h('button', {
+                type: 'button', className: 'dsh-git-tool dsh-git-tool-ico',
+                disabled: busy || remoteRefreshing,
+                title: '重新读取远端清单（git remote -v，不进缓存）—— 宿主旧版时报错属预期，重启 DSH 后这里能把清单读出来',
+                onClick: function () { remoteReload() },
+              }, '⟳')),
+            h('div', { className: 'dsh-git-set-hint' }, remoteGroupHint),
+
+            remoteRows,
+
+            h('div', { className: 'dsh-git-set-row' },
+              h('span', { className: 'dsh-git-set-label' }, '新远端'),
+              h('input', {
+                className: 'dsh-git-input dsh-git-set-input',
+                placeholder: '名字（如 origin / upstream）',
+                value: rName,
+                disabled: busy || remoteInside !== true,
+                onChange: function (event) { setRName(event.target.value) },
+                onKeyDown: function (event) { if (event.key === 'Enter') remoteAdd() },
+              }),
+              h('input', {
+                className: 'dsh-git-input dsh-git-set-input',
+                placeholder: '地址（https://… 或 git@…）',
+                value: rUrl,
+                disabled: busy || remoteInside !== true,
+                onChange: function (event) { setRUrl(event.target.value) },
+                onKeyDown: function (event) { if (event.key === 'Enter') remoteAdd() },
+              }),
+              h('button', {
+                type: 'button', className: 'dsh-git-btn dsh-git-primary',
+                disabled: busy || remoteInside !== true || rNameDraft.length === 0 || rUrlDraft.length === 0,
+                title: 'git remote add <名字> <地址>；成功后框清空，可以接着添下一个',
+                onClick: function () { remoteAdd() },
+              }, '添加远端'),
+              h('span', { className: 'dsh-git-set-hint' }, '名字不能有空白；地址删除后就没了，git 不会替你记住。')),
+
+            h('div', { className: 'dsh-git-set-group' }, crlfGroupTitle),
+            h('div', { className: 'dsh-git-set-hint' },
+              '两条都是 git 的换行符配置，同样只写上面选中的仓库（--local）：autocrlf=true 检出转 CRLF、提交转回 LF，input 只在提交时转 LF，false 不转；safecrlf 是把关开关，换行转换不可逆（行尾抹过一遍还原不回去）时 true 让 git 拒绝、warn 只警告、false 不把关。改动立即写进该仓库的 .git/config；选「跟随全局」= 清掉该仓库的这条（不存在算成功）。'),
+
+            lineSelect('core.autocrlf', autocrlf, ['true', 'false', 'input'], '检出时把 LF 转 CRLF、提交时转回 LF（input 只在提交时转 LF，false 什么都不转）'),
+            lineSelect('core.safecrlf', safecrlf, ['true', 'false', 'warn'], '换行转换不可逆（会丢字）时的把关开关：true 让 git 拒绝这次操作、warn 只警告照做、false 不把关'))),
 
         note.length > 0 ? h('div', { className: 'dsh-git-set-row dsh-git-set-hint' }, note) : null,
         problem.length > 0 ? h('div', { className: 'dsh-git-set-row dsh-git-error' }, problem) : null)

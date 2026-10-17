@@ -540,7 +540,7 @@ const projectOn = buttons(cfgTabs).find((b) => textOf(b) === '项目配置')
 const projectGroups = byClass(projectTree, 'dsh-git-set-group').map(textOf)
 ok('停在项目配置：项目特有的「远端」组在',
   String(projectOn.props.className).indexOf('dsh-git-cview-on') >= 0
-  && projectGroups.some((t) => t.indexOf('远端（这个仓库的 remote 清单）') >= 0)
+  && projectGroups.some((t) => t.indexOf('远端（ws 的 remote 清单）') >= 0)
   && projectGroups.every((t) => t.indexOf('git 位置') < 0))
 const globalTree = await openConfig('global', 'gp40-scopes')
 const globalTabs = byClass(globalTree, 'dsh-git-cfg-tabs')[0]
@@ -549,7 +549,7 @@ const globalGroups = byClass(globalTree, 'dsh-git-set-group').map(textOf)
 ok('点到全局配置：全局特有的「git 位置」组在，项目特有的「远端」组不在',
   String(globalOn.props.className).indexOf('dsh-git-cview-on') >= 0
   && globalGroups.some((t) => t.indexOf('git 位置') >= 0)
-  && globalGroups.every((t) => t.indexOf('远端（这个仓库的 remote 清单）') < 0))
+  && globalGroups.every((t) => t.indexOf('远端（ws 的 remote 清单）') < 0))
 
 /* ── 7. 工作区不是仓库时：只认这个目录 ── */
 

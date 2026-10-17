@@ -347,22 +347,32 @@
       }
 
       const rows = []
-      /* 标题行就是折叠开关，也是折叠后唯一剩下的一行：生效仓库的短名带着 ●（和行里
-         同一个记号）留在标题上，收起来了也知道现在在哪个仓库上。 */
+      /* 标题行就是折叠开关，也是折叠后唯一剩下的一行。收起后中间那格记谁分模式：
+         多选（log/changes）照旧记生效仓库（●，和行里同一个记号）—— 收起来了也知
+         道面板在哪个仓库上；受控单选（配置页）记**本页编辑目标**（✎）—— 这一格在
+         配置页的语义是「本页在编辑哪个」，写的是上面选中的仓库，不是生效仓库；目标
+         还没读到（picked 还是空串）就不记。 */
+      /* 收起时标题行要挂的那格「现在在哪」：见上面的说明 —— 记号分模式（● / ✎）。 */
+      const foldNow = picking
+        ? (folded && picked.length > 0
+          ? h('span', { key: 'now', className: 'dsh-git-repo-now', title: picked + '\n本页正在编辑的仓库（提交身份、远端、换行符都改它；不改生效仓库）' },
+            '✎ ' + repoShortName(labels, picked))
+          : null)
+        : (folded && effective.length > 0
+          ? h('span', { key: 'now', className: 'dsh-git-repo-now', title: effective + '\n当前生效仓库' },
+            '● ' + repoShortName(labels, effective))
+          : null)
       rows.push(h('div', {
         key: 'repo-head',
         className: 'dsh-git-repo-head',
-        title: folded ? '展开仓库列表' : '收起仓库列表（当前生效仓库仍显示在标题行）',
+        title: folded ? '展开仓库列表' : '收起仓库列表（' + (picking ? '本页正在编辑的仓库' : '当前生效仓库') + '仍显示在标题行）',
         onClick: function () { setFolded(!folded) },
       },
         h('span', { key: 'c', className: 'dsh-git-repo-caret' + (folded ? ' dsh-git-repo-caret-off' : '') },
           h(Icon, { name: 'down', size: 10 })),
         h('span', { key: 'i', className: 'dsh-git-repo-head-ico' }, h(Icon, { name: 'repo', size: 12 })),
         h('span', { key: 't', className: 'dsh-git-repo-head-name' }, '仓库 ' + String(shown.length)),
-        folded && effective.length > 0
-          ? h('span', { key: 'now', className: 'dsh-git-repo-now', title: effective + '\n当前生效仓库' },
-            '● ' + repoShortName(labels, effective))
-          : null,
+        foldNow,
         list.phase === 'scanning' || list.phase === 'idle'
           ? h('span', { key: 's', className: 'dsh-git-repo-note' }, '正在扫描…')
           : (list.phase === 'failed'
