@@ -38,9 +38,11 @@
 
        这一页分两档作用域，切换排在页首（记号用头部视图切换同一套 dsh-git-cview）：
 
-       · 项目配置 —— 只关于眼前这个仓库：会话完成后的刷新/推送、只写 **本项目**
-         .git/config 的提交身份、git 自己管换行符的两个键（core.autocrlf / core.safecrlf）、
-         远端表（长在 .git/config 里，走 git remote 自己的三条子命令，74-identity.js）。
+       · 项目配置 —— 关于哪个仓库由页首的「仓库」组挑（多仓库时那一格列出工作区
+         扫到与手动登记的全部仓库，默认当前生效仓库；24-repos.js 的受控单选变体），
+         分组有：会话完成后的刷新/推送、只写 **本项目** .git/config 的提交身份、
+         git 自己管换行符的两个键（core.autocrlf / core.safecrlf）、远端表（长在
+         .git/config 里，走 git remote 自己的三条子命令，74-identity.js）。
        · 全局配置 —— 跟着插件与这台机器走（79-globalconfig.js 的 GitGlobalConfigPane，
          原先是 DSH 设置面板里的「dsh-git-idea配置」页，2026-10 起搬到这里）：初始化
          分支、远程同步实参、快捷命令、git 位置、提交身份（--global）、换行符
@@ -144,7 +146,7 @@
         }, label)
       }
       const scopeTabs = h('div', { className: 'dsh-git-cfg-tabs' },
-        scopeTab('project', '项目配置', '只关于眼前这个仓库：会话完成后自动刷新/推送、只写 --local 的提交身份、换行符与远端'),
+        scopeTab('project', '项目配置', '关于哪个仓库由页首「仓库」组挑（默认当前生效仓库）：会话完成后自动刷新/推送、只写 --local 的提交身份、换行符与远端'),
         scopeTab('global', '全局配置', '跟着插件与这台机器走：初始化分支、远程同步、快捷命令、git 位置、提交身份（--global）、换行符（--global）与本浏览器的外观'))
       const plugin = usePluginConfig()
       const autoPushNote = useAutoPush()
@@ -168,10 +170,57 @@
       const [note, setNote] = React.useState('')
       const [problem, setProblem] = React.useState('')
 
+      /* ── 多仓库：这一页在编辑哪个仓库（24-repos.js 的同一份清单）──
+
+         项目配置过去只发会话 id，仓库由宿主从会话工作区解；一个工作区嵌着好几个
+         仓库之后，「眼前这个仓库」成了可挑的 —— 页首这组「仓库」复用历史/变更页
+         那份清单（扫描 + 手动 + missing），单击行只换**本页**的编辑目标。选择态按
+         repoViews 的先例按会话 + pane（'config'）独立记，绝不调 applyRepo：配置页
+         改哪个仓库的 .git/config，不该反过来改面板在看哪个仓库。默认目标 = 当前
+         生效仓库；请求显式带 repo: <路径>（宿主 repoFrom 显式路径优先，缺省才回退
+         会话工作区），sessionId 照旧带上 —— 写配置的沙箱策略跟着这个会话走。 */
+      useRepoViews()
+      const effective = text(props.effective)
+      const repoList = props.repoList != null ? props.repoList : repoListEmpty()
+      const pickable = reposShown(repoList, effective)
+      const storedPick = repoSelection(sessionId, 'config')
+      /* 清单里已经没有的旧选择（手动仓库被移除、或扫描还没落地）不作数：退回生效
+         仓库。missing 行不可选，所以只对 shown 这半边核对。 */
+      const targetRepo = storedPick.length > 0 && pickable.indexOf(storedPick[0]) >= 0
+        ? storedPick[0]
+        : effective
+      /* 写答复落地时要问「目标现在还是不是它」：run/runRemote 的回调闭着的是发起
+         那次渲染的旧值，比不得 —— 这里放一只随渲染更新的小盒子（draftBox /
+         cmdLogBox 同款），回调时读到的永远是当前目标。 */
+      const [targetBox] = React.useState(function () { return { repo: '' } })
+      targetBox.repo = targetRepo
+
+      /* 换编辑目标共用的一步：上一目标的半截话一并放下。名字/邮箱草稿是「对着眼下
+         这个仓库要说的话」，仓库换了话就换了对象，留着只会被写进别的仓库；远端行
+         的编辑与上膛、两条提示同理由。快照与远端表也清掉 —— 下面的读认 targetRepo，
+         会立刻重读，别让读者盯着上一个仓库的值以为是这一个的。 */
+      const adoptTarget = function (one) {
+        setRepoSelection(sessionId, 'config', [one])
+        setSnap(null)
+        setRemoteSnap(null)
+        setName(''); setEmail(''); setRName(''); setRUrl('')
+        setEditRemote(null); setEditUrl(''); setArmRemote('')
+        setNote(''); setProblem('')
+      }
+      const pickRepo = function (path) {
+        const one = text(path)
+        if (one.length === 0 || one === targetRepo) return
+        adoptTarget(one)
+      }
+
       /* 只把 session id 交给 Host（全局配置 GitIdentityGroup 同一条路）：路径由 Host
-         从会话的工作区解出来，写配置的沙箱策略也跟着这个会话走。 */
+          从会话的工作区解出来，写配置的沙箱策略也跟着这个会话走。多仓库之后这页
+          在编辑哪个仓库就明说哪条路径 —— 显式路径优先，缺省（还没读到生效仓库时）
+          照旧回退会话工作区。 */
       const request = function () {
-        return sessionId.length > 0 ? { sessionId: sessionId } : {}
+        const body = sessionId.length > 0 ? { sessionId: sessionId } : {}
+        if (targetRepo.length > 0) body.repo = targetRepo
+        return body
       }
       React.useEffect(function () {
         let alive = true
@@ -184,7 +233,7 @@
           setProblem(failureText(failure))
         })
         return function () { alive = false }
-      }, [sessionId])
+      }, [sessionId, targetRepo])
 
       /* 远端清单单独读（Host 每次都真跑 git remote -v，不进缓存）：失败落在这个组
          自己的说明行里（「远端列表没读出来：…」），不去占页面底部那条 problem ——
@@ -200,7 +249,7 @@
         let alive = true
         readRemotes(function (snap) { if (alive === true) setRemoteSnap(snap) })
         return function () { alive = false }
-      }, [sessionId])
+      }, [sessionId, targetRepo])
 
       /* 组头的 ⟳：只重发上面那次读。busy 期间禁用 —— 同一页可能正在写 .git/config，
          先让写动作把话（note/problem）说完。它自己也不碰那两条：note/problem 是写
@@ -230,8 +279,12 @@
         setProblem('')
         const body = request()
         if (payload != null) Object.assign(body, payload)
+        const forRepo = targetBox.repo
         callHost('git/project-config-save', body).then(function (result) {
           setBusy(false)
+          /* 编辑目标已经切走：这份答复属于上一个仓库，一个字节都不上屏 ——
+             setSnap 会把新目标的读数顶掉（与 10-state.js 的 repoEpoch 同一个问题）。 */
+          if (targetBox.repo !== forRepo) return
           if (result == null || result.ok !== true) {
             setProblem(commandDetail(result) || '保存失败')
             return
@@ -307,7 +360,7 @@
               else {
                 const setPayload = {}
                 setPayload[key] = next
-                run({ set: setPayload }, '已把 ' + key + ' = ' + next + ' 写进本项目')
+                run({ set: setPayload }, '已把 ' + key + ' = ' + next + ' 写进' + (targetRepo.length > 0 ? ' ' + targetRepo : '本项目'))
               }
             },
           }, options),
@@ -340,8 +393,12 @@
         setProblem('')
         const body = request()
         Object.assign(body, payload)
+        const forRepo = targetBox.repo
         callHost('git/remotes-save', body).then(function (result) {
           setBusy(false)
+          /* 同 run：目标切走后落地的旧答复不上屏，onChanged 也不再整面板刷 ——
+             那次改动发生在别的仓库，与眼下正在看的没有关系。 */
+          if (targetBox.repo !== forRepo) return
           if (result == null || result.ok !== true) {
             setProblem(commandDetail(result) || '远端操作失败')
             return
@@ -491,6 +548,33 @@
 
       return h('div', { className: 'dsh-git-set dsh-git-config' },
         scopeTabs,
+        /* ── 仓库组（多仓库）：下面三组读写的都是这里选中的仓库 ── */
+        h('div', { className: 'dsh-git-set-group' }, '仓库（这一页在编辑哪个仓库）'),
+        h('div', { className: 'dsh-git-set-hint' },
+          '下面的提交身份、远端、换行符编辑的都是这里选中的仓库，默认是当前生效仓库（带 ● 的行）。单击行只换本页的编辑目标 —— 面板的生效仓库（历史、提交、推送用的那个）不跟着换，要换生效仓库去「历史」或「变更」页的仓库列表。会话工作区本身不是仓库时这组照常可用：把仓库目录「＋ 添加目录」登记进来，就能直接配置它。'),
+        h(RepoSwitcher, {
+          key: 'cfg-repos',
+          sessionId: sessionId, pane: 'config', list: repoList, effective: effective,
+          pick: targetRepo,
+          onSingle: function (path) { pickRepo(path) },
+          /* 「＋ 添加目录」与历史页是同一份持久清单、同一套报错话术（saveManualRepo /
+             repoSaveProblem 都在 24-repos.js）；加成功的那一下顺手把新仓库选为本页
+             目标 —— 读者加它就是要在它身上做配置。移除的正好是本页目标时退回
+             生效仓库，别留在一条刚被移除的路径上。 */
+          onAdd: function (path) {
+            return saveManualRepo(sessionId, { add: path }).then(function (data) {
+              adoptTarget(text(path))
+              return data
+            })
+          },
+          onRemove: function (path) {
+            return saveManualRepo(sessionId, { remove: path }).then(function (data) {
+              if (text(path) === targetRepo) adoptTarget('')
+              return data
+            })
+          },
+        }),
+
         h('div', { className: 'dsh-git-set-group' }, '会话完成'),
         h('div', { className: 'dsh-git-set-hint' }, sessionHint),
 
@@ -510,7 +594,7 @@
             }),
             h('span', null, '所有会话都完成时自动推送')),
           h('span', { className: 'dsh-git-set-hint' },
-            '本页所有会话（含子代理会话）都停止运行且稳定 5 秒后，对当前生效仓库执行一次 push（等同顶栏 ↑）；只推「领先远端且没有未解决冲突」的分支，失败只记录不重试。')),
+            '本页所有会话（含子代理会话）都停止运行且稳定 5 秒后，对当前生效仓库执行一次 push（等同顶栏 ↑；生效仓库是页首「仓库」列表里带 ● 的那行，不随本页正在编辑的仓库走）；只推「领先远端且没有未解决冲突」的分支，失败只记录不重试。')),
 
         h('div', { className: 'dsh-git-set-row' },
           h('span', { className: 'dsh-git-set-label' }, '最近一次自动推送'),
@@ -556,12 +640,14 @@
           h('button', {
             type: 'button', className: 'dsh-git-btn dsh-git-primary',
             disabled: busy || inside !== true || (nameDraft.length === 0 && emailDraft.length === 0),
-            title: '把填了的键写进本项目的 .git/config；空着的框一个字节都不写',
+            title: '把填了的键写进' + (targetRepo.length > 0 ? ' ' + targetRepo + ' ' : '本项目')
+              + '的 .git/config；空着的框一个字节都不写',
             onClick: function () {
               const setPayload = {}
               if (nameDraft.length > 0) setPayload['user.name'] = nameDraft
               if (emailDraft.length > 0) setPayload['user.email'] = emailDraft
-              run({ set: setPayload }, '已写进本项目')
+              /* 提示行点名落点：多仓库之后「本项目」不再只有一个候选，写到哪要说全。 */
+              run({ set: setPayload }, '已写进 ' + (targetRepo.length > 0 ? targetRepo : '本项目') + ' 的 .git/config')
             },
           }, busy ? '写入中…' : '写入本项目'),
           h('button', {
@@ -3138,6 +3224,9 @@
            把它们刷新。 */
         body = h(GitConfigPane, {
           sessionId: sessionId, sessionAware: props.sessionAware === true,
+          /* 多仓库：项目档页首的「仓库」组吃的就是侧栏这份清单，默认编辑目标 =
+             生效仓库 —— 都从这里递进去，配置页自己不再解一遍。 */
+          repoList: repoList, effective: effectiveRepo,
           onChanged: function () { bump() },
         })
       } else {

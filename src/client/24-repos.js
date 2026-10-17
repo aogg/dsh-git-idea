@@ -5,8 +5,9 @@
 
          · 清单 —— Host 扫一遍工作区（git/repos），外加这个工作区手动登记过的仓库
            （git/repos-save，存在插件配置里，见 61-repos.js 的说明）；
-         · 选择态 —— 左栏分支树和变更页各自记住「当前在看哪几个仓库」；
-         · RepoSwitcher —— 两块侧栏共用的那列仓库行。
+         · 选择态 —— 左栏分支树和变更页各自记住「当前在看哪几个仓库」；配置页的项目档
+           另有一格「本页在编辑哪个仓库」（单选，见 repoViewsOf）；
+         · RepoSwitcher —— 两块侧栏共用的那列仓库行（配置页用它的受控单选变体）。
 
        扫描是**异步补**的：面板首帧先画它本来要画的东西，清单落地后多出一段。这里的
        状态全部住在模块层而不是 React state，理由和 10-state.js 的工作区读数相同 ——
@@ -138,7 +139,9 @@
     function repoViewsOf(sessionId) {
       const found = repoViews[sessionId]
       if (found !== undefined) return found
-      const fresh = { log: [], changes: [] }
+      /* config 这一格是配置页「本页在编辑哪个仓库」的：单选，但存的也是一维数组
+         （setRepoSelection 的过滤与比较对它同样成立），所以不走第二套账。 */
+      const fresh = { log: [], changes: [], config: [] }
       repoViews[sessionId] = fresh
       return fresh
     }
@@ -280,21 +283,30 @@
       return out
     }
 
-    /* props: sessionId、pane（'log'|'changes'）、list（repoListFor 的那份）、
-       effective（当前生效仓库路径；种进行当第一行之后的行）、
+    /* props: sessionId、pane（'log'|'changes' 多选模式；'config' 受控单选）、
+       list（repoListFor 的那份）、effective（当前生效仓库路径；种进行当第一行之后的行）、
+       pick（受控单选才给：本页正在编辑的仓库路径。给了它，单击行 = 换编辑目标，
+       不碰多选也不给「全部」；不给 = 两块侧栏的多选模式，行为与从前一字不差）、
        onSingle(path)、onAll()、onAdd(path)→Promise、onRemove(path)→Promise */
     function RepoSwitcher(props) {
       const sessionId = props.sessionId
       const pane = props.pane
       const list = props.list
       const effective = text(props.effective)
+      /* 受控单选（配置页在用）：选择态不住 repoViews 的多选账里，由调用方把 pick
+         传进来 —— 单击行只换本页的编辑目标，绝不改生效仓库。两块侧栏不传 pick，
+         走原来的多选。 */
+      const picking = props.pick !== undefined
+      const picked = text(props.pick)
       const shown = reposShown(list, effective)
       /* 同名仓库的短名（上面的 memo）：这一栏画行用它，两处分组头（50-log.js、
          54-changes.js）按同一份清单取同一个 map —— 一个仓库在面板里只有一个短名。 */
       const labels = repoLabelMap(shown)
-      const selection = repoSelection(sessionId, pane).filter(function (path) {
-        return shown.indexOf(path) >= 0 || list.missing.indexOf(path) >= 0
-      })
+      const selection = picking
+        ? (picked.length > 0 ? [picked] : [])
+        : repoSelection(sessionId, pane).filter(function (path) {
+          return shown.indexOf(path) >= 0 || list.missing.indexOf(path) >= 0
+        })
       const allOn = selection.length >= shown.length && shown.length > 0
       const [adding, setAdding] = React.useState(false)
       const [draft, setDraft] = React.useState('')
@@ -360,8 +372,9 @@
       if (folded) return h('div', { className: 'dsh-git-repo-box' }, rows)
 
       /* 「全部」在列表最前面。单击和 Ctrl+单击都是全选语义（需求如此：多选时再点
-         「全部」就是全选）；它永远不改生效仓库 —— 生效仓库只跟某个仓库行的单击走。 */
-      rows.push(h('div', {
+         「全部」就是全选）；它永远不改生效仓库 —— 生效仓库只跟某个仓库行的单击走。
+         受控单选没有「一起看」的形态（配置一次只写得了一个仓库），整行不给。 */
+      if (!picking) rows.push(h('div', {
         key: 'repo-all',
         className: 'dsh-git-repo-row' + (allOn ? ' dsh-git-repo-sel' : ''),
         title: '一起显示列表里所有仓库' + (pane === 'log' ? '的分支' : '的变更')
@@ -386,8 +399,11 @@
             + (isCur ? ' dsh-git-repo-cur' : '')
             + (picked ? ' dsh-git-repo-sel' : ''),
           title: path + (isCur ? '\n当前生效仓库：历史、提交、推送都作用在这里' : '')
-            + '\n单击 = 切换为生效仓库；Ctrl+单击 = 加入/移出多选',
+            + (picking
+              ? '\n单击 = 选中为本页正在编辑的仓库（提交身份、远端、换行符都改它；不改生效仓库）'
+              : '\n单击 = 切换为生效仓库；Ctrl+单击 = 加入/移出多选'),
           onClick: function (event) {
+            if (picking) { props.onSingle(path); return }
             if (event != null && (event.ctrlKey === true || event.metaKey === true)) {
               toggleRepoSelection(sessionId, pane, path)
               return

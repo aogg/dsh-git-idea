@@ -135,9 +135,9 @@ console.log('== 配置页「远端」组：清单一行一个远端，push 不�
 let tree = await openPanel()
 let mark53 = calls.length
 tree = await clickText53(tree, '配置')
-ok('进配置页问了一次 git/remotes（只带会话，路径由 Host 从会话解）',
+ok('进配置页问了一次 git/remotes（带会话；多仓库之后这页在编辑哪个仓库就明说哪条路径 —— 默认编辑目标 = 生效仓库 /tmp/ws）',
   callsOf53(mark53, 'git/remotes').length === 1 && callsOf53(mark53, 'git/remotes')[0].args.sessionId === 's-1'
-  && callsOf53(mark53, 'git/remotes')[0].args.repo === undefined)
+  && callsOf53(mark53, 'git/remotes')[0].args.repo === '/tmp/ws')
 ok('组头把话说全：「远端（这个仓库的 remote 清单）」',
   collect(tree).some((n) => hasClass53(n, 'dsh-git-set-group')
     && collect(n).some((s) => s.type === 'span' && textOf(s) === '远端（这个仓库的 remote 清单）')))
