@@ -1883,12 +1883,18 @@ const PATCH_SIDE = L(
   '-drop two',
   '+keep one',
   '+keep two',
-  '@@ -10,3 +10,3 @@ later',
+  '@@ -10,3 +10,4 @@ later',
   ' ctx tail',
   '-only old',
   '-only old two',
   '+only new',
-  '+plus extra')
+  '+plus extra',
+  '+plus extra two',
+  '@@ -20,3 +20,2 @@ deep',
+  ' ctx deep',
+  '-solo old',
+  '-solo old two',
+  '+solo new')
 const PATCH_WORDS = L(
   'diff --git a/words.txt b/words.txt',
   'index 1111111..2222222 100644',
@@ -1897,7 +1903,11 @@ const PATCH_WORDS = L(
   '@@ -1,2 +1,2 @@',
   '-foo bar',
   '+foo baz',
+  '@@ -5,2 +5,3 @@ mid',
+  '-solo old',
+  '+solo new',
   '+plain added whole',
+  '@@ -9,2 +9,2 @@ end',
   '-' + LONG_A,
   '+' + LONG_B)
 const PATCH_CR = L(
@@ -1960,25 +1970,31 @@ ok('第 2 个删配第 2 个加（左 drop two / 右 keep two，沟 3/3 —— �
   && halfTextOf(halfOf(pairTwo, 'new')) === 'keep two'
   && gutterOf(halfOf(pairTwo, 'old')) === '3' && gutterOf(halfOf(pairTwo, 'new')) === '3')
 
-/* 多出的 del：左半整行底色、右半留空（没有行号、没有记号、没有正文）。 */
-const loneDel = byClass(tree, 'dsh-git-dl-del').find(function (r) { return textOf(r).indexOf('only old two') >= 0 })
-ok('多出的 del 左半有行号、记号、正文（12 / − / only old two）',
-  loneDel !== undefined && gutterOf(halfOf(loneDel, 'old')) === '12'
-  && signOf(halfOf(loneDel, 'old')) === '-' && halfTextOf(halfOf(loneDel, 'old')) === 'only old two')
-ok('多出的 del 右半留空（dhalf-empty，无行号无记号无正文），行类不带 add',
-  loneDel !== undefined && String(halfOf(loneDel, 'new').props.className).indexOf('dsh-git-dhalf-empty') >= 0
-  && gutterOf(halfOf(loneDel, 'new')) === '' && signOf(halfOf(loneDel, 'new')) === ''
-  && halfTextOf(halfOf(loneDel, 'new')) === ''
-  && String(loneDel.props.className).indexOf('dsh-git-dl-add') < 0)
-
-/* 多出的 add 同理，左半留空。 */
-const loneAdd = byClass(tree, 'dsh-git-dl-add').find(function (r) { return textOf(r).indexOf('plus extra') >= 0 })
-ok('多出的 add 右半有行号、记号、正文（12 / + / plus extra），左半留空，行类不带 del',
-  loneAdd !== undefined && gutterOf(halfOf(loneAdd, 'new')) === '12'
-  && signOf(halfOf(loneAdd, 'new')) === '+' && halfTextOf(halfOf(loneAdd, 'new')) === 'plus extra'
-  && gutterOf(halfOf(loneAdd, 'old')) === '' && signOf(halfOf(loneAdd, 'old')) === ''
-  && halfTextOf(halfOf(loneAdd, 'old')) === ''
+/* 配对按「整块」的序来（夹在中间的行不断块）：2 删 3 加的块 —— 前两对配上，
+   第 3 个加多出来；2 删 1 加的块 —— 第 2 个删多出来。 */
+const pairThree = byClass(tree, 'dsh-git-dline').find(function (r) { return textOf(r).indexOf('only old two') >= 0 })
+ok('同块里第 2 个删配第 2 个加（only old two ↔ plus extra，沟 12/12）',
+  pairThree !== undefined && halfTextOf(halfOf(pairThree, 'old')) === 'only old two'
+  && halfTextOf(halfOf(pairThree, 'new')) === 'plus extra'
+  && gutterOf(halfOf(pairThree, 'old')) === '12' && gutterOf(halfOf(pairThree, 'new')) === '12')
+const loneAdd = byClass(tree, 'dsh-git-dl-add').find(function (r) { return textOf(r).indexOf('plus extra two') >= 0 })
+ok('多出的 add 右半有行号、记号、正文（13 / + / plus extra two），行类不带 del',
+  loneAdd !== undefined && gutterOf(halfOf(loneAdd, 'new')) === '13'
+  && signOf(halfOf(loneAdd, 'new')) === '+' && halfTextOf(halfOf(loneAdd, 'new')) === 'plus extra two'
   && String(loneAdd.props.className).indexOf('dsh-git-dl-del') < 0)
+ok('多出的 add 左半留空：没有行号、没有记号、没有正文（dhalf-empty）',
+  loneAdd !== undefined && gutterOf(halfOf(loneAdd, 'old')) === '' && signOf(halfOf(loneAdd, 'old')) === ''
+  && halfTextOf(halfOf(loneAdd, 'old')) === ''
+  && String(halfOf(loneAdd, 'old').props.className).indexOf('dsh-git-dhalf-empty') >= 0)
+const loneDel = byClass(tree, 'dsh-git-dl-del').find(function (r) { return textOf(r).indexOf('solo old two') >= 0 })
+ok('多出的 del 左半有行号、记号、正文（22 / − / solo old two），行类不带 add',
+  loneDel !== undefined && gutterOf(halfOf(loneDel, 'old')) === '22'
+  && signOf(halfOf(loneDel, 'old')) === '-' && halfTextOf(halfOf(loneDel, 'old')) === 'solo old two'
+  && String(loneDel.props.className).indexOf('dsh-git-dl-add') < 0)
+ok('多出的 del 右半留空：没有行号、没有记号、没有正文（dhalf-empty）',
+  loneDel !== undefined && gutterOf(halfOf(loneDel, 'new')) === '' && signOf(halfOf(loneDel, 'new')) === ''
+  && halfTextOf(halfOf(loneDel, 'new')) === ''
+  && String(halfOf(loneDel, 'new').props.className).indexOf('dsh-git-dhalf-empty') >= 0)
 
 /* ctx：左右 1:1，行号各就各位，记号都是空格，半列底色跟着 ctx 走。 */
 const ctxRow = byClass(tree, 'dsh-git-dl-ctx').find(function (r) { return textOf(r).indexOf('ctx tail') >= 0 })
@@ -2021,16 +2037,16 @@ ok('配上对的行做词级高亮：−foo bar / +foo baz 一共只有两个 dm
   wordPair !== undefined && byClass(wordPair, 'dsh-git-dmiss').length === 2
   && byClass(halfOf(wordPair, 'old'), 'dsh-git-dmiss').length === 1
   && byClass(halfOf(wordPair, 'new'), 'dsh-git-dmiss').length === 1)
-ok('公共部分不在 span 里：左半正文是裸文本「foo ba」后跟一个 dmiss（只包住 r）',
+ok('公共部分不在 span 里：左半正文是裸文本「foo 」在前，dmiss 只包住 bar',
   wordOldText !== undefined && Array.isArray(wordOldText.props.children)
-  && wordOldText.props.children[0] === 'foo ba'
+  && wordOldText.props.children[0] === 'foo '
   && String(wordOldText.props.children[1].props.className).indexOf('dsh-git-dmiss') >= 0
-  && textOf(wordOldText.props.children[1]) === 'r')
-ok('右半同样：裸文本「foo ba」后跟一个 dmiss（只包住 z）',
+  && textOf(wordOldText.props.children[1]) === 'bar')
+ok('右半同样：裸文本「foo 」在前，dmiss 只包住 baz',
   wordNewText !== undefined && Array.isArray(wordNewText.props.children)
-  && wordNewText.props.children[0] === 'foo ba'
+  && wordNewText.props.children[0] === 'foo '
   && String(wordNewText.props.children[1].props.className).indexOf('dsh-git-dmiss') >= 0
-  && textOf(wordNewText.props.children[1]) === 'z')
+  && textOf(wordNewText.props.children[1]) === 'baz')
 
 /* 没配上对的行（halfRow）不做词级高亮。 */
 const pureAdd = byClass(tree, 'dsh-git-dl-add').find(function (r) { return textOf(r).indexOf('plain added whole') >= 0 })
