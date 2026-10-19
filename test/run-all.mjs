@@ -35,9 +35,10 @@ const COUNTING = [
   'gp52-complete-badge-test.mjs',
   'gp53-client-test.mjs',
   'gp56-client-test.mjs',
+  'gp57-client-test.mjs',
 ]
 /* Suites that report by exit code and print their own lines. */
-const PROSE = ['gp34a-host-test.mjs', 'gp34d-config-test.mjs', 'gp34e-bridge-test.mjs', 'gp45-host-test.mjs', 'gp48-safedir-host-test.mjs', 'gp49-host-test.mjs', 'gp50-host-test.mjs', 'gp51-host-test.mjs', 'gp53-host-test.mjs', 'gp54-host-test.mjs', 'gp54-client-test.mjs', 'gp55-filesave-host-test.mjs', 'gp56-host-test.mjs']
+const PROSE = ['gp34a-host-test.mjs', 'gp34d-config-test.mjs', 'gp34e-bridge-test.mjs', 'gp45-host-test.mjs', 'gp48-safedir-host-test.mjs', 'gp49-host-test.mjs', 'gp50-host-test.mjs', 'gp51-host-test.mjs', 'gp53-host-test.mjs', 'gp54-host-test.mjs', 'gp54-client-test.mjs', 'gp55-filesave-host-test.mjs', 'gp56-host-test.mjs', 'gp57-host-test.mjs']
 
 /* ── GP_FRESH：不落仓库产物也做回归 ──
 
