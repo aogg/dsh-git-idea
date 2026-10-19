@@ -129,6 +129,145 @@
           }, '取消')))
     }
 
+    /* ── 推送确认弹窗（两段式推送的第一段；qc-overlay 里那块 qc-box）──
+
+       用户主动发起的推送都先过这里：git/push-preview 把将要推的提交列出来
+       （短 hash、说明、作者、相对时间），点「推送」才发真正的 git/push。
+       props.state 是面板那份 pushConfirm（branch/repo/setUpstream/preview/
+       loading/running/error），预览的读在面板自己的 effect 里 —— 组件只管画与手势。
+
+       几种形状：读取中一行灰字；预览失败把原话说在框内；上游已知列出提交行
+       （ahead 为 0 时没有可推的，按钮换成「关闭」）；没有上游翻成「设置上游并
+       推送」的说明态 —— 远端已在打开前挑好的（右键推送 / 横幅那两条，setUpstream
+       带着）直接说将执行什么；顶栏 ↑ 这条要到预览答复才知道，远端由面板按
+       guessPushRemote 同一套规矩猜好传进来（props.guess），猜不出时按钮不出、
+       props.guessNote 把出路（「修改跟踪分支…」）说出来。
+
+       推送中（running）按钮全禁、Esc 与点遮罩一起失效 —— 推到一半的推送没有
+       「取消」可言。useOutsideDismiss 的 onClose 闭包停在 open 翻真的那一帧
+       （effect 依赖只有 [open]），running 后来的变化它看不见，所以经 guard 盒子
+       每帧刷新最新的 onClose，旧闭包照样走到新判断（BranchPicker 的 live 盒子
+       同一个做法）。 */
+    function PushConfirmBox(props) {
+      const state = props.state
+      const preview = state.preview
+      const running = state.running === true
+      const loading = state.loading === true
+      const commits = preview != null && preview.ok === true && Array.isArray(preview.commits) ? preview.commits : []
+      const ahead = preview != null && typeof preview.ahead === 'number' ? preview.ahead : commits.length
+      const behind = preview != null && typeof preview.behind === 'number' ? preview.behind : 0
+      const noUpstream = preview != null && preview.ok === true && preview.upstream == null
+      const guess = text(props.guess)
+      /* 这次推送最终会以什么命令形状执行（按钮 title 与「将执行」那行都从这来）。
+         带 -u 的两个来处：打开前就定好的（setUpstream），与顶栏 ↑ 读完预览才发现
+         没有上游、按老规矩现猜的（guess）。 */
+      const command = state.setUpstream != null
+        ? 'git push -u ' + state.setUpstream.remote + ' ' + state.setUpstream.branch
+        : (noUpstream === true && guess.length > 0 ? 'git push -u ' + guess + ' ' + text(state.branch) : (noUpstream === true ? '' : 'git push'))
+      const upName = preview != null && text(preview.upstream).length > 0
+        ? text(preview.upstream)
+        : (state.setUpstream != null ? state.setUpstream.remote + '/' + state.setUpstream.branch : '')
+      const canPush = loading !== true && running !== true && command.length > 0
+        && (noUpstream === true || ahead > 0)
+      const [guard] = React.useState(function () { return { onClose: null } })
+      guard.onClose = props.onClose
+      useOutsideDismiss(props.open === true, function () {
+        if (typeof guard.onClose === 'function') guard.onClose()
+      }, [props.box])
+      if (props.open !== true) return null
+
+      const rows = []
+      for (let i = 0; i < commits.length; i += 1) {
+        const one = commits[i]
+        rows.push(h('div', {
+          key: text(one.hash) + ':' + String(i), className: 'dsh-git-trow',
+          title: text(one.hash) + (text(one.subject).length > 0 ? '\n' + text(one.subject) : ''),
+        },
+          h('span', { key: 'h', className: 'dsh-git-phash' }, text(one.short)),
+          h('span', { key: 's', className: 'dsh-git-psub' }, text(one.subject)),
+          h('span', { key: 'a', className: 'dsh-git-pwho' }, text(one.author)),
+          h('span', { key: 'd', className: 'dsh-git-pwhen' }, relativeDate(one.date))))
+      }
+
+      /* 标题与正文按读到的形状说：读取中、读失败、没有上游、没有可推的、正常列表。 */
+      const head = loading === true && preview == null
+        ? '推送：正在读取要推的提交…'
+        : (noUpstream === true
+            ? '「' + (text(state.branch).length > 0 ? text(state.branch) : 'HEAD') + '」还没有上游 —— 先设置上游并推送'
+            : (preview != null && preview.ok !== true
+                ? '推送：读不到要推的提交'
+                : (ahead === 0
+                    ? '推送 ' + (upName.length > 0 ? upName : '上游')
+                    : '推送 ' + String(ahead) + ' 个提交到 ' + (upName.length > 0 ? upName : '上游'))))
+      const body = []
+      if (loading === true && preview == null) {
+        body.push(h('div', { key: 'wait', className: 'dsh-git-hint' }, '正在读取要推送的提交…'))
+      } else if (preview != null && preview.ok !== true) {
+        const said = text(preview.stderr)
+        body.push(h('div', { key: 'bad', className: 'dsh-git-error', style: { whiteSpace: 'pre-wrap', fontSize: '11px', lineHeight: '16px' } },
+          said.length > 0 ? said : '读不到推送预览（git/push-preview 失败）'))
+      } else if (noUpstream === true) {
+        body.push(h('div', { key: 'cmd', className: 'dsh-git-hint' },
+          command.length > 0
+            ? '将执行 ' + command + '（绑定上游并推送）。确认后才会真正推送。'
+            : text(props.guessNote)))
+      } else {
+        if (ahead === 0) {
+          body.push(h('div', { key: 'none', className: 'dsh-git-hint' },
+            '当前分支与上游一致，没有要推送的提交'
+            + (behind > 0 ? '；本地同时落后上游 ' + String(behind) + ' 个提交 —— 推送会被拒绝，先 ↓ 拉取' : '')))
+        }
+        if (commits.length > 0) {
+          body.push(h('div', { key: 'list', className: 'dsh-git-pushlist' }, rows))
+          if (preview != null && preview.hasMore === true) {
+            body.push(h('div', { key: 'more', className: 'dsh-git-hint' },
+              '提交较多，只列出最新的 ' + String(commits.length) + ' 条 —— 确认后仍然全部推送'))
+          }
+        }
+        if (ahead > 0 && behind > 0) {
+          body.push(h('div', { key: 'behind', className: 'dsh-git-hint' },
+            '注意：本地同时落后上游 ' + String(behind) + ' 个提交，远端没动过才推得上去 —— 需要时先 ↓ 拉取再推'))
+        }
+      }
+      if (running === true) {
+        body.push(h('div', { key: 'run', className: 'dsh-git-hint' }, '推送中… 完成前这个框不会关，也不用再做别的。'))
+      }
+      if (text(state.error).length > 0) {
+        body.push(h('div', { key: 'err', className: 'dsh-git-error', style: { whiteSpace: 'pre-wrap', fontSize: '11px', lineHeight: '16px' } }, text(state.error)))
+      }
+
+      /* head / 正文各行 / 按钮排都是 qc-box 的直接孩子 —— 那块盒子是 flex 列、
+         gap:8px，中间不再垫一层（垫了就把行距全挤没了）。 */
+      const kids = [h('div', { key: 'h', className: 'dsh-git-qc-head' },
+        running === true ? h('span', { key: 'spin', className: 'dsh-git-spin' }, '↑') : null,
+        head)].concat(body)
+      kids.push(h('div', { key: 'a', className: 'dsh-git-qc-actions' },
+        canPush === true
+          ? h('button', {
+              key: 'go', type: 'button', className: 'dsh-git-btn dsh-git-primary',
+              disabled: running === true,
+              title: command + (noUpstream === true ? ' —— 绑定上游并推送' : ''),
+              onClick: function (event) { stopEvent(event); props.onPush(noUpstream === true) },
+            },
+              running === true
+                ? [h('span', { key: 's', className: 'dsh-git-spin' }, '↑'), ' 推送中…']
+                : (noUpstream === true ? '推送并设为上游（' + guess + '）' : '推送'))
+          : (loading !== true && running !== true
+              ? (preview != null && preview.ok !== true
+                  ? h('span', { key: 'idle', className: 'dsh-git-hint' }, '稍后重试')
+                  : (noUpstream === true
+                      ? null  /* 出路已经说在正文那行，按钮排不再补一句。 */
+                      : h('span', { key: 'idle', className: 'dsh-git-hint' }, '现在没有要推送的东西')))
+              : null),
+        h('button', {
+          key: 'no', type: 'button', className: 'dsh-git-btn',
+          disabled: running === true,
+          title: running === true ? '推送进行中，不能取消' : '关闭弹窗，不推送',
+          onClick: function (event) { stopEvent(event); props.onClose() },
+        }, running === true ? '推送中…' : (canPush === true ? '取消' : '关闭'))))
+      return h('div', { className: 'dsh-git-qc-box', ref: props.boxRef }, kids)
+    }
+
     function GitConfigPane(props) {
       const sessionId = props.sessionId
       /* 两档作用域：项目（本仓库的 .git/config）与全局（插件与这台机器，79-globalconfig.js）。
@@ -883,6 +1022,55 @@
          上面盖一层远端分支选择（RemotePickList，70-branchpicker.js，与 pull 的上游
          选择同一块板子）：点行 = ctxSetUpstream 绑定，层里的「取消跟踪」走 unset。 */
       const [upstreamPick, setUpstreamPick] = React.useState(null)
+      /* ── 推送确认弹窗（两段式推送的第一段；PushConfirmBox 渲染）──
+
+         用户主动发起的推送（顶栏 ↑、分支行右键「推送」、右栏「推送并设为上游」）
+         都改成两段式：先开这个框列出将推的提交，点「推送」才发真正的 git/push。
+         null 关着；非 null 是 { branch, repo, setUpstream, note, preview, loading,
+         running, error }：branch/repo 是要推的分支与它的仓库（空串 = 生效仓库的
+         当前分支）；setUpstream 非 null = 这次推的是 push -u（右键推送 / 横幅在
+         打开前就把远端挑好了，顶栏 ↑ 要等预览答复才知道有没有上游）；note 是成功
+         后上成功条的话（顶栏 ↑ 与老路一致不上条）；preview / loading / running /
+         error 是框自己的读与推。92-chip.js 的「所有会话完成自动推送」是后台自动化，
+         不开这个框 —— 两段式只管人点的推送。
+
+         pushBox.resolve 挂着 openPushConfirm 那个 promise 的出口：顶栏 ↑ 的
+         runSync 链靠它在弹窗收起的那一刻熄灯 —— ↑ 的转圈因此跨满整个弹窗生命期
+         （转着就点不动，顺手挡住了「弹窗开着再点一次 ↑」）；其余入口没人等这个
+         promise，接住丢掉即可。挂箱不挂 state：resolve 要在关闭动作的那一帧被
+         找到，而不是跟着某次渲染走（panelBox.refreshDone 同一个道理）。 */
+      const [pushConfirm, setPushConfirm] = React.useState(null)
+      const [pushBox] = React.useState(function () { return { resolve: null } })
+      /* 弹窗自己的节点盒：「点外面关掉」要把框算在里面（useOutsideDismiss 的
+         boxes），qc-box 的 ref 由 PushConfirmBox 的 boxRef 写进来。 */
+      const [pushBoxDom] = React.useState(function () { return { node: null } })
+      /* 弹窗的预览读：seed 一立（loading 且 preview 还空）就发 git/push-preview，
+         答复按发出时的那份 state 记名落座 —— 函数式更新里对不上号的直接丢，读者
+         已经关掉重开过一次的话，迟到的答复不许盖到新弹窗上。失败也折成 ok:false
+         落在框内：覆盖层把外面那条错误条盖住了，框必须自己会说。上游缺失那次推送
+         失败后的重读（pushConfirmRun 里把 preview 拍回 null）也走这一条。 */
+      React.useEffect(function () {
+        if (pushConfirm === null || pushConfirm.preview !== null || pushConfirm.loading !== true) return undefined
+        const seed = pushConfirm
+        const request = base(seed.repo)
+        if (seed.branch.length > 0) request.branch = seed.branch
+        let alive = true
+        rpc('git/push-preview', request, '读不到推送预览').then(function (reply) {
+          if (alive !== true) return
+          setPushConfirm(function (previous) {
+            if (previous !== seed) return previous
+            return Object.assign({}, previous, { preview: reply, loading: false })
+          })
+        }, function (failure) {
+          if (alive !== true) return
+          const said = failureText(failure)
+          setPushConfirm(function (previous) {
+            if (previous !== seed) return previous
+            return Object.assign({}, previous, { preview: { ok: false, stderr: said }, loading: false })
+          })
+        })
+        return function () { alive = false }
+      }, [pushConfirm])
       /* The file whose patch is on screen, and a counter the refresh button
          bumps. Null means the list the reader came from is on screen — the two
          lists that can open a diff (the changes tree, a commit's file list) both
@@ -2243,6 +2431,98 @@
          呼应）。仓库没有远端、或多远端而分支没有上游时，不发请求 —— 这两件事
          菜单替读者猜不出来，提示条把出路（「修改跟踪分支…」）指给他。远端清单从
          树同源的那份 refs 数据里拿，不为这一次推送新发请求。 */
+      /* ── 两段式推送：先弹确认框，点「推送」才真推 ──
+
+         四个入口都汇到 openPushConfirm：顶栏 ↑（当前分支、生效仓库）、分支行右键
+         「推送」的两条路（有上游按上游的远端 -u 重申；无上游挑好远端 -u 绑定）、
+         右栏横幅「推送并设为上游」。打开前就知道远端的入口把 setUpstream 带着进来
+         （PushConfirmBox 直接说将执行什么）；顶栏 ↑ 不带 —— 有没有上游要等预览
+         答复。返回的 promise 在弹窗收起时才落定：顶栏 ↑ 的 runSync 链等它熄灯，
+         其余入口没人等。
+
+         「没有上游」时框里按 ctxPush 原来那套规矩现猜远端（guessPushRemote：origin
+         优先 → 唯一远端 → 都不满足就不猜）：猜得出就给「推送并设为上游」的确认
+         按钮；猜不出把出路说成一句话（与 ctxPush 的两句提示同款话术），不开天窗、
+         也不发请求。 */
+      const pushConfirmData = pushConfirm === null ? null
+        : (text(pushConfirm.repo).length > 0 ? (repoRefs[pushConfirm.repo] !== undefined ? repoRefs[pushConfirm.repo] : null) : refs)
+      const pushGuessRemote = pushConfirm !== null && pushConfirm.setUpstream === null ? guessPushRemote(pushConfirmData) : ''
+      const pushGuessNote = (function () {
+        if (pushConfirm === null || pushConfirm.setUpstream !== null) return ''
+        if (pushConfirmData == null || pushConfirmData.ok !== true) return '读不到分支数据，无法判断往哪个远端推 —— 等分支列表读出来再试'
+        const remotes = Array.isArray(pushConfirmData.remote) ? pushConfirmData.remote : []
+        if (remotes.length === 0) return '这个仓库没有配置远端，无法推送'
+        return '该分支没有上游，仓库有多个远端，请先用分支行右键「修改跟踪分支…」指定远端'
+      })()
+
+      const closePushConfirm = function () {
+        setPushConfirm(null)
+        const done = pushBox.resolve
+        pushBox.resolve = null
+        if (typeof done === 'function') done()
+      }
+
+      const openPushConfirm = function (branch, repo, setUpstream, note) {
+        if (pushBox.resolve !== null) return Promise.resolve()
+        const seed = {
+          branch: text(branch), repo: text(repo),
+          setUpstream: setUpstream != null && typeof setUpstream === 'object'
+            ? { remote: text(setUpstream.remote), branch: text(setUpstream.branch) } : null,
+          note: text(note),
+          preview: null, loading: true, running: false, error: '',
+        }
+        setPushConfirm(seed)
+        return new Promise(function (resolve) { pushBox.resolve = resolve })
+      }
+
+      /* 第二段：真推。弹窗不关，进推送中态（按钮全禁、转圈、Esc/遮罩一起失效）；
+         成功关框 + bump + 成功条（note 为空 = 顶栏 ↑ 这条路，老行为本来就不上条）。
+         失败把 git 的原话留在框内，外面的错误条同步写一份 —— 弹窗一关它还在老
+         位置，失败后的补救与从前同一个地方。上游缺失的那次失败（预览之后上游被人
+         摘了这类竞态）把预览作废重读：读到没有上游，框自己翻出「推送并设为上游」
+         的重试按钮；setNeedsUpstream 一并立着，弹窗关掉后横幅照旧在 —— 横幅那条
+         老补救原样保留，只是推的动作进了框。 */
+      const pushConfirmRun = function (withUpstream) {
+        if (pushConfirm === null) return
+        const state = pushConfirm
+        if (state.running === true || state.loading === true) return
+        const setUpstream = withUpstream === true
+          ? (state.setUpstream != null ? state.setUpstream
+              : (pushGuessRemote.length > 0 ? { remote: pushGuessRemote, branch: state.branch } : null))
+          : null
+        /* 猜不出远端还硬来就是盲推 —— 按钮在这种情况下本来就不出现，这里再挡一道。 */
+        if (withUpstream === true && setUpstream == null) return
+        const payload = setUpstream != null
+          ? { setUpstream: true, remote: setUpstream.remote, branch: setUpstream.branch }
+          : {}
+        setPushConfirm(function (previous) {
+          return Object.assign({}, previous, { running: true, error: '' })
+        })
+        rpc('git/push', Object.assign({}, base(state.repo), payload), '推送失败').then(function () {
+          bump()
+          if (state.note.length > 0) setOkNote(state.note)
+          closePushConfirm()
+        }, function (failure) {
+          const said = failureText(failure)
+          bump()
+          setError(said)
+          const plainPush = setUpstream === null
+          const upstreamMiss = plainPush === true && said.indexOf('upstream') >= 0
+          if (upstreamMiss === true) setNeedsUpstream(true)
+          setPushConfirm(function (previous) {
+            /* 只有拿「没有上游」怪不了别人的那次失败才翻预览：带 -u 的推送失败
+               另有原因，框里已经有原话，重读只会把错误行顶掉。 */
+            return Object.assign({}, previous, {
+              running: false, error: said,
+              preview: upstreamMiss === true ? null : previous.preview,
+            })
+          })
+        })
+      }
+
+      /* 推送：两段式之后这里不再直接推。远端挑好就开确认框（openPushConfirm），
+          真正的推送在读者点「推送」之后由 pushConfirmRun 发 —— 命令与从前一次
+          不差，只是隔了一道确认。 */
       const ctxPush = function (name, repo) {
         const data = text(repo).length > 0 ? repoRefs[repo] : refs
         const upstream = upstreamOfBranch(name, repo)
@@ -2255,9 +2535,7 @@
         if (upstream.length > 0) {
           const slash = upstream.indexOf('/')
           const remote = slash > 0 ? upstream.slice(0, slash) : upstream
-          ctxRun('git/push', { setUpstream: true, remote: remote, branch: name }, repo, '推送失败', function () {
-            setOkNote('已推送 ' + name + ' 到 ' + upstream)
-          })
+          openPushConfirm(name, repo, { remote: remote, branch: name }, '已推送 ' + name + ' 到 ' + upstream)
           return
         }
         const remotes = data != null && data.ok === true && Array.isArray(data.remote) ? data.remote : []
@@ -2272,9 +2550,7 @@
             : '该分支没有上游，仓库有多个远端，请先用「修改跟踪分支…」指定远端')
           return
         }
-        ctxRun('git/push', { setUpstream: true, remote: chosen, branch: name }, repo, '推送失败', function () {
-          setOkNote('已推送 ' + name + ' 并绑定上游 ' + chosen + '/' + name)
-        })
+        openPushConfirm(name, repo, { remote: chosen, branch: name }, '已推送 ' + name + ' 并绑定上游 ' + chosen + '/' + name)
       }
 
       /* ── 多选的清空与修剪 ──
@@ -2692,7 +2968,16 @@
           { disabled: !repoOk || syncRunningKey('fetch'), running: syncRunningKey('fetch') }),
         tool('pull', '↓', 'pull：拉取并合入当前分支', function () { runSync('pull', function () { return runOp('git/pull', null, 'pull') }) },
           { disabled: !repoOk || syncRunningKey('pull'), running: syncRunningKey('pull'), badge: behind }),
-        tool('push', '↑', 'push：推送当前分支', function () { runSync('push', function () { return runOp('git/push', null, 'push') }) },
+        /* 两段式：↑ 先开推送确认框（openPushConfirm 的 promise 在弹窗收起时才落定，
+            runSync 链因此把 ↑ 的转圈与再点保护跨满整个弹窗生命期）。detached 时
+            没有分支名可确认，预览也无从谈起 —— 照旧直接推，git 自己的原话
+            （You are not currently on a branch）上错误条，行为一字不变。 */
+        tool('push', '↑', 'push：推送当前分支（先弹确认框列出要推的提交）', function () {
+          runSync('push', function () {
+            if (currentName.length === 0) return runOp('git/push', null, 'push')
+            return openPushConfirm(currentName, '', null, '')
+          })
+        },
           { disabled: !repoOk || syncRunningKey('push'), running: syncRunningKey('push'), badge: ahead }))
 
       const branchTitle = (currentName.length > 0 ? currentName : 'HEAD')
@@ -3001,9 +3286,12 @@
             : '该分支没有上游，仓库有多个远端 —— 请先用分支行右键「修改跟踪分支…」指定远端'),
         upstreamGuess.length > 0 ? h('button', {
           key: 'u', type: 'button', className: 'dsh-git-btn dsh-git-primary', disabled: busy,
-          title: 'git push -u ' + upstreamGuess + ' ' + currentName,
+          title: 'git push -u ' + upstreamGuess + ' ' + currentName + '（先弹确认框，点「推送」才真推）',
           onClick: function () {
-            runOp('git/push', { setUpstream: true, remote: upstreamGuess, branch: currentName })
+            /* 两段式：远端在这里挑好带进确认框，框里点「推送」才发（pushConfirmRun
+               发的命令与这行 title 一字不差）。横幅先留着 —— 确认成功关框时
+               setNeedsUpstream 还立着的话横幅还在，读者可以「忽略」掉它。 */
+            openPushConfirm(currentName, '', { remote: upstreamGuess, branch: currentName }, '')
           },
         }, '推送并设为上游（' + upstreamGuess + '）') : null,
         h('button', { key: 'n', type: 'button', className: 'dsh-git-btn', onClick: function () { setNeedsUpstream(false) } }, '忽略'))
@@ -3581,7 +3869,8 @@
         ctxMenu.remote === true ? null : h('button', {
           key: 'push', type: 'button', className: 'dsh-git-menu-item',
           title: 'git push -u <远端> ' + ctxMenu.name
-            + '：有上游按上游的远端推；没有上游绑 origin（或唯一远端）推',
+            + '：有上游按上游的远端推；没有上游绑 origin（或唯一远端）推'
+            + ' —— 先弹确认框列出要推的提交，点「推送」才真推',
           disabled: busy === true,
           onClick: function (event) {
             stopEvent(event)
@@ -3760,6 +4049,27 @@
                 onLocal: function () { ctxCheckoutRemoteLocal(remotePick) },
                 onReset: function () { ctxCheckoutRemoteReset(remotePick) },
                 onClose: function () { setRemotePick(null) },
+              }))
+          : null,
+        /* 推送确认弹窗（两段式推送的第一段）：同一块 qc-overlay 板子。点外（点在
+            底板上）与 Esc 都关 —— 推送中两道都失效（onClose 里挡），推到一半没有
+            「取消」可言；成功关框走 closePushConfirm，runSync 链在那一刻熄灯。 */
+        pushConfirm !== null
+          ? h('div', {
+              key: 'pushconfirm', className: 'dsh-git-qc-overlay',
+              onClick: function (event) {
+                if (event != null && event.target === event.currentTarget && pushConfirm.running !== true) closePushConfirm()
+              },
+            },
+              h(PushConfirmBox, {
+                key: 'box', open: true, state: pushConfirm,
+                box: pushBoxDom, boxRef: function (node) { pushBoxDom.node = node },
+                guess: pushGuessRemote, guessNote: pushGuessNote,
+                onPush: pushConfirmRun,
+                onClose: function () {
+                  if (pushConfirm.running === true) return
+                  closePushConfirm()
+                },
               }))
           : null,
         /* 右键菜单：光标锚的浮层（position:fixed）。挂在面板根部 —— 与 ⚡ 的下拉

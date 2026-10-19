@@ -340,6 +340,11 @@ onRpc('git/pull', async function (input) {
   return Object.assign(pulled, { upstreamSet: true, pulled: true, setUpstream: upstream })
 })
 
+/* 推送前的预览（66-refs.js 的 pushPreviewSnapshot）：两段式推送第一段要的「将推
+    哪些提交」清单。只读、进读缓存（寿命与 refs 同一条，理由在那边）；不带 desc
+    —— 读不进「命令」页，与 stage 那条注释说的是同一句。 */
+onRpc('git/push-preview', function (input) { return pushPreviewSnapshot(input) })
+
 onRpc('git/push', function (input) {
   if (input != null && input.setUpstream === true) {
     const remote = input != null && isStr(input.remote) && input.remote.trim().length > 0 ? input.remote.trim() : ''

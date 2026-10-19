@@ -673,6 +673,22 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-qc-box .dsh-git-picklist{flex:0 1 auto}
 .dsh-git-qc-box .dsh-git-picklist .dsh-git-bs-list{max-height:none;flex:0 1 auto;min-height:0}
 
+/* ── 推送确认弹窗（80-panel.js 覆盖层里挂 PushConfirmBox）──
+    提交行复用分支树那套 dsh-git-trow（行高、悬停反白同一个来处），行内四格的
+    宽度口径照抄日志行（dsh-git-subject/-author/-date）：说明占满、作者与时间
+    压暗收窄。清单在盒内自己滚，40vh 封顶 —— 提交再多弹窗也不顶出屏幕。「推送
+    中…」的转圈复用 dsh-git-spin：tool 键那条 display:inline-block 挂在
+    dsh-git-tool-run 底下，按钮这里不能整个 class 搬，给 qc-box 里的 spin 一条
+    自己的 display（transform 对 inline 元素不生效，同 80-panel.js tool 里那条
+    注释）。 */
+.dsh-git-pushlist{flex:0 1 auto;min-height:0;overflow:auto;max-height:40vh;padding:2px;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;background:var(--dsh-alias-bg-base)}
+.dsh-git-pushlist .dsh-git-trow{cursor:default}
+.dsh-git-phash{flex:none;width:64px;overflow:hidden;text-overflow:ellipsis;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:var(--dsw-alias-label-secondary)}
+.dsh-git-psub{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.dsh-git-pwho{flex:none;width:110px;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-secondary);font-size:11px}
+.dsh-git-pwhen{flex:none;color:var(--dsw-alias-label-secondary);font-size:11px}
+.dsh-git-qc-box .dsh-git-spin{display:inline-block}
+
 /* ── 三方合并冲突界面（59-merge.js）：三栏只读 + 可编辑结果区 ──
     色块的口径与 55-diff 的加/删底色同一套做法：主题里没有「淡蓝/淡黄的一块」这
     种令牌，用固定 rgba（14% 上下在浅色和深色底上都读得出来）。四色各有其职：

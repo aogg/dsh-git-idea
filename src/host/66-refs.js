@@ -216,6 +216,80 @@ async function branchesSnapshot(input) {
   return await cached(repo, 'branches', function () { return readBranches(input, repo) })
 }
 
+/* ── 推送前的预览（git/push-preview，两段式推送的第一段）──
+
+   「用户主动发起」的推送在面板里是两段式：先弹确认框列出要推哪些提交，读者点
+   「推送」才真推。这一读就是那半句「问」：某个分支领先它上游的提交清单。
+
+   branch 参数为空 = 面板顶栏 ↑ 那条路 —— 当前分支；非空 = 分支行右键「推送」
+   那条路 —— 被右键的那个分支（它不一定是当前分支，多选分组里甚至不属于生效
+   仓库，所以上游也按 <分支>@{u} 问，不按 HEAD 猜）。没有上游不是错误：ok:true
+   带 upstream:null 回去 —— 弹窗那半要的正是这个事实，它自己走「设置上游并推
+   送」的选择流程，Host 不替读者挑远端。
+
+   ahead / behind 用 rev-list --left-right --count 的 <up>...<branch> 一条拿全
+   （左列是落后、右列是领先，顺序 git 定死）；清单用 log，pretty 串与 64-history.js
+   的图同一份，解析直接复用 parseCommitRecords —— 弹窗行吃的就是日志行那套字段
+   （作者、相对时间），不再另造一个解析器。上限 200 条：预览是给人过目的，不是
+   完整变更集，顶满就带 hasMore 说一声。进读缓存（tag push-preview，按分支各一
+   份），寿命与 refs 相同 —— 真推送、提交、fetch 都会整仓失效，弹窗开着期间上游
+   被人动了，下一次打开读到的就是新账。 */
+const PUSH_PREVIEW_MAX = 200
+
+async function readPushPreview(input, repo) {
+  const args = argsFor(input)
+  const branch = input != null && isStr(input.branch) && input.branch.trim().length > 0 ? input.branch.trim() : ''
+  /* 分支名（branch 为空时才要问 HEAD）：detached 答不上来 —— 连名字都没有就谈
+     不上上游，branch:null 回去，弹窗把这句话说给读者。 */
+  let name = branch
+  if (name.length === 0) {
+    const sym = await git(args, ['symbolic-ref', '--quiet', '--short', 'HEAD'], null, {})
+    if (sym.exitCode !== 0) {
+      return { ok: true, repo: sym.cwd, branch: null, upstream: null, ahead: 0, behind: 0, hasMore: false, maxCount: PUSH_PREVIEW_MAX, commits: [] }
+    }
+    name = sym.stdout.trim()
+  }
+  const upstream = await git(args, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', name + '@{u}'], null, {})
+  if (upstream.exitCode !== 0) {
+    return { ok: true, repo: upstream.cwd, branch: name, upstream: null, ahead: 0, behind: 0, hasMore: false, maxCount: PUSH_PREVIEW_MAX, commits: [] }
+  }
+  const up = upstream.stdout.trim()
+  const range = up + '..' + name
+  const listed = await git(args, ['-c', 'core.quotePath=false', 'log', '--max-count=' + String(PUSH_PREVIEW_MAX + 1), '--date-order',
+    '--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s%x1f%D%x1f%P%x1e', range], null, {})
+  if (listed.exitCode !== 0) {
+    return { ok: false, repo: listed.cwd, branch: name, upstream: up, error: 'not-a-repository', stderr: listed.stderr, noGit: gitMissing(listed), commits: [] }
+  }
+  const parsed = parseCommitRecords(listed.stdout)
+  const hasMore = parsed.length > PUSH_PREVIEW_MAX
+  const commits = hasMore ? parsed.slice(0, PUSH_PREVIEW_MAX) : parsed
+  /* ahead 先拿清单条数垫底，rev-list 答得上来再用精确值 —— 两读之间仓库又动了
+     的话两者可能差一条，弹窗里的行数以清单为准，这里的数只喂标题与「落后」提醒。 */
+  let ahead = commits.length
+  let behind = 0
+  const counted = await git(args, ['rev-list', '--left-right', '--count', up + '...' + name], null, {})
+  if (counted.exitCode === 0) {
+    const parts = counted.stdout.trim().split('\t')
+    if (parts.length === 2) {
+      behind = parseInt(parts[0], 10) || 0
+      const exact = parseInt(parts[1], 10) || 0
+      if (exact > 0) ahead = exact
+    }
+  }
+  return {
+    ok: true, repo: listed.cwd, branch: name, upstream: up,
+    ahead: ahead, behind: behind, hasMore: hasMore, maxCount: PUSH_PREVIEW_MAX,
+    commits: commits,
+  }
+}
+
+async function pushPreviewSnapshot(input) {
+  const repo = repoFrom(input, null)
+  const tag = 'push-preview' + (input != null && isStr(input.branch) && input.branch.trim().length > 0 ? '|' + input.branch.trim() : '')
+  if (repo === undefined) return await readPushPreview(input, undefined)
+  return await cached(repo, tag, function () { return readPushPreview(input, repo) })
+}
+
 async function previousBranch(input) {
   const prev = await git(argsFor(input), ['rev-parse', '--abbrev-ref', '@{-1}'], null, {})
   if (prev.exitCode !== 0) return ''
