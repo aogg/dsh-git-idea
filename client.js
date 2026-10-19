@@ -10553,16 +10553,37 @@ textarea.dsh-git-input{resize:vertical}
       /* Refresh has to actually re-read. The Host memoises reads per repository,
          so the button first drops that repository's cached entries and only then
          bumps the counter every read effect below depends on. Without the flush
-         it would repaint stale data and look like nothing happened. */
+         it would repaint stale data and look like nothing happened.
+
+         ── ⟳ 与屏上打开的差异 ──
+
+         差异头部那只 ⟳（55-diff.js 的「重新读取这个文件的差异」）只换补丁：视图
+         不动、补丁重读。工具条这只 ⟳ 过去只管整棵树：落地后变更列表是**新账**，
+         可打开的那块补丁原样停在刷新前 —— diffSig 只在「这一行的样子变了」时才动，
+         一行没变补丁就不重读；选区/多选又被下面清掉，选区合并查看开出来的差异连
+         右列与来路一起没了。读者看到的正是「点仓库时差异是新的，⟳ 之后差异就没了
+         （不再是对的东西）」——两只刷新键在「读者正盯着的那块屏」上各说各话。
+
+         统一的语义按差异头部那只来：⟳ 落地的那一拍把 diffAt 也 +1（diffSig 随之
+         变，DiffView 的读取 effect 按新账重发 git/diff），视图本身不关 —— diffTarget
+         原样留着，这一行还在变更列表里的话，由「打开的差异跟着这一行现在的样子走」
+         那段按新行重对；选区视图（kind 'range'）的 ref 是 base..head，同样重读得动。
+         +1 放在挂箱的落地回调里而不是点击那一刻：转圈停了看到的就是新补丁，而且
+         那时整树读已落地，行的新样子已定，一次 ⟳ 至多重读一遍补丁。函数式更新：
+         刷新期间读者若点过差异头部的 ⟳，两下各加各的，不互相顶掉。 */
       const refresh = function () {
         setArmed('')
         /* 刷新 = 整棵树重读：多选对着的是旧列表，一并清掉（见下面那个筛选 effect 的
-           注释）。 */
+           注释）。差异视图不在这行里清 —— 见上面的「⟳ 与屏上打开的差异」。 */
         setMultiSel([])
         setOkNote('')
         /* ⟳ 的熄灯时机是这次重读真正落地，不是 flush 回来 —— flush 只保证下一读不作弊。
-           回调挂 panelBox.refreshDone，loadWork 的落地点（settleRefresh）调掉。 */
-        panelBox.refreshDone = function () { setSyncKey('refresh', false) }
+           回调挂 panelBox.refreshDone，loadWork 的落地点（settleRefresh）调掉；熄灯的
+           同一拍把打开的差异换新账（见上面的注释）。 */
+        panelBox.refreshDone = function () {
+          setSyncKey('refresh', false)
+          setDiffAt(function (previous) { return previous + 1 })
+        }
         setSyncKey('refresh', true)
         reloadChanges()
       }
