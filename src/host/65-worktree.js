@@ -16,8 +16,10 @@
    这里剥成短名；detached 的记录没有 branch 行；bare 的记录只有 worktree / bare 两行。 */
 async function readWorktrees(input, repo) {
   const args = argsFor(input)
-  /* 不用 gitC：porcelain 的关键字与顺序是固定的，这条输出里没有会被翻译的词。 */
-  const listed = await git(args, ['worktree', 'list', '--porcelain'], null, {})
+  /* gitC + core.quotePath=false（66-refs.js readRefs 同一组合）：porcelain 的关键字
+     本身不会被翻译，但 locked 的原因会按 quotePath 规则把非 ASCII 原因引成八进制
+     （实测：`locked "\345\217\230..."`），关掉它 tooltip 里才是人话。 */
+  const listed = await gitC(args, ['-c', 'core.quotePath=false', 'worktree', 'list', '--porcelain'], null, {})
   if (listed.exitCode !== 0) {
     return { ok: false, repo: repo === undefined ? null : repo, error: 'not-a-repository', stderr: listed.stderr, noGit: gitMissing(listed), worktrees: [] }
   }
