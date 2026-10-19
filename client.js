@@ -2391,6 +2391,12 @@ return {
 .dsh-git-input{box-sizing:border-box;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);border-radius:4px;padding:4px 6px;font-size:12px;font-family:inherit;width:100%}
 textarea.dsh-git-input{resize:vertical}
 .dsh-git-info{border-top:1px solid var(--dsw-alias-border-l1);margin-top:8px;padding-top:6px;display:flex;flex-direction:column;gap:3px}
+/* 选区视图（多选合并查看）的标题行：「n 条提交合并视图」要一眼认得出这不是单提交
+   详情，退出的按钮就住同一行。 */
+.dsh-git-rangehead{display:flex;align-items:center;gap:8px;padding:2px 0 4px 0;border-bottom:1px solid var(--dsw-alias-border-l1)}
+.dsh-git-rangetitle{font-weight:600;font-size:12px}
+/* 选区不连续时详情栏顶部那条置灰入口（多选合并查看的「为什么点不动」）。 */
+.dsh-git-rangeblock{flex:none;padding:5px 8px;border-bottom:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-secondary);font-size:11px;background:var(--dsw-alias-bg-layer-1)}
 .dsh-git-hash{font-family:ui-monospace,monospace;font-size:11px;word-break:break-all}
 .dsh-git-msg{background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l1);border-radius:6px;padding:6px;white-space:pre-wrap;font-size:11px;max-height:120px;overflow:auto}
 .dsh-git-error{color:var(--dsw-alias-state-error-primary)}
@@ -3435,6 +3441,72 @@ textarea.dsh-git-input{resize:vertical}
           h('div', { className: 'dsh-git-dim' }, detail.date.replace('T', ' ').slice(0, 16)),
           h('div', { className: 'dsh-git-dim' }, '所在分支：' + inBranches),
           h('div', { className: 'dsh-git-msg' }, fullMessage)))
+    }
+
+    /* ── 选区视图：多选且连续时，详情栏的「n 条提交合并视图」 ──
+
+       IDEA 的多选提交可以合并看改动：详情栏不再是单提交的信息，而是 base..head
+       这段的合计文件清单（标题把「合并视图」说在明处）。文件树的行构造与单提交
+       详情共用同一套 buildTree/flattenTree/状态字母；点文件走 onOpenDiff —— 面板
+       把它接成 base..head 的差异，返回箭头回到这里（差异视图的既有习惯）。
+
+       退出有两手：右上角「退出合并视图」（清掉多选），或 Ctrl+点击把行逐条移出
+       —— 视图跟着 multiSel 走，多选没了它自然让位。 */
+    function RangeDetail(props) {
+      const span = props.span
+      const reply = props.reply
+      const files = reply != null && reply.ok === true && Array.isArray(reply.files) ? reply.files : null
+      const rows = []
+      if (files !== null) {
+        const entries = []
+        for (let i = 0; i < files.length; i += 1) {
+          const path = text(files[i].path)
+          if (path.length === 0) continue
+          entries.push({ segments: path.split('/'), data: files[i] })
+        }
+        const tree = buildTree(entries)
+        /* 末位 false：文件树不压扁，每个目录段独立一行（与单提交详情同一条规矩）。 */
+        const flat = flattenTree(tree, 0, '@files', props.collapsed, [], '@files', false)
+        for (let i = 0; i < flat.length; i += 1) {
+          const node = flat[i]
+          if (node.kind === 'dir') {
+            rows.push(treeDirRow(node, props, String(node.count) + ' 个文件'))
+            continue
+          }
+          const file = node.data || {}
+          rows.push(h('div', {
+            className: 'dsh-git-trow' + (props.selectedKey === node.id ? ' dsh-git-trow-sel' : ''),
+            key: node.id,
+            style: { paddingLeft: (6 + node.depth * 12) + 'px' },
+            title: text(file.path) + '（点开看这段的合计差异）',
+            onClick: function () {
+              props.onSelect(node.id)
+              if (typeof props.onOpenDiff === 'function') props.onOpenDiff(file)
+            },
+          },
+            h('span', { className: 'dsh-git-tw' }),
+            h('span', { className: 'dsh-git-st' + statusClass(file.status) }, statusLabel(file.status)),
+            h('span', { className: 'dsh-git-tname' }, node.name)))
+        }
+      }
+      return h('div', { className: 'dsh-git-detail' },
+        h('div', { className: 'dsh-git-rangehead' },
+          h('span', { className: 'dsh-git-rangetitle' }, String(span.targets.length) + ' 条提交合并视图'),
+          h('span', { className: 'dsh-git-dim' }, text(props.rangeLabel)),
+          h('button', {
+            type: 'button', className: 'dsh-git-btn',
+            title: '退出合并视图（清掉多选，回到单提交详情）',
+            onClick: function () { if (typeof props.onExit === 'function') props.onExit() },
+          }, '退出合并视图')),
+        files !== null
+          ? [h('div', { key: 't', className: 'dsh-git-group-title' }, String(files.length) + ' 个文件（合计）'), rows]
+          : h('div', { className: 'dsh-git-dim', style: { padding: '6px' } },
+              reply != null && reply.ok !== true
+                ? (text(reply.stderr).length > 0 ? text(reply.stderr) : '读不到这段提交的合计改动')
+                : '正在读取这段提交的合计改动…'),
+        h('div', { className: 'dsh-git-info' },
+          h('div', { className: 'dsh-git-dim' }, '从 ' + text(props.baseShort) + ' 到 ' + text(props.headShort)
+            + ' 的合计改动（不含 ' + text(props.baseShort) + ' 本身）')))
     }
 
     /* ── one path, two shapes ──
@@ -4892,6 +4964,8 @@ textarea.dsh-git-input{resize:vertical}
        its own heading. A commit's file is one read; an untracked file has no
        HEAD side at all. */
     function diffRequests(target) {
+      /* 选区视图（多选合并查看）的一只文件：base..head 整段。 */
+      if (target.kind === 'range') return [{ key: 'range', label: '', mode: 'range', ref: target.ref }]
       if (target.kind === 'commit') return [{ key: 'commit', label: '', mode: 'commit', ref: target.ref }]
       if (target.untracked === true) return [{ key: 'untracked', label: '新文件', mode: 'untracked' }]
       const out = []
@@ -8771,6 +8845,79 @@ textarea.dsh-git-input{resize:vertical}
        display:contents 包裹层（.dsh-git-layer）直达真正的定位容器；实在问不到容器
        （没有布局的环境）就退化为面板自己 —— 面板贴着容器上沿（bottom:100% 加
        margin-bottom:8px），容器上沿 ≈ 面板 top + 面板高 + 8。 */
+    /* ── 历史页多选与右键的三个纯函数 ──
+
+       Shift+点击的范围、右键动作的目标集、多选合并查看的连续性，都是「对着眼前
+       graph.commits」的纯计算 —— 放在组件外面，单测可以从产物里整段抽出来验。
+
+       图上的 commits 永远按新→旧排（git log 的顺序），下面所有「顺序」说的都是它。 */
+
+    /* 右键动作的目标集（PhpStorm：动作作用于 selection）：右键行在多选里且多选
+       多于一条时 = 整份 multiSel（按图序，新→旧）；否则就是右键那一条。 */
+    function ctxTargetHashes(hash, multi) {
+      if (Array.isArray(multi) && multi.length > 1 && multi.indexOf(hash) >= 0) return multi.slice()
+      return [hash]
+    }
+
+    /* Shift+点击的范围：锚点行到本次点击行（谁新谁旧都行），按图顺序整段（含两端）。
+       任一行不在眼前这份列表里（筛选变了、图重读了）返回 null —— 调用方退化为
+       普通单选，不猜。 */
+    function graphSliceBetween(commits, from, to) {
+      if (!Array.isArray(commits)) return null
+      let a = -1
+      let b = -1
+      for (let i = 0; i < commits.length; i += 1) {
+        const hash = commits[i] != null ? commits[i].hash : undefined
+        if (hash === from && a < 0) a = i
+        if (hash === to && b < 0) b = i
+      }
+      if (a < 0 || b < 0) return null
+      const out = []
+      if (a <= b) {
+        for (let i = a; i <= b; i += 1) out.push(commits[i].hash)
+      } else {
+        for (let i = b; i <= a; i += 1) out.push(commits[i].hash)
+      }
+      return out
+    }
+
+    /* 多选的「段」：按图序挑出选区行（新→旧），并回答合并查看/整段改写关心的三件事：
+       contiguous —— 相邻两条里，较新一条的 hash 必须出现在较旧一条的 parents 里
+       （这才是「可以整段重写」的一条链）；base —— 最旧一条的第一父提交（squash /
+       drop 的区间起点）；head —— 最新一条（它同时是 HEAD 才能动整段）。选区里有行
+       已不在图上、或不足两条，返回 null。 */
+    function selectionSpan(commits, multi) {
+      if (!Array.isArray(multi) || multi.length < 2 || !Array.isArray(commits)) return null
+      const picked = []
+      for (let i = 0; i < commits.length; i += 1) {
+        const row = commits[i]
+        const hash = row != null ? row.hash : undefined
+        if (typeof hash !== 'string' || multi.indexOf(hash) < 0 || picked.indexOf(hash) >= 0) continue
+        picked.push(hash)
+      }
+      if (picked.length !== multi.length) return null
+      const byHash = {}
+      for (let i = 0; i < commits.length; i += 1) {
+        const row = commits[i]
+        if (row != null && typeof row.hash === 'string') byHash[row.hash] = row
+      }
+      let contiguous = true
+      for (let i = 0; i + 1 < picked.length; i += 1) {
+        const newer = byHash[picked[i]]
+        const parents = newer != null && Array.isArray(newer.parents) ? newer.parents : []
+        if (parents.indexOf(picked[i + 1]) < 0) { contiguous = false; break }
+      }
+      const oldest = byHash[picked[picked.length - 1]]
+      const base = oldest != null && Array.isArray(oldest.parents) && oldest.parents.length > 0
+        ? oldest.parents[0] : ''
+      return { targets: picked, contiguous: contiguous, base: base, head: picked[0] }
+    }
+
+    /* hash 的短写：菜单与提示条里的「短 hash」就是前 7 位（git 的默认短写）。 */
+    function hashShort(hash) {
+      return typeof hash === 'string' && hash.length > 7 ? hash.slice(0, 7) : text(hash)
+    }
+
     const panelAnchorBox = function (node) {
       if (node == null) return null
       const host = node.offsetParent != null ? node.offsetParent : node.parentElement
@@ -9021,6 +9168,123 @@ textarea.dsh-git-input{resize:vertical}
           onClick: function (event) { stopEvent(event); props.onClose() },
         }, running === true ? '推送中…' : (canPush === true ? '取消' : '关闭'))))
       return h('div', { className: 'dsh-git-qc-box', ref: props.boxRef }, kids)
+    }
+
+    /* ── 「编辑提交消息…」对话框（reword）──
+
+       qc-box 覆盖层家族的一块（qc-overlay 里那块 qc-box）：打开时原始消息已经由
+       面板的 seed effect 预填进 textarea；Ctrl/Cmd+Enter 保存、Esc 取消（Esc 走
+       useOutsideDismiss，捕获阶段的 document 监听 —— 读者多半刚点完右键，焦点
+       还不在框内）；保存中按钮全禁，错误说在框内。 */
+    function RewordMessageBox(props) {
+      const state = props.state
+      const running = state.running === true
+      const canSave = running !== true && text(state.message).trim().length > 0
+      const [box] = React.useState(function () { return { node: null } })
+      useOutsideDismiss(true, function () {
+        if (running !== true) props.onClose()
+      }, [box])
+      const onKey = function (event) {
+        if (event.key === 'Enter' && (event.ctrlKey === true || event.metaKey === true)) {
+          event.preventDefault()
+          if (canSave === true) props.onSave()
+          return
+        }
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          if (running !== true) props.onClose()
+        }
+      }
+      return h('div', { className: 'dsh-git-qc-box', ref: function (node) { box.node = node }, onKeyDown: onKey },
+        h('div', { key: 'h', className: 'dsh-git-qc-head' },
+          '编辑提交消息 ' + hashShort(state.hash),
+          running === true ? h('span', { key: 's', className: 'dsh-git-spin' }, '…') : null),
+        h('div', { key: 'hint', className: 'dsh-git-hint' },
+          '改写会换掉这个提交（以及它之后所有提交）的 hash —— 已推送的提交改写要强推。保存前一个字节都不会动。'),
+        h('textarea', {
+          key: 'ta', className: 'dsh-git-input', rows: 8,
+          value: text(state.message),
+          disabled: running === true,
+          placeholder: '这条提交的完整消息（标题 + 空行 + 正文）',
+          onChange: function (event) { props.onMessage(event.target.value) },
+        }),
+        text(state.error).length > 0
+          ? h('div', { key: 'err', className: 'dsh-git-error', style: { whiteSpace: 'pre-wrap', fontSize: '11px', lineHeight: '16px' } }, text(state.error))
+          : null,
+        h('div', { key: 'a', className: 'dsh-git-qc-actions' },
+          h('button', {
+            key: 'ok', type: 'button', className: 'dsh-git-btn dsh-git-primary',
+            disabled: canSave !== true,
+            title: 'git ' + (running === true ? '正在改写…' : 'commit --amend / rebase -i，把这条消息写进提交'),
+            onClick: function (event) { stopEvent(event); if (canSave === true) props.onSave() },
+          }, running === true ? '改写中…' : '保存'),
+          h('button', {
+            key: 'no', type: 'button', className: 'dsh-git-btn',
+            disabled: running === true,
+            onClick: function (event) { stopEvent(event); props.onClose() },
+          }, '取消')))
+    }
+
+    /* ── 「合并提交… / 批量删除提交…」的确认框（作用于整个选区）──
+
+       列出选区提交（消息由 git/commit-messages 取，合并消息从它们预填、可编辑）；
+       删除那档把「连同改动一并丢弃」说在前头。确认即关框发动作（拣选/还原同一条
+       「动作发起即关」的规矩），失败错误条可见。 */
+    function SelRewriteBox(props) {
+      const state = props.state
+      const squash = state.mode === 'squash'
+      const rows = Array.isArray(state.list) ? state.list.slice().reverse() : []
+      const [box] = React.useState(function () { return { node: null } })
+      useOutsideDismiss(true, props.onClose, [box])
+      const onKey = function (event) {
+        if (event.key === 'Enter' && (event.ctrlKey === true || event.metaKey === true)) {
+          event.preventDefault()
+          props.onConfirm()
+          return
+        }
+        if (event.key === 'Escape') { event.preventDefault(); props.onClose() }
+      }
+      return h('div', { className: 'dsh-git-qc-box', ref: function (node) { box.node = node }, onKeyDown: onKey },
+        h('div', { key: 'h', className: 'dsh-git-qc-head' },
+          squash === true
+            ? '合并选中的 ' + String(state.targets.length) + ' 条提交'
+            : '删除选中的 ' + String(state.targets.length) + ' 条提交'),
+        state.loading === true
+          ? h('div', { key: 'wait', className: 'dsh-git-hint' }, '正在读取选区提交…')
+          : h('div', { key: 'list', className: 'dsh-git-pushlist' }, rows.map(function (one, at) {
+              return h('div', {
+                key: text(one.hash) + ':' + String(at), className: 'dsh-git-trow',
+                title: text(one.hash) + (text(one.message).length > 0 ? '\n' + text(one.message) : ''),
+              },
+                h('span', { key: 'h', className: 'dsh-git-phash' }, hashShort(one.hash)),
+                h('span', { key: 's', className: 'dsh-git-psub' }, text(one.subject)))
+            })),
+        squash === true
+          ? h('textarea', {
+              key: 'ta', className: 'dsh-git-input', rows: 6,
+              value: text(state.message),
+              placeholder: '合并后这一条的完整消息（已按各提交的消息拼好，可以改）',
+              onChange: function (event) { props.onMessage(event.target.value) },
+            })
+          : h('div', { key: 'warn', className: 'dsh-git-hint' },
+              '删除会把这些提交**连同它们带来的改动一并丢弃** —— 工作区里将看不到这些改动。提交本身在 reflog 里还能找约 30 天，成功后成功条会把找回的命令给全。'),
+        text(state.error).length > 0
+          ? h('div', { key: 'err', className: 'dsh-git-error', style: { whiteSpace: 'pre-wrap', fontSize: '11px', lineHeight: '16px' } }, text(state.error))
+          : null,
+        h('div', { key: 'a', className: 'dsh-git-qc-actions' },
+          h('button', {
+            key: 'ok', type: 'button',
+            className: 'dsh-git-btn dsh-git-primary' + (squash !== true ? ' dsh-git-danger' : ''),
+            disabled: state.loading === true || (squash === true && text(state.message).trim().length === 0),
+            title: squash === true
+              ? 'git reset --soft 到选区最旧一条的父提交，再把合计改动提交为一条'
+              : 'git reset --hard 到选区最旧一条的父提交 —— 提交与改动一起消失',
+            onClick: function (event) { stopEvent(event); props.onConfirm() },
+          }, squash === true ? '合并为一条' : '确认删除'),
+          h('button', {
+            key: 'no', type: 'button', className: 'dsh-git-btn',
+            onClick: function (event) { stopEvent(event); props.onClose() },
+          }, '取消')))
     }
 
     function GitConfigPane(props) {
@@ -9740,6 +10004,16 @@ textarea.dsh-git-input{resize:vertical}
          挑进/移出这份集合；拣选/还原/标签/分支按钮仍作用于单选那条。存的是 hash 数组，
          顺序跟着图走（图重读后会按眼前的列表修剪一次）。 */
       const [multiSel, setMultiSel] = React.useState([])
+      /* ── Shift+点击范围多选的锚点行 ──
+
+         锚点 = 最近一次普通点击或 Ctrl 点击的那行；Shift 点击以它为起点扩一段，
+         且不动锚点（可以连续扩）。挂箱不挂 state（pushBox.resolve 同一个先例）：
+         pickCommit 是 memo 化提交行共用的 useCallback，锚点若进 state 就得进依赖，
+         行级记忆全被打破 —— 箱子让回调永远读到最新的那一个，回调本身保持稳定。 */
+      const [pickAnchor] = React.useState(function () { return { hash: null } })
+      /* 渲染期现成的 graph.commits 交给箱子，Shift 扩选时回调读它（panelBox.status
+         同一个写法）：回调不依赖 graph，重读历史不会重建任何一行的回调。 */
+      const [graphBox] = React.useState(function () { return { commits: null } })
       /* ⚡（快捷命令）下拉的开合：null = 关着。 */
       const [menuOpen, setMenuOpen] = React.useState(null)
       /* ── 右键菜单（提交行 / 分支行共用）──
@@ -9795,6 +10069,18 @@ textarea.dsh-git-input{resize:vertical}
          promise，接住丢掉即可。挂箱不挂 state：resolve 要在关闭动作的那一帧被
          找到，而不是跟着某次渲染走（panelBox.refreshDone 同一个道理）。 */
       const [pushConfirm, setPushConfirm] = React.useState(null)
+      /* 「编辑提交消息…」的对话框（reword）：null 关着；非 null 是 { hash, head,
+         message, loaded, running, error } —— head 是菜单体检答复里那份 HEAD（reword
+         的 expect），message 是 git/commit-messages 取回的原始消息（开框即预填，
+         读回来前 loaded=false），error 说在框内。seed 比对与 pushConfirm 同款：
+         关掉重开之后，迟到的答复不许盖到新框上。 */
+      const [rewordBox, setRewordBox] = React.useState(null)
+      /* 「合并提交… / 批量删除提交…」的确认框（作用于整个选区）：null 关着；非 null
+         是 { mode: 'squash'|'drop', targets, base, expect, list, loading, message,
+         error } —— targets 按图序（新→旧），base/expect 是 git/squash、git/drop
+         要的区间起点与读图时 HEAD；list 是 commit-messages 取回的消息（squash 的
+         合并消息从它预填）。 */
+      const [selRewrite, setSelRewrite] = React.useState(null)
       const [pushBox] = React.useState(function () { return { resolve: null } })
       /* 弹窗自己的节点盒：「点外面关掉」要把框算在里面（useOutsideDismiss 的
          boxes），qc-box 的 ref 由 PushConfirmBox 的 boxRef 写进来。 */
@@ -9901,6 +10187,8 @@ textarea.dsh-git-input{resize:vertical}
         }
       })
       panelBox.status = status
+      /* Shift 扩选的回调从箱子里读图（见 graphBox 的注释）。 */
+      graphBox.commits = graph != null && graph.ok === true && Array.isArray(graph.commits) ? graph.commits : null
       /* 一次全树读占住整条通道多久 —— 下一次该隔多久再量一遍由它决定（fullReadGapMs）。
          进 state 的原因只有一个：间隔变了要把那个时钟重新起一遍。记忆里那份带着上次
          实测的代价，第一帧就把时钟的间隔定对。 */
@@ -10090,6 +10378,8 @@ textarea.dsh-git-input{resize:vertical}
         setQcConfirm(null)
         setQcEditor(null)
         setPullPick(null)
+        setRewordBox(null)
+        setSelRewrite(null)
         setOkNote('')
         setUntrackedOpen({})
         setUntrackedFiles({})
@@ -10988,10 +11278,34 @@ textarea.dsh-git-input{resize:vertical}
         })
       }, [appliedRepo, sessionId])
 
-      /* 提交行的点击入口：普通点击照旧走 openCommit；Ctrl/Cmd+点击只动多选（用函数式
-         setState，所以这个回调不依赖 multiSel，行级 memo 仍然成立）。 */
+      /* 提交行的点击入口：普通点击照旧走 openCommit；Ctrl/Cmd+点击只动多选；Shift+点击
+         扩一段（见 pickCommit 本体与 pickAnchor 的注释）。用函数式 setState 与箱子
+         （graphBox / pickAnchor）喂图，所以这个回调不依赖 multiSel 与 graph ——
+         行级 memo 仍然成立。 */
       const pickCommit = useCallback(function (hash, event) {
-        if (event != null && (event.ctrlKey === true || event.metaKey === true)) {
+        const shift = event != null && event.shiftKey === true
+        const ctrl = event != null && (event.ctrlKey === true || event.metaKey === true)
+        if (shift === true && ctrl !== true) {
+          /* Shift+点击要 preventDefault：浏览器把它当「扩展文字选区」，不拦的话
+             一划就把提交行的文字选蓝了。 */
+          if (event != null && typeof event.preventDefault === 'function') event.preventDefault()
+          const slice = graphSliceBetween(graphBox.commits, pickAnchor.hash, hash)
+          if (slice !== null && slice.length > 1) {
+            /* 整段（含两端）按图序写入；selected/openCommit 跟点击行；锚点不动 ——
+               连着扩两次，第二段从同一个锚点算起（IDEA 同款）。 */
+            setMultiSel(slice)
+            openCommit(hash)
+            return
+          }
+          /* 无锚点（或锚点行已不在眼前这份列表里）：退化为普通单选，并把这一行
+             立成新锚点。 */
+          pickAnchor.hash = hash
+          openCommit(hash)
+          return
+        }
+        /* 普通点击与 Ctrl 点击都把锚点挪到这一行：下一次 Shift 点击从它算起。 */
+        pickAnchor.hash = hash
+        if (ctrl === true) {
           setMultiSel(function (previous) {
             const at = previous.indexOf(hash)
             if (at >= 0) {
@@ -11009,18 +11323,53 @@ textarea.dsh-git-input{resize:vertical}
       /* ── 右键菜单的两个人口 ──
 
          提交行：右键 = 先按左键单选的同一条路选中（openCommit），再在光标处开菜单；
-         Ctrl 多选不动，菜单里的动作只对右键那一条。分支行：带这一组的种类（本地/
-         远程/HEAD）与所属仓库（多选分组里的分支删除要落在它自己的仓库上）。开新菜单
-         时把上一次的两段式确认作废。传给 memo 化提交行的回调必须稳定，否则行级记忆
-         全被打破 —— 所以 openCommitMenu 是 useCallback。 */
+         Ctrl 多选不动，菜单里的「拣选/还原」作用于整个选区（PhpStorm：动作作用于
+         selection，见 ctxTargetHashes），其余项仍对右键那一条。分支行：带这一组的
+         种类（本地/远程/HEAD）与所属仓库（多选分组里的分支删除要落在它自己的仓库
+         上）。开新菜单时把上一次的两段式确认作废。传给 memo 化提交行的回调必须
+         稳定，否则行级记忆全被打破 —— 所以 openCommitMenu 是 useCallback。
+         check: null 是菜单体检（git/edit-check）的「还没回」占位，seed 比对见下面
+         那条 effect —— 迟到的答复不许盖到新菜单上（pushConfirm 的预览同一个做法）。 */
       const openCommitMenu = useCallback(function (hash, event) {
         openCommit(hash)
         setCtxMenu({
-          kind: 'commit', hash: hash,
+          kind: 'commit', hash: hash, check: null,
           x: event != null && typeof event.clientX === 'number' ? event.clientX : 0,
           y: event != null && typeof event.clientY === 'number' ? event.clientY : 0,
         })
       }, [openCommit])
+
+      /* ── 菜单体检：菜单开着就问一次「能不能改写」 ──
+
+         git/edit-check 对目标集（右键行 ∈ multiSel 且多选>1 时是整份 multiSel，
+         否则是右键那一条）逐条答 reachable / pushed / isHead / isRoot，外带此刻的
+         HEAD。菜单项的置灰与 title 说的原因（已推送要强推 / 不在当前分支历史上 /
+         根提交暂不支持）全从这份答复读；没回来之前「编辑提交消息…」等改写项一律
+         置灰 —— 菜单先开、体检后到，置灰变可用是肉眼可见的一帧，比放行一个查
+         过会失败的动作诚实。只读不进「命令」页；失败折成 {ok:false} 存着，菜单
+         项照旧置灰并说「检查没通过」的原因。 */
+      React.useEffect(function () {
+        if (ctxMenu === null || ctxMenu.kind !== 'commit' || ctxMenu.check !== null) return undefined
+        const seed = ctxMenu
+        const request = base(appliedRepo)
+        request.hashes = ctxTargetHashes(seed.hash, multiSel)
+        let alive = true
+        callHost('git/edit-check', request).then(function (reply) {
+          if (alive !== true) return
+          setCtxMenu(function (previous) {
+            if (previous !== seed) return previous
+            const check = reply != null && reply.ok === true ? reply : { ok: false, stderr: reply != null ? text(reply.stderr) : '' }
+            return Object.assign({}, previous, { check: check })
+          })
+        }, function (failure) {
+          if (alive !== true) return
+          setCtxMenu(function (previous) {
+            if (previous !== seed) return previous
+            return Object.assign({}, previous, { check: { ok: false, stderr: failureText(failure) } })
+          })
+        })
+        return function () { alive = false }
+      }, [ctxMenu])
 
       /* head（可选）：右键的这行是不是它所在仓库的当前分支。HEAD 组的行天然是，
          「本地」组里由树按各仓库自己的 current 认（多选分组里生效仓库的 currentName
@@ -11275,6 +11624,175 @@ textarea.dsh-git-input{resize:vertical}
         })
       }
 
+      /* ── 「编辑提交消息…」（reword） ──
+
+         菜单项点开对话框：先按菜单体检答复里的 HEAD 定下 expect，再由下面那条
+         seed effect 取原始消息预填。保存走 rpc 直发（不进 runOp 的全局错误条）——
+         错误要说在框内，保存中禁按钮，成功关框 + 选中新 hash（newHead）。 */
+      const openReword = function (hash) {
+        const check = ctxMenu != null && ctxMenu.check != null && ctxMenu.check.ok === true ? ctxMenu.check : null
+        setCtxMenu(null)
+        setRewordBox({
+          hash: hash,
+          /* expect：体检那刻的 HEAD。体检没回/失败就是空串 —— reword 的防呆在
+             Host 还有最后一道（head-moved），这里空着只是少一层提前的比对。 */
+          head: check != null ? text(check.head) : '',
+          message: '', loaded: false, running: false, error: '',
+        })
+      }
+
+      React.useEffect(function () {
+        if (rewordBox === null || rewordBox.loaded === true || rewordBox.running === true) return undefined
+        const seed = rewordBox
+        const request = base(appliedRepo)
+        request.hashes = [seed.hash]
+        callHost('git/commit-messages', request).then(function (reply) {
+          const row = reply != null && reply.ok === true && Array.isArray(reply.messages) && reply.messages.length > 0
+            ? reply.messages[0] : null
+          setRewordBox(function (previous) {
+            if (previous !== seed) return previous
+            return Object.assign({}, previous, {
+              loaded: true,
+              message: row != null ? text(row.message) : '',
+              error: row != null ? previous.error : '读不到这条提交的原始消息，只能从空白写起',
+            })
+          })
+        }, function (failure) {
+          setRewordBox(function (previous) {
+            if (previous !== seed) return previous
+            return Object.assign({}, previous, { loaded: true, error: '读不到这条提交的原始消息：' + failureText(failure) })
+          })
+        })
+        return undefined
+      }, [rewordBox])
+
+      const rewordSave = function () {
+        if (rewordBox === null || rewordBox.running === true) return
+        const seed = rewordBox
+        if (seed.message.trim().length === 0) return
+        setRewordBox(function (previous) { return Object.assign({}, previous, { running: true, error: '' }) })
+        const request = base(appliedRepo)
+        request.hash = seed.hash
+        request.message = seed.message
+        request.expect = seed.head
+        rpc('git/reword', request, '改写提交消息失败').then(function (reply) {
+          bump()
+          setRewordBox(null)
+          const newHead = reply != null ? text(reply.newHead) : ''
+          setOkNote('已修改提交消息 ' + hashShort(newHead.length > 0 ? newHead : seed.hash))
+          /* 改写换了 hash：选中新行，详情跟着新提交走。 */
+          if (newHead.length > 0) openCommit(newHead)
+        }, function (failure) {
+          bump()
+          setRewordBox(function (previous) {
+            if (previous !== seed) return previous
+            return Object.assign({}, previous, { running: false, error: failureText(failure) })
+          })
+        })
+      }
+
+      /* ── 「合并提交… / 批量删除提交…」（作用于整个选区） ──
+
+         菜单项点开确认框：列出选区提交（seed effect 取消息），合并消息从各提交的
+         消息拼接预填（空行分隔、可编辑）。确认即关框发动作（拣选/还原同一条「动作
+         发起即关」的规矩），失败错误条可见；删除成功的话成功条把 reflog 的找回
+         通道说全（preHead 在答复里）。 */
+      const openSelRewrite = function (mode, span, expectHead) {
+        setCtxMenu(null)
+        setSelRewrite({
+          mode: mode,
+          targets: span.targets,
+          base: span.base,
+          expect: expectHead,
+          list: null, loading: true, message: '', error: '',
+        })
+      }
+
+      React.useEffect(function () {
+        if (selRewrite === null || selRewrite.list !== null) return undefined
+        const seed = selRewrite
+        const request = base(appliedRepo)
+        /* commit-messages 一次最多 20 条：超出的选区只预填前 20 条的消息，框里
+           说一声（squash 本身对条数没有限制）。 */
+        const capped = seed.targets.slice(0, 20)
+        request.hashes = capped.slice().reverse()
+        let alive = true
+        callHost('git/commit-messages', request).then(function (reply) {
+          if (alive !== true) return
+          const rows = reply != null && reply.ok === true && Array.isArray(reply.messages) ? reply.messages : null
+          setSelRewrite(function (previous) {
+            if (previous !== seed) return previous
+            if (rows === null) {
+              return Object.assign({}, previous, {
+                loading: false,
+                error: '读不到选区提交的消息：' + (reply != null ? text(reply.stderr) : ''),
+              })
+            }
+            /* rows 按请求的顺序回来（最旧→最新）；合并消息按最旧→最新拼，读起来
+               才是一条提交史。 */
+            const parts = []
+            for (let i = 0; i < rows.length; i += 1) {
+              const said = text(rows[i].message).trim()
+              if (said.length > 0) parts.push(said)
+            }
+            return Object.assign({}, previous, {
+              loading: false,
+              list: rows,
+              message: parts.join('\n\n'),
+              error: rows.length < capped.length || seed.targets.length > 20
+                ? '选区超过 20 条，合并消息只预填了最旧的 20 条' : previous.error,
+            })
+          })
+        }, function (failure) {
+          if (alive !== true) return
+          setSelRewrite(function (previous) {
+            if (previous !== seed) return previous
+            return Object.assign({}, previous, { loading: false, error: '读不到选区提交的消息：' + failureText(failure) })
+          })
+        })
+        return function () { alive = false }
+      }, [selRewrite])
+
+      const selRewriteRun = function () {
+        if (selRewrite === null || busy === true) return
+        const seed = selRewrite
+        if (seed.mode === 'squash' && seed.message.trim().length === 0) return
+        setSelRewrite(null)
+        setBusy(true)
+        setError(null)
+        setOkNote('')
+        if (seed.mode === 'squash') {
+          /* git/squash 的语义就是 base..HEAD 整段合一 —— 这里的 base 是最旧选中项
+             的父提交，expect 是菜单体检那刻的 HEAD（要求它就是选区最新一条才开的项）。 */
+          rpc('git/squash', { base: seed.base, message: seed.message, expect: seed.expect }, '合并提交失败')
+            .then(function () {
+              setBusy(false)
+              setMultiSel([])
+              bump()
+              setOkNote('已把 ' + String(seed.targets.length) + ' 条提交合并为一条新提交')
+            }, function (failure) {
+              setBusy(false)
+              bump()
+              setError(failureText(failure))
+            })
+          return
+        }
+        rpc('git/drop', { base: seed.base, expect: seed.expect }, '删除提交失败')
+          .then(function (reply) {
+            setBusy(false)
+            setMultiSel([])
+            bump()
+            const preHead = reply != null ? text(reply.preHead) : ''
+            setOkNote('已删除 ' + String(seed.targets.length) + ' 条提交（连同它们的改动一并丢弃）。'
+              + (preHead.length > 0 ? '误删可在 reflog 里找回：git reset --hard ' + preHead
+                : '误删可在 reflog 里找回（约 30 天内）。'))
+          }, function (failure) {
+            setBusy(false)
+            bump()
+            setError(failureText(failure))
+          })
+      }
+
       /* 推送：两段式之后这里不再直接推。远端挑好就开确认框（openPushConfirm），
           真正的推送在读者点「推送」之后由 pushConfirmRun 发 —— 命令与从前一次
           不差，只是隔了一道确认。 */
@@ -11329,6 +11847,34 @@ textarea.dsh-git-input{resize:vertical}
           return keep.length === previous.length ? previous : keep
         })
       }, [graph])
+
+      /* ── 选区的「段」：多选合并查看与整段改写（合并提交/批量删除）的共同判据 ──
+
+         多选多于一条时按图与 multiSel 算一次（纯函数 selectionSpan）：连续与否、
+         区间起点 base、最新一条 head。连续且 base 有着落（最旧一条不是根提交）才有
+         base..head 可言 —— 视图的读、菜单里「合并提交… / 批量删除提交…」的可用
+         条件都从这一份来，两处说的是同一件事。 */
+      const selSpan = multiSel.length > 1 && graphBox.commits !== null ? selectionSpan(graphBox.commits, multiSel) : null
+      const selSpanKey = selSpan != null && selSpan.contiguous === true && selSpan.base.length > 0
+        ? selSpan.base + '..' + selSpan.head
+        : null
+      /* 选区视图的读：只在连续时发（git/commit-detail 的 {base, head} 形态）。
+         答复带着发出时的 key 回家，渲染只认眼前这份 key —— 选区换段的迟到答复
+         不会盖到新段上（pushConfirm 的 seed 比对同一个问题）。 */
+      const [rangeRead, setRangeRead] = React.useState(null)
+      React.useEffect(function () {
+        if (selSpanKey === null) return undefined
+        let alive = true
+        const request = base(appliedRepo)
+        request.base = selSpan.base
+        request.head = selSpan.head
+        callHost('git/commit-detail', request).then(function (reply) {
+          if (alive) setRangeRead({ key: selSpanKey, reply: reply })
+        }, function (failure) {
+          if (alive) setRangeRead({ key: selSpanKey, reply: { ok: false, stderr: failureText(failure) } })
+        })
+        return function () { alive = false }
+      }, [selSpanKey])
 
       const toggle = function (path) {
         setCollapsed(function (previous) {
@@ -12193,6 +12739,13 @@ textarea.dsh-git-input{resize:vertical}
           if (detail != null && detail.ok === true && Array.isArray(detail.files) && detail.files.length > 0) {
             diffRail = { kind: 'commit', files: detail.files }
           }
+        } else if (diffTarget.kind === 'range') {
+          /* 选区视图点开的差异：右列是同一份合计清单（selectionSpan 的读，key 在
+             眼前才算数）—— 退路也是它，与单提交那一路同一个形状。 */
+          const rangeRail = rangeRead != null && rangeRead.key === selSpanKey ? rangeRead.reply : null
+          if (rangeRail != null && rangeRail.ok === true && Array.isArray(rangeRail.files) && rangeRail.files.length > 0) {
+            diffRail = { kind: 'commit', files: rangeRail.files }
+          }
         } else {
           if (diffRepo !== appliedRepo) {
             const record = treeRecord(diffRepo)
@@ -12225,12 +12778,23 @@ textarea.dsh-git-input{resize:vertical}
           }
         }
         /* 右列换文件：提交那一路 ref 不动、只换 path/from/status（和提交详情里
-           点开一个文件是同一条路，diffSig 随 shape 变化自动重读补丁）；变更那一
-           路走 changeDiffTarget，仓库跟着文件原来的那一格走。 */
+           点开一个文件是同一条路，diffSig 随 shape 变化自动重读补丁）；选区那一路
+           同理，ref 钉在 base..head 上；变更那一路走 changeDiffTarget，仓库跟着
+           文件原来的那一格走。 */
         const diffRailOpen = diffRail === null ? undefined : function (file) {
           if (diffTarget.kind === 'commit') {
             setDiffTarget({
               kind: 'commit',
+              path: text(file.path),
+              from: text(file.from),
+              ref: text(diffTarget.ref),
+              status: text(file.status),
+            })
+            return
+          }
+          if (diffTarget.kind === 'range') {
+            setDiffTarget({
+              kind: 'range',
               path: text(file.path),
               from: text(file.from),
               ref: text(diffTarget.ref),
@@ -12340,21 +12904,57 @@ textarea.dsh-git-input{resize:vertical}
            宽屏（含量不到宽度的替身）：detailNode 原样直挂 —— .dsh-git-body 的
              className、子节点与改动前逐字节一致（ref 不进渲染结果），这是不变量。 */
         const detailCollapsed = detailOpen === null ? narrowBody.narrow : detailOpen === false
-        const detailNode = h(CommitDetail, {
-          detail: detail, collapsed: collapsed, selectedKey: selectedKey,
-          onToggle: toggle, onSelect: function (key) { setSelectedKey(key) },
-          /* A file in a commit is the commit's own read: same path, but the
-             two states are that commit and its first parent. */
-          onOpenDiff: function (file) {
-            setDiffTarget({
-              kind: 'commit',
-              path: text(file.path),
-              from: text(file.from),
-              ref: detail != null ? text(detail.hash) : '',
-              status: text(file.status),
+        /* ── 选区视图：多选连续时详情栏换成「n 条提交合并视图」 ──
+
+           rangeRead 只认眼前的段（key 比对，见 selSpanKey 的注释）；不连续的多选
+           维持单提交详情，顶部给一条置灰入口说清为什么点不动。 */
+        const rangeNow = rangeRead != null && rangeRead.key === selSpanKey ? rangeRead.reply : null
+        const rangeActive = selSpan != null && selSpan.contiguous === true && selSpan.base.length > 0
+        const rangeBlocked = selSpan != null && selSpan.contiguous !== true
+        const detailNode = rangeActive === true
+          ? h(RangeDetail, {
+              span: selSpan,
+              reply: rangeNow,
+              collapsed: collapsed,
+              selectedKey: selectedKey,
+              onToggle: toggle,
+              onSelect: function (key) { setSelectedKey(key) },
+              baseShort: hashShort(selSpan.base),
+              headShort: hashShort(selSpan.head),
+              rangeLabel: '（' + hashShort(selSpan.base) + '..' + hashShort(selSpan.head) + ' 的合计）',
+              onOpenDiff: function (file) {
+                setDiffTarget({
+                  kind: 'range',
+                  path: text(file.path),
+                  from: text(file.from),
+                  ref: selSpanKey,
+                  status: text(file.status),
+                })
+              },
+              onExit: function () { setMultiSel([]) },
             })
-          },
-        })
+          : h(CommitDetail, {
+              detail: detail, collapsed: collapsed, selectedKey: selectedKey,
+              onToggle: toggle, onSelect: function (key) { setSelectedKey(key) },
+              /* A file in a commit is the commit's own read: same path, but the
+                 two states are that commit and its first parent. */
+              onOpenDiff: function (file) {
+                setDiffTarget({
+                  kind: 'commit',
+                  path: text(file.path),
+                  from: text(file.from),
+                  ref: detail != null ? text(detail.hash) : '',
+                  status: text(file.status),
+                })
+              },
+            })
+        /* 不连续多选的置灰入口：解释为什么不能合并查看（选区不连续）。 */
+        const rangeAside = rangeBlocked === true
+          ? h('div', {
+              className: 'dsh-git-rangeblock',
+              title: '选区不连续，不能合并查看：中间隔着未选中的提交，base..head 的合计改动会把它们也算进来',
+            }, '已选中 ' + String(selSpan.targets.length) + ' 条提交 —— 选区不连续，不能合并查看（Ctrl+点击把中间的行补上，或逐条移出）')
+          : null
         const detailSide = narrowBody.narrow === true
           ? h('div', { className: 'dsh-git-detailwrap' },
             h('div', {
@@ -12364,8 +12964,9 @@ textarea.dsh-git-input{resize:vertical}
             },
               h('span', { className: 'dsh-git-detailfold-label' }, '提交详情'),
               h('span', { className: 'dsh-git-detailfold-glyph' }, '▾')),
+            rangeAside,
             detailNode)
-          : detailNode
+          : (rangeAside !== null ? [rangeAside, detailNode] : detailNode)
         /* 折叠态的那一条：已选中提交时附文件数，空态/错态只写「提交详情」——
            空着还报数是噪音。 */
         const detailBar = h('div', {
@@ -12536,28 +13137,89 @@ textarea.dsh-git-input{resize:vertical}
         const rect = node.getBoundingClientRect()
         return { left: x - rect.left, top: y - rect.top }
       }
+      /* ── 提交行右键菜单的内容 ──
+
+         目标集（PhpStorm：动作作用于 selection）：右键行在多选里且多选>1 时，
+         拣选/还原/合并提交/批量删除作用于整份选区（按图序、执行时最旧→最新）；
+         其余项（打标签/新建分支/编辑消息/复制）永远对右键那一条。
+         改写类三项（编辑消息/合并提交/批量删除）的置灰与原因话术都读菜单体检
+         （ctxMenu.check）：已推送到远端（改写要强推）、不在当前分支历史上、根
+         提交、体检没回 —— 各说各的原因；多选时话术把「这 n 条」说进。 */
+      const ctxMenuTargets = ctxMenu === null || ctxMenu.kind !== 'commit'
+        ? [] : ctxTargetHashes(ctxMenu.hash, multiSel)
+      const ctxMany = ctxMenuTargets.length > 1
+      const ctxSaid = ctxMany === true ? '这 ' + String(ctxMenuTargets.length) + ' 条' : '这个提交'
+      /* 菜单体检的几格里找右键那条（编辑消息永远只改右键那一条）。 */
+      const ctxSelfCheck = ctxMenu === null || ctxMenu.check == null || ctxMenu.check.ok !== true
+        || !Array.isArray(ctxMenu.check.checks)
+        ? null
+        : ctxMenu.check.checks.find(function (one) { return one != null && one.hash === ctxMenu.hash }) || null
+      /* 编辑消息的不可编辑原因（IDEA 同款话术，一条一条说清楚）。两个 why 在每次
+         渲染都算一遍（不挑菜单种类），而 check 这个字段只有提交行菜单才有 ——
+         分支行菜单上是 undefined。所以「还没体检」的判定要用 == null：null 是
+         提交行菜单「体检没回」的占位，undefined 是分支行菜单「根本没有体检」；
+         两种都走「正在检查」的置灰话术（分支行菜单不用这三项，话术不会被看见，
+         但读它的时候不能炸）。 */
+      const ctxRewordWhy = (function () {
+        if (canAct !== true) return '当前有操作在跑，等它结束'
+        if (ctxMenu === null || ctxMenu.check == null) return '正在检查这个提交能不能改写…'
+        if (ctxMenu.check.ok !== true) return '检查没通过：' + (text(ctxMenu.check.stderr).length > 0 ? text(ctxMenu.check.stderr) : '读不到仓库状态')
+        if (ctxSelfCheck === null) return '检查没通过：没拿到这个提交的体检结果'
+        if (ctxSelfCheck.reachable !== true) return '不在当前分支历史上，改写它不会生效'
+        if (ctxSelfCheck.isRoot === true) return '根提交暂不支持改写消息'
+        if (ctxSelfCheck.pushed === true) return '已推送到远端，改写要强推'
+        return ''
+      })()
+      /* 整段改写（合并提交/批量删除）的可用条件与原因：目标集 ≥2 且连续、最新
+         一条就是当前 HEAD、选区未推送、最旧一条有父提交（squash/drop 的区间起点）。 */
+      const ctxSelWhy = (function () {
+        if (canAct !== true) return '当前有操作在跑，等它结束'
+        if (selSpan === null || selSpan.targets.length < 2) return '先按住 Ctrl/Shift 选中连续的提交（至少 2 条），再右键其中一条'
+        if (selSpan.contiguous !== true) return '选区不连续（中间隔着别的提交）—— 只有连成一条链的提交才能整段' + (ctxMany === true ? '' : '')
+        if (selSpan.base.length === 0) return '选区里最旧一条是根提交，它之前没有提交了，整段无从谈起'
+        if (ctxMenu === null || ctxMenu.check == null) return '正在检查这个提交能不能改写…'
+        if (ctxMenu.check.ok !== true) return '检查没通过：' + (text(ctxMenu.check.stderr).length > 0 ? text(ctxMenu.check.stderr) : '读不到仓库状态')
+        /* 答复形状也要守：ok 为真但没有 checks 清单（应答被裁过、旧宿主）与「没拿到
+           结果」同罪 —— 不能拿 undefined 去 find。 */
+        if (Array.isArray(ctxMenu.check.checks) !== true) return '检查没通过：没拿到选区最新一条的体检结果'
+        const headCheck = ctxMenu.check.checks.find(function (one) { return one != null && one.hash === selSpan.head })
+        if (headCheck === undefined || headCheck === null) return '检查没通过：没拿到选区最新一条的体检结果'
+        if (headCheck.isHead !== true) return '最新选中的要就是当前 HEAD（整段改写从它往前生效）'
+        for (let i = 0; i < ctxMenu.check.checks.length; i += 1) {
+          const one = ctxMenu.check.checks[i]
+          if (one != null && one.pushed === true && selSpan.targets.indexOf(one.hash) >= 0) {
+            return '选区里有已推送到远端的提交，改写要强推'
+          }
+        }
+        return ''
+      })()
       const ctxCommitItems = ctxMenu === null ? [] : ctxMenu.kind === 'commit' ? [
         h('button', {
           key: 'pick', type: 'button', className: 'dsh-git-menu-item', disabled: !canAct,
-          title: '拣选：cherry-pick，把这个提交应用到当前分支',
+          title: '拣选：cherry-pick，把' + ctxSaid + '依次应用到当前分支（最旧的先落）',
           onClick: function (event) {
             stopEvent(event)
             setCtxMenu(null)
             runOp('git/sequence', {
-              op: 'cherry-pick', action: 'start', target: ctxMenu.hash,
+              op: 'cherry-pick', action: 'start',
+              /* 执行顺序最旧→最新：图序（新→旧）反过来交出去。 */
+              targets: ctxMenuTargets.slice().reverse(),
               record: plugin.cherryPickRecord === true,
             })
           },
-        }, '拣选'),
+        }, '拣选' + (ctxMany === true ? '（' + String(ctxMenuTargets.length) + ' 条）' : '')),
         h('button', {
           key: 'revert', type: 'button', className: 'dsh-git-menu-item', disabled: !canAct,
-          title: '还原：revert，生成一个反向提交来撤销它',
+          title: '还原：revert，为' + ctxSaid + '各生成一个反向提交来撤销（最旧的先落）',
           onClick: function (event) {
             stopEvent(event)
             setCtxMenu(null)
-            runOp('git/sequence', { op: 'revert', action: 'start', target: ctxMenu.hash })
+            runOp('git/sequence', {
+              op: 'revert', action: 'start',
+              targets: ctxMenuTargets.slice().reverse(),
+            })
           },
-        }, '还原'),
+        }, '还原' + (ctxMany === true ? '（' + String(ctxMenuTargets.length) + ' 条）' : '')),
         h('button', {
           key: 'tag', type: 'button', className: 'dsh-git-menu-item', disabled: !canAct,
           title: '标签：在这个提交上打标签',
@@ -12578,6 +13240,54 @@ textarea.dsh-git-input{resize:vertical}
             setPrompt({ kind: 'branch', value: '' })
           },
         }, '从这个提交新建分支…'),
+        h('div', { key: 'sep-rewrite', className: 'dsh-git-menu-sep' }),
+        h('button', {
+          key: 'reword', type: 'button', className: 'dsh-git-menu-item',
+          disabled: !canAct || ctxRewordWhy.length > 0,
+          title: ctxRewordWhy.length > 0
+            ? '编辑提交消息：' + ctxRewordWhy
+            : '编辑提交消息：改写这个提交的完整消息（未推送的提交才安全 —— 改写会换掉它和它之后所有提交的 hash）',
+          onClick: function (event) {
+            stopEvent(event)
+            openReword(ctxMenu.hash)
+          },
+        }, '编辑提交消息…'),
+        h('button', {
+          key: 'squash', type: 'button', className: 'dsh-git-menu-item',
+          disabled: !canAct || ctxSelWhy.length > 0,
+          title: ctxSelWhy.length > 0
+            ? '合并提交：' + ctxSelWhy
+            : '合并提交：把选中的 ' + String(selSpan.targets.length) + ' 条连续提交压成一条（改动合计，消息可编辑）',
+          onClick: function (event) {
+            stopEvent(event)
+            openSelRewrite('squash', selSpan, ctxMenu.check != null && ctxMenu.check.ok === true ? text(ctxMenu.check.head) : '')
+          },
+        }, '合并提交…'),
+        h('button', {
+          key: 'drop', type: 'button', className: 'dsh-git-menu-item dsh-git-menu-danger',
+          disabled: !canAct || ctxSelWhy.length > 0,
+          title: ctxSelWhy.length > 0
+            ? '批量删除提交：' + ctxSelWhy
+            : '批量删除提交：把选中的 ' + String(selSpan.targets.length) + ' 条连续提交连同它们的改动一并丢弃（reflog 里还能找一段时间）',
+          onClick: function (event) {
+            stopEvent(event)
+            openSelRewrite('drop', selSpan, ctxMenu.check != null && ctxMenu.check.ok === true ? text(ctxMenu.check.head) : '')
+          },
+        }, '批量删除提交…'),
+        h('div', { key: 'sep-copy', className: 'dsh-git-menu-sep' }),
+        h('button', {
+          key: 'copyhash', type: 'button', className: 'dsh-git-menu-item',
+          title: '把完整 hash 写进剪贴板',
+          onClick: function (event) {
+            stopEvent(event)
+            setCtxMenu(null)
+            copyTextToClipboard(ctxMenu.hash, function () {
+              setOkNote('已复制完整 hash ' + hashShort(ctxMenu.hash))
+            }, function () {
+              setOkNote('无法写入剪贴板，请手动复制完整 hash：' + ctxMenu.hash)
+            })
+          },
+        }, '复制 Hash'),
       ] : [
         /* ── 分支行右键菜单（PhpStorm 的分栏顺序：动作在上，元信息居中，破坏性在下）──
 
@@ -12825,6 +13535,32 @@ textarea.dsh-git-input{resize:vertical}
                   if (pushConfirm.running === true) return
                   closePushConfirm()
                 },
+              }))
+          : null,
+        /* 「编辑提交消息…」的对话框（reword）与「合并提交… / 批量删除提交…」的确认框：
+            同一块 qc-overlay 板子。点外与 Esc 都由框里自己的 useOutsideDismiss 关
+            （reword 保存中两道都失效，框内挡）；确认/保存按钮发起即关（openReword /
+            openSelRewrite 的对面那一头），失败错误条说在框内。 */
+        rewordBox !== null
+          ? h('div', { key: 'rewordbox', className: 'dsh-git-qc-overlay' },
+              h(RewordMessageBox, {
+                key: 'box', state: rewordBox,
+                onMessage: function (value) {
+                  setRewordBox(function (previous) { return Object.assign({}, previous, { message: value }) })
+                },
+                onSave: rewordSave,
+                onClose: function () { setRewordBox(null) },
+              }))
+          : null,
+        selRewrite !== null
+          ? h('div', { key: 'selrewrite', className: 'dsh-git-qc-overlay' },
+              h(SelRewriteBox, {
+                key: 'box', state: selRewrite,
+                onMessage: function (value) {
+                  setSelRewrite(function (previous) { return Object.assign({}, previous, { message: value }) })
+                },
+                onConfirm: selRewriteRun,
+                onClose: function () { setSelRewrite(null) },
               }))
           : null,
         /* 右键菜单：光标锚的浮层（position:fixed）。挂在面板根部 —— 与 ⚡ 的下拉

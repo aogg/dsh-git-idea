@@ -361,10 +361,32 @@ onRpc('git/push', function (input) {
    conflicted panel would trap the user with no way back. */
 const SEQUENCER_OPS = ['cherry-pick', 'revert', 'merge']
 
+/* 右键菜单「作用于整个选区」（PhpStorm 同款）的目标集：客户端把选区按要应用的
+   顺序（最旧→最新）放进 targets 数组，这里逐项清洗。目标不限于 hash —— revert /
+   cherry-pick 要认 'HEAD'，merge 的目标本来就是分支名 —— 所以这里只挡 git 会误读
+   的形状：trim 后为空、前导 -（argv 是数组、不过 shell，与 cleanRefHalf 同一套
+   精神），其余原样放行；去重、封顶 50；旧形状（单 target 字符串）兼容成单元素
+   清单。顺序原样保留交给 git：cherry-pick / revert 都按 argv 顺序逐个应用，谁在
+   前谁先落。真正只认 hash 的地方（edit-check / commit-messages / reword /
+   detail-range）各自仍走 78-actions.js 的 COMMIT_SHA 清洗，不在这里。 */
+const SEQUENCE_TARGETS_MAX = 50
+
+function sequenceTargets(input) {
+  const raw = input != null && Array.isArray(input.targets)
+    ? input.targets
+    : [input != null ? input.target : undefined]
+  const out = []
+  for (let i = 0; i < raw.length && out.length < SEQUENCE_TARGETS_MAX; i += 1) {
+    const one = isStr(raw[i]) ? raw[i].trim() : ''
+    if (one.length === 0 || one.charAt(0) === '-' || out.indexOf(one) >= 0) continue
+    out.push(one)
+  }
+  return out
+}
+
 onRpc('git/sequence', function (input) {
   const op = input != null && isStr(input.op) ? input.op : ''
   const action = input != null && isStr(input.action) ? input.action : ''
-  const target = input != null && isStr(input.target) ? input.target.trim() : ''
   if (SEQUENCER_OPS.indexOf(op) < 0) return { ok: false, error: 'unknown operation ' + op }
   /* 拣选 / 还原 / 合并三件事共用一个入口，命令页里也共用一个名字 —— 读者在那一页
      认操作，不认 argv 的拼写。 */
@@ -372,8 +394,9 @@ onRpc('git/sequence', function (input) {
 
   if (op === 'merge') {
     if (action === 'start') {
-      if (target.length === 0) return { ok: false, error: 'a branch or commit is required to merge' }
-      return commitMutation(input, ['merge', '--no-edit', target], { desc: said })
+      const targets = sequenceTargets(input)
+      if (targets.length === 0) return { ok: false, error: 'a branch or commit is required to merge' }
+      return commitMutation(input, ['merge', '--no-edit'].concat(targets), { desc: said })
     }
     if (action === 'continue') return commitMutation(input, ['commit', '--no-edit'], { desc: said })
     if (action === 'abort') return panelMutate(input, ['merge', '--abort'], { desc: said })
@@ -381,10 +404,11 @@ onRpc('git/sequence', function (input) {
   }
 
   if (action === 'start') {
-    if (target.length === 0) return { ok: false, error: 'a commit is required' }
-    if (op === 'revert') return commitMutation(input, ['revert', '--no-edit', target], { desc: said })
-    if (input != null && input.record === true) return commitMutation(input, ['cherry-pick', '-x', target], { desc: said })
-    return commitMutation(input, ['cherry-pick', target], { desc: said })
+    const targets = sequenceTargets(input)
+    if (targets.length === 0) return { ok: false, error: 'a commit is required' }
+    if (op === 'revert') return commitMutation(input, ['revert', '--no-edit'].concat(targets), { desc: said })
+    if (input != null && input.record === true) return commitMutation(input, ['cherry-pick', '-x'].concat(targets), { desc: said })
+    return commitMutation(input, ['cherry-pick'].concat(targets), { desc: said })
   }
   if (action === 'continue') return commitMutation(input, ['-c', 'core.editor=true', op, '--continue'], { desc: said })
   if (action === 'abort') return panelMutate(input, [op, '--abort'], { desc: said })
@@ -430,6 +454,15 @@ onRpc('git/tag', function (input) {
 onRpc('git/squash', function (input) { return squashRun(input, '压缩提交') })
 
 onRpc('git/drop', function (input) { return dropRun(input, '删除提交') })
+
+/* 历史页右键的三条（78-actions.js 底下那一段）：edit-check 与 commit-messages 是
+    只读的体检与取消息（不进「命令」页，与所有读同一个规矩）；reword 是改写，
+    安全链与命令页记录都在 rewordRun 里，desc 是它在「命令」页的名字。 */
+onRpc('git/edit-check', function (input) { return editCheckSnapshot(input) })
+
+onRpc('git/commit-messages', function (input) { return commitMessagesSnapshot(input) })
+
+onRpc('git/reword', function (input) { return rewordRun(input, '改写提交消息') })
 
 onRpc('git/quick', function (input) { return quickRun(input, '快捷命令') })
 

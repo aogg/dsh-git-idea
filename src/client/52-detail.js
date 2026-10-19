@@ -55,6 +55,72 @@
           h('div', { className: 'dsh-git-msg' }, fullMessage)))
     }
 
+    /* ── 选区视图：多选且连续时，详情栏的「n 条提交合并视图」 ──
+
+       IDEA 的多选提交可以合并看改动：详情栏不再是单提交的信息，而是 base..head
+       这段的合计文件清单（标题把「合并视图」说在明处）。文件树的行构造与单提交
+       详情共用同一套 buildTree/flattenTree/状态字母；点文件走 onOpenDiff —— 面板
+       把它接成 base..head 的差异，返回箭头回到这里（差异视图的既有习惯）。
+
+       退出有两手：右上角「退出合并视图」（清掉多选），或 Ctrl+点击把行逐条移出
+       —— 视图跟着 multiSel 走，多选没了它自然让位。 */
+    function RangeDetail(props) {
+      const span = props.span
+      const reply = props.reply
+      const files = reply != null && reply.ok === true && Array.isArray(reply.files) ? reply.files : null
+      const rows = []
+      if (files !== null) {
+        const entries = []
+        for (let i = 0; i < files.length; i += 1) {
+          const path = text(files[i].path)
+          if (path.length === 0) continue
+          entries.push({ segments: path.split('/'), data: files[i] })
+        }
+        const tree = buildTree(entries)
+        /* 末位 false：文件树不压扁，每个目录段独立一行（与单提交详情同一条规矩）。 */
+        const flat = flattenTree(tree, 0, '@files', props.collapsed, [], '@files', false)
+        for (let i = 0; i < flat.length; i += 1) {
+          const node = flat[i]
+          if (node.kind === 'dir') {
+            rows.push(treeDirRow(node, props, String(node.count) + ' 个文件'))
+            continue
+          }
+          const file = node.data || {}
+          rows.push(h('div', {
+            className: 'dsh-git-trow' + (props.selectedKey === node.id ? ' dsh-git-trow-sel' : ''),
+            key: node.id,
+            style: { paddingLeft: (6 + node.depth * 12) + 'px' },
+            title: text(file.path) + '（点开看这段的合计差异）',
+            onClick: function () {
+              props.onSelect(node.id)
+              if (typeof props.onOpenDiff === 'function') props.onOpenDiff(file)
+            },
+          },
+            h('span', { className: 'dsh-git-tw' }),
+            h('span', { className: 'dsh-git-st' + statusClass(file.status) }, statusLabel(file.status)),
+            h('span', { className: 'dsh-git-tname' }, node.name)))
+        }
+      }
+      return h('div', { className: 'dsh-git-detail' },
+        h('div', { className: 'dsh-git-rangehead' },
+          h('span', { className: 'dsh-git-rangetitle' }, String(span.targets.length) + ' 条提交合并视图'),
+          h('span', { className: 'dsh-git-dim' }, text(props.rangeLabel)),
+          h('button', {
+            type: 'button', className: 'dsh-git-btn',
+            title: '退出合并视图（清掉多选，回到单提交详情）',
+            onClick: function () { if (typeof props.onExit === 'function') props.onExit() },
+          }, '退出合并视图')),
+        files !== null
+          ? [h('div', { key: 't', className: 'dsh-git-group-title' }, String(files.length) + ' 个文件（合计）'), rows]
+          : h('div', { className: 'dsh-git-dim', style: { padding: '6px' } },
+              reply != null && reply.ok !== true
+                ? (text(reply.stderr).length > 0 ? text(reply.stderr) : '读不到这段提交的合计改动')
+                : '正在读取这段提交的合计改动…'),
+        h('div', { className: 'dsh-git-info' },
+          h('div', { className: 'dsh-git-dim' }, '从 ' + text(props.baseShort) + ' 到 ' + text(props.headShort)
+            + ' 的合计改动（不含 ' + text(props.baseShort) + ' 本身）')))
+    }
+
     /* ── one path, two shapes ──
 
        git's untracked list reaches this half as objects (`{path, code}`) most of

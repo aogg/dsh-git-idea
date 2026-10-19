@@ -65,11 +65,62 @@ async function readCommitDetail(input) {
 /* A commit is immutable, so its detail is held until the repository is mutated
    (which cannot rewrite an existing hash, so this only frees memory). */
 async function commitDetailSnapshot(input) {
+  const base = input != null && isStr(input.base) ? input.base.trim() : ''
+  const head = input != null && isStr(input.head) ? input.head.trim() : ''
+  /* 选区视图（客户端多选合并查看）的 {base, head} 形态：一段连续提交的合计改动。
+     提交不可改写，一段区间同样不可改写 —— 缓存寿命与单提交那份同一个理由。 */
+  if (base.length > 0 && head.length > 0) {
+    const repo = repoFrom(input, null)
+    if (repo === undefined) return await commitRangeDetail(input, base, head)
+    return await cached(repo, 'detail-range|' + base + '..' + head, function () { return commitRangeDetail(input, base, head) })
+  }
   const hash = input != null && isStr(input.hash) ? input.hash.trim() : ''
   if (hash.length === 0) return { ok: false, error: 'hash is required' }
   const repo = repoFrom(input, null)
   if (repo === undefined) return await readCommitDetail(input)
   return await cached(repo, 'detail|' + hash, function () { return readCommitDetail(input) })
+}
+
+/* ── 一段连续提交的合计改动（选区视图的数据） ──
+ *
+ * {base, head} → `git diff --raw -M -z --no-commit-id <base> <head>`：文件清单是
+ * base..head 的合计（base 本身不算在内 —— 客户端传的 base 是最旧选中项的父提交）。
+ * -z 的分段与单提交详情那套同款：每条记录先「:模式 模式 sha sha 状态」一段，路径
+ * 跟在后面；R/C（改名/复制）带两段路径，旧路径进 from，差异视图点开时才用得上。
+ * 状态字母原样带回去，客户端的 statusClass/statusLabel 认的就是同一套。 */
+const RANGE_FILES_MAX = 4000
+const COMMIT_RANGE_SHA = /^[0-9a-f]{7,40}$/i
+
+async function commitRangeDetail(input, base, head) {
+  if (COMMIT_RANGE_SHA.test(base) !== true || COMMIT_RANGE_SHA.test(head) !== true) {
+    return { ok: false, error: 'bad-value', stderr: 'base 与 head 都要是 7–40 位十六进制的提交 hash' }
+  }
+  const args = argsFor(input)
+  const raw = await git(args, ['-c', 'core.quotePath=false', 'diff', '--raw', '-M', '-z', '--no-commit-id', base, head], null, { maxBytes: 800000 })
+  if (raw.exitCode !== 0) {
+    return { ok: false, error: 'range-failed', base: base, head: head, stderr: raw.stderr, noGit: gitMissing(raw) }
+  }
+  const parts = raw.stdout.split('\u0000')
+  const files = []
+  let index = 0
+  while (index < parts.length && files.length < RANGE_FILES_MAX) {
+    const meta = parts[index]
+    if (meta === undefined || meta.charAt(0) !== ':') { index += 1; continue }
+    /* 状态是冒号那一段的最后一个空白分隔词（R100 / C075 这类相似度分数跟着字母）。 */
+    const status = meta.slice(meta.lastIndexOf(' ') + 1)
+    if (status.length === 0) { index += 1; continue }
+    if (status.charAt(0) === 'R' || status.charAt(0) === 'C') {
+      files.push({ status: status, path: field(parts, index + 2), from: field(parts, index + 1) })
+      index += 3
+    } else {
+      files.push({ status: status, path: field(parts, index + 1), from: null })
+      index += 2
+    }
+  }
+  return {
+    ok: true, base: base, head: head, files: files,
+    truncated: raw.truncated === true || files.length >= RANGE_FILES_MAX,
+  }
 }
 
 /* ── one file's change ──
@@ -97,10 +148,12 @@ async function commitDetailSnapshot(input) {
    while the flagged one did 0 of 20 (`git status` writes 20 of 20) — a read that
    may refresh the index may also take the lock, occasionally being exactly the
    case that hurts. */
-const DIFF_MODES = ['worktree', 'staged', 'commit', 'untracked']
+const DIFF_MODES = ['worktree', 'staged', 'commit', 'untracked', 'range']
 const DIFF_LINES_MAX = 6000
 const DIFF_CHARS_MAX = 400000
 const DIFF_SHA = /^[0-9a-f]{7,40}$/i
+/* range 模式的 ref 是「base..head」整段（选区视图点开一个文件时的读法）。 */
+const DIFF_RANGE = /^[0-9a-f]{7,40}\.\.[0-9a-f]{7,40}$/i
 
 function diffArgv(mode, paths, ref) {
   const common = ['--no-optional-locks', '-c', 'core.quotePath=false', 'diff', '--no-color', '--no-ext-diff']
@@ -111,6 +164,9 @@ function diffArgv(mode, paths, ref) {
     return ['--no-optional-locks', '-c', 'core.quotePath=false', 'show', '--no-color', '--no-ext-diff',
       '--format=', '--patch', '-m', '--first-parent', ref, '--'].concat(paths)
   }
+  /* range：两棵树之间的一只文件（`git diff <base> <head> -- <path>`），选区视图
+     「这一段提交合计改了它什么」的答案。 */
+  if (mode === 'range') return common.concat([ref, '--']).concat(paths)
   if (mode === 'untracked') return common.concat(['--no-index', '--', '/dev/null', paths[0]])
   if (mode === 'staged') return common.concat(['--cached', '--']).concat(paths)
   return common.concat(['--']).concat(paths)
@@ -171,6 +227,9 @@ async function readFileDiff(input) {
   const ref = input != null && isStr(input.ref) ? input.ref.trim() : ''
   if (mode === 'commit' && !DIFF_SHA.test(ref)) {
     return { ok: false, error: 'invalid-ref', exitCode: null, stderr: 'a commit hash is required' }
+  }
+  if (mode === 'range' && !DIFF_RANGE.test(ref)) {
+    return { ok: false, error: 'invalid-ref', exitCode: null, stderr: 'ref must be base..head（两段十六进制提交 hash）' }
   }
   const paths = from.length > 0 && from !== path ? [from, path] : [path]
 

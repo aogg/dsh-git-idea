@@ -218,6 +218,12 @@
 .dsh-git-input{box-sizing:border-box;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);border-radius:4px;padding:4px 6px;font-size:12px;font-family:inherit;width:100%}
 textarea.dsh-git-input{resize:vertical}
 .dsh-git-info{border-top:1px solid var(--dsw-alias-border-l1);margin-top:8px;padding-top:6px;display:flex;flex-direction:column;gap:3px}
+/* 选区视图（多选合并查看）的标题行：「n 条提交合并视图」要一眼认得出这不是单提交
+   详情，退出的按钮就住同一行。 */
+.dsh-git-rangehead{display:flex;align-items:center;gap:8px;padding:2px 0 4px 0;border-bottom:1px solid var(--dsw-alias-border-l1)}
+.dsh-git-rangetitle{font-weight:600;font-size:12px}
+/* 选区不连续时详情栏顶部那条置灰入口（多选合并查看的「为什么点不动」）。 */
+.dsh-git-rangeblock{flex:none;padding:5px 8px;border-bottom:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-secondary);font-size:11px;background:var(--dsw-alias-bg-layer-1)}
 .dsh-git-hash{font-family:ui-monospace,monospace;font-size:11px;word-break:break-all}
 .dsh-git-msg{background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l1);border-radius:6px;padding:6px;white-space:pre-wrap;font-size:11px;max-height:120px;overflow:auto}
 .dsh-git-error{color:var(--dsw-alias-state-error-primary)}

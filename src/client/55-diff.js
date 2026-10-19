@@ -40,6 +40,8 @@
        its own heading. A commit's file is one read; an untracked file has no
        HEAD side at all. */
     function diffRequests(target) {
+      /* 选区视图（多选合并查看）的一只文件：base..head 整段。 */
+      if (target.kind === 'range') return [{ key: 'range', label: '', mode: 'range', ref: target.ref }]
       if (target.kind === 'commit') return [{ key: 'commit', label: '', mode: 'commit', ref: target.ref }]
       if (target.untracked === true) return [{ key: 'untracked', label: '新文件', mode: 'untracked' }]
       const out = []

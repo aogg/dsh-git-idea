@@ -1956,11 +1956,62 @@ async function readCommitDetail(input) {
 /* A commit is immutable, so its detail is held until the repository is mutated
    (which cannot rewrite an existing hash, so this only frees memory). */
 async function commitDetailSnapshot(input) {
+  const base = input != null && isStr(input.base) ? input.base.trim() : ''
+  const head = input != null && isStr(input.head) ? input.head.trim() : ''
+  /* 选区视图（客户端多选合并查看）的 {base, head} 形态：一段连续提交的合计改动。
+     提交不可改写，一段区间同样不可改写 —— 缓存寿命与单提交那份同一个理由。 */
+  if (base.length > 0 && head.length > 0) {
+    const repo = repoFrom(input, null)
+    if (repo === undefined) return await commitRangeDetail(input, base, head)
+    return await cached(repo, 'detail-range|' + base + '..' + head, function () { return commitRangeDetail(input, base, head) })
+  }
   const hash = input != null && isStr(input.hash) ? input.hash.trim() : ''
   if (hash.length === 0) return { ok: false, error: 'hash is required' }
   const repo = repoFrom(input, null)
   if (repo === undefined) return await readCommitDetail(input)
   return await cached(repo, 'detail|' + hash, function () { return readCommitDetail(input) })
+}
+
+/* ── 一段连续提交的合计改动（选区视图的数据） ──
+ *
+ * {base, head} → `git diff --raw -M -z --no-commit-id <base> <head>`：文件清单是
+ * base..head 的合计（base 本身不算在内 —— 客户端传的 base 是最旧选中项的父提交）。
+ * -z 的分段与单提交详情那套同款：每条记录先「:模式 模式 sha sha 状态」一段，路径
+ * 跟在后面；R/C（改名/复制）带两段路径，旧路径进 from，差异视图点开时才用得上。
+ * 状态字母原样带回去，客户端的 statusClass/statusLabel 认的就是同一套。 */
+const RANGE_FILES_MAX = 4000
+const COMMIT_RANGE_SHA = /^[0-9a-f]{7,40}$/i
+
+async function commitRangeDetail(input, base, head) {
+  if (COMMIT_RANGE_SHA.test(base) !== true || COMMIT_RANGE_SHA.test(head) !== true) {
+    return { ok: false, error: 'bad-value', stderr: 'base 与 head 都要是 7–40 位十六进制的提交 hash' }
+  }
+  const args = argsFor(input)
+  const raw = await git(args, ['-c', 'core.quotePath=false', 'diff', '--raw', '-M', '-z', '--no-commit-id', base, head], null, { maxBytes: 800000 })
+  if (raw.exitCode !== 0) {
+    return { ok: false, error: 'range-failed', base: base, head: head, stderr: raw.stderr, noGit: gitMissing(raw) }
+  }
+  const parts = raw.stdout.split('\u0000')
+  const files = []
+  let index = 0
+  while (index < parts.length && files.length < RANGE_FILES_MAX) {
+    const meta = parts[index]
+    if (meta === undefined || meta.charAt(0) !== ':') { index += 1; continue }
+    /* 状态是冒号那一段的最后一个空白分隔词（R100 / C075 这类相似度分数跟着字母）。 */
+    const status = meta.slice(meta.lastIndexOf(' ') + 1)
+    if (status.length === 0) { index += 1; continue }
+    if (status.charAt(0) === 'R' || status.charAt(0) === 'C') {
+      files.push({ status: status, path: field(parts, index + 2), from: field(parts, index + 1) })
+      index += 3
+    } else {
+      files.push({ status: status, path: field(parts, index + 1), from: null })
+      index += 2
+    }
+  }
+  return {
+    ok: true, base: base, head: head, files: files,
+    truncated: raw.truncated === true || files.length >= RANGE_FILES_MAX,
+  }
 }
 
 /* ── one file's change ──
@@ -1988,10 +2039,12 @@ async function commitDetailSnapshot(input) {
    while the flagged one did 0 of 20 (`git status` writes 20 of 20) — a read that
    may refresh the index may also take the lock, occasionally being exactly the
    case that hurts. */
-const DIFF_MODES = ['worktree', 'staged', 'commit', 'untracked']
+const DIFF_MODES = ['worktree', 'staged', 'commit', 'untracked', 'range']
 const DIFF_LINES_MAX = 6000
 const DIFF_CHARS_MAX = 400000
 const DIFF_SHA = /^[0-9a-f]{7,40}$/i
+/* range 模式的 ref 是「base..head」整段（选区视图点开一个文件时的读法）。 */
+const DIFF_RANGE = /^[0-9a-f]{7,40}\.\.[0-9a-f]{7,40}$/i
 
 function diffArgv(mode, paths, ref) {
   const common = ['--no-optional-locks', '-c', 'core.quotePath=false', 'diff', '--no-color', '--no-ext-diff']
@@ -2002,6 +2055,9 @@ function diffArgv(mode, paths, ref) {
     return ['--no-optional-locks', '-c', 'core.quotePath=false', 'show', '--no-color', '--no-ext-diff',
       '--format=', '--patch', '-m', '--first-parent', ref, '--'].concat(paths)
   }
+  /* range：两棵树之间的一只文件（`git diff <base> <head> -- <path>`），选区视图
+     「这一段提交合计改了它什么」的答案。 */
+  if (mode === 'range') return common.concat([ref, '--']).concat(paths)
   if (mode === 'untracked') return common.concat(['--no-index', '--', '/dev/null', paths[0]])
   if (mode === 'staged') return common.concat(['--cached', '--']).concat(paths)
   return common.concat(['--']).concat(paths)
@@ -2062,6 +2118,9 @@ async function readFileDiff(input) {
   const ref = input != null && isStr(input.ref) ? input.ref.trim() : ''
   if (mode === 'commit' && !DIFF_SHA.test(ref)) {
     return { ok: false, error: 'invalid-ref', exitCode: null, stderr: 'a commit hash is required' }
+  }
+  if (mode === 'range' && !DIFF_RANGE.test(ref)) {
+    return { ok: false, error: 'invalid-ref', exitCode: null, stderr: 'ref must be base..head（两段十六进制提交 hash）' }
   }
   const paths = from.length > 0 && from !== path ? [from, path] : [path]
 
@@ -3887,10 +3946,12 @@ function cmdrecMerge(lists) {
   }
   return out
 }
-/* ─────────────── 压缩提交 / 删除提交 / 快捷命令 / 变更页三件套 ───────────────
+/* ─────────────── 压缩提交 / 删除提交 / 快捷命令 / 变更页三件套 / 改写提交消息 ───────────────
  *
  * 前三个在面板「更多操作（⋯）」和「快捷命令（⚡）」按钮底下（客户端 78-actions.js），
- * 后两个是变更页「默认变更列表」那排按钮里的还原与暂存（客户端 54-changes.js）。
+ * 后两个是变更页「默认变更列表」那排按钮里的还原与暂存（客户端 54-changes.js）；
+ * 最后一段是历史页右键的三条：git/edit-check（能不能改写的体检）、git/commit-messages
+ * （整条原始消息）与 git/reword（reword 本体，安全链照 squashRun 的思路）。
  * 放在 80-rpc.js 前面只影响阅读顺序：squashRun 用到的 commitMutation、restoreRun
  * 和 stashRun 用到的 panelMutate / panelPaths 都声明在那儿，而这些函数只在 RPC
  * 处理函数被调用时才运行 —— 同一个函数作用域里声明提升已经把它们备好了。 */
@@ -4194,6 +4255,328 @@ async function branchRenameRun(input) {
     return { ok: false, error: 'bad-value', stderr: '重命名需要合法的旧名字与新名字：不能为空、不能以 - 开头、不能含控制字符' }
   }
   return panelMutate(input, ['branch', '-m', name, to], { desc: '重命名分支' })
+}
+
+/* ─────────────── 历史页右键与多选：体检 / 原始消息 / 改写提交消息 ───────────────
+ *
+ * 三条都是给「提交行右键菜单」服务的（客户端 80-panel.js 的 ctxCommitItems 与
+ * 菜单开着时那条 edit-check 读）：
+ *
+ * · git/edit-check —— 对每个 hash 答四个问题：reachable（在不在当前分支历史上）、
+ *   pushed（进没进远端分支，改写它就意味着强推）、isHead（是不是当前 HEAD）、
+ *   isRoot（是不是根提交）。答复外带 head（此刻 HEAD 的完整 hash）—— 客户端开
+ *   「编辑提交消息」框时拿它当 expect。纯只读，不进「命令」页。
+ * · git/commit-messages —— 逐条读整条原始消息（%B）。上限 20 条：确认框里「列出
+ *   选区提交」与消息预填都吃它，超出就明说拒绝，别让一条 RPC 悄悄读半份。
+ * · git/reword —— 改写一条提交的消息。安全链的顺序照 squashRun 的思路：任何一步
+ *   失败都一个字节不动，见 rewordRun 自己的注释。 */
+
+/* 清洗客户端带来的一个 hash：trim 后只放行 7–40 位十六进制（短/全 hash 都收，
+   其余形状 —— ref 名、带 ^ 修饰的表达式 —— 一律拒：这几条 RPC 只认「图上那一条」。 */
+const COMMIT_SHA = /^[0-9a-f]{7,40}$/
+
+function cleanCommitHash(value) {
+  const one = isStr(value) ? value.trim() : ''
+  return COMMIT_SHA.test(one) === true ? one : ''
+}
+
+/* 一串 hash 的公共入口（edit-check 与 commit-messages）：清洗、去重、保序、封顶。
+   超限不算错误由调用方按各自的话说 —— 这里只把干净的清单交回去。 */
+function cleanHashList(input, max) {
+  const raw = input != null && Array.isArray(input.hashes) ? input.hashes : []
+  const out = []
+  for (let i = 0; i < raw.length && out.length < max; i += 1) {
+    const one = cleanCommitHash(raw[i])
+    if (one.length === 0 || out.indexOf(one) >= 0) continue
+    out.push(one)
+  }
+  return { list: out, given: raw.length }
+}
+
+/* `git rev-list --parents -1 <hash>` 一行：hash 加上它的父提交们。只有 hash 自己
+   一个词 = 根提交。读不动（坏 hash、没这个提交）返回 -1，调用方按「找不到」说。 */
+async function parentCountOf(args, hash) {
+  const asked = await gitC(args, ['rev-list', '--parents', '-1', hash], null, {})
+  if (asked.exitCode !== 0) return -1
+  const words = asked.stdout.trim().split(/\s+/).filter(function (word) { return word.length > 0 })
+  return words.length
+}
+
+async function editCheckSnapshot(input) {
+  const asked = cleanHashList(input, 50)
+  if (asked.list.length === 0) return { ok: false, error: 'hash is required' }
+  if (asked.given > asked.list.length) {
+    return { ok: false, error: 'too-many-hashes', stderr: '一次最多体检 50 个提交（去重后收到 ' + String(asked.list.length) + ' 个）' }
+  }
+  const args = argsFor(input)
+  const head = await git(args, ['rev-parse', 'HEAD'], null, {})
+  const headHash = head.stdout.trim()
+  if (head.exitCode !== 0 || headHash.length === 0) {
+    return { ok: false, error: 'no-head', repo: args.repo || null, stderr: head.stderr, noGit: gitMissing(head) }
+  }
+  const checks = []
+  for (let i = 0; i < asked.list.length; i += 1) {
+    const hash = asked.list[i]
+    /* reachable：merge-base --is-ancestor 的退出码就是答案 —— 0 = 在 HEAD 的
+       历史上，1 = 不在，>1 = 连问都问不了（坏 hash 等），后两种都按「不在」答。 */
+    const ancestor = await gitC(args, ['merge-base', '--is-ancestor', hash, 'HEAD'], null, {})
+    /* pushed：远端分支里有它 = 改写要强推。仓库没有远端时这条输出恒空 —— pushed
+       恒 false，正是没有强推问题的仓库该得的答案。 */
+    const contains = await gitC(args, ['branch', '-r', '--contains', hash], null, {})
+    const parents = await parentCountOf(args, hash)
+    checks.push({
+      hash: hash,
+      reachable: ancestor.exitCode === 0,
+      pushed: contains.exitCode === 0 && contains.stdout.replace(/\s+$/, '').length > 0,
+      isHead: hash === headHash || (hash.length < headHash.length && headHash.indexOf(hash) === 0),
+      isRoot: parents === 1,
+    })
+  }
+  return { ok: true, head: headHash, checks: checks }
+}
+
+const COMMIT_MESSAGES_MAX = 20
+const COMMIT_MESSAGE_BYTES = 20000
+
+async function commitMessagesSnapshot(input) {
+  const asked = cleanHashList(input, COMMIT_MESSAGES_MAX)
+  if (asked.list.length === 0) return { ok: false, error: 'hash is required' }
+  if (asked.given > COMMIT_MESSAGES_MAX) {
+    return { ok: false, error: 'too-many-hashes', stderr: '一次最多读 20 条提交消息（收到 ' + String(asked.given) + ' 个）—— 先收窄选区' }
+  }
+  const args = argsFor(input)
+  const messages = []
+  for (let i = 0; i < asked.list.length; i += 1) {
+    const hash = asked.list[i]
+    const one = await gitC(args, ['log', '-1', '--format=%B', hash], null, { maxBytes: COMMIT_MESSAGE_BYTES })
+    if (one.exitCode !== 0) {
+      return { ok: false, error: 'commit-not-found', hash: hash, stderr: one.stderr, noGit: gitMissing(one) }
+    }
+    const message = one.stdout.replace(/\s+$/, '')
+    messages.push({ hash: hash, subject: message.split('\n')[0], message: message })
+  }
+  return { ok: true, messages: messages }
+}
+
+/* ── git/reword：把一条提交的消息改掉，其余一字不动 ──
+ *
+ * 安全链的顺序一条不能换（照 squashRun 的思路：任何一步失败都一个字节不动）：
+ *
+ *   1. 入参：hash 清洗、消息 trim 非空、长度上限 8000。
+ *   2. 防呆：expect 是客户端开框那刻的 HEAD，先 rev-parse 比对（允许短 hash 前缀，
+ *      同 squashRun）；对不上说明读数过期，拒绝。
+ *   3. reachable：目标必须就在当前分支的历史上（merge-base --is-ancestor）——
+ *      改写别的分支的提交本来就不会生效，挡在动手前。
+ *   4. sequencer 空闲：.git 里有 cherry-pick / revert / merge / rebase 的半成品现场
+ *      就拒绝（62-panel.js 的 sequencerShell 同一份探测）—— 在别人的进行时上再起
+ *      一场 rebase，只会把两个现场搅在一起。
+ *   5. 根提交拒绝：它没有父提交可以变基，v1 不支持（ amend 那条路对根提交同样
+ *      成立，但一致性优先 —— IDEA 同样不给根提交 reword）。
+ *   6. 动手，两条路：
+ *      · 目标就是 HEAD：`git commit --amend --only -F <msgfile>`。--only 是关键：
+ *        已有暂存的改动也不许卷进这次 amend。
+ *      · 非 HEAD：`git rebase -i --autostash <hash>^`，用 sequence.editor 把 todo
+ *        里目标行 `pick <short>` 后面插一行 `exec git commit --amend --only -F
+ *        <msgfile>` —— rebase 走到那一行时 HEAD 恰好就是目标提交，exec 把消息
+ *        换掉，其余提交原样重放。全程不需要真正的交互编辑器；todo 改写后必须
+ *        校验确实命中且只命中那一行，没命中就让编辑器退出非零，rebase 随之中止。
+ *   7. rebase 退出非零：立刻 `git rebase --abort`（abort 再失败也要如实回报），
+ *      git 的原话带回来。
+ *
+ * 消息文件用 mktemp -d 建，消息经 shq 安全进 shell；改写这一步走 commitMutation
+ * （「命令」页、读缓存失效、sandboxDenied/noGit 都由它统一给出），成功答复带
+ * 改写后的 HEAD（newHead）。 */
+
+const REWORD_MESSAGE_MAX = 8000
+
+/* sequence.editor 的真身：把 todo 里的目标行找出来、恰好在它后面插 exec 行。
+ * 不用 sed/awk（插件至今只依赖 grep 与 POSIX 内建），一段 while 读行足够 —— todo
+ * 文件就几十行。三道闸：目标行恰好 1 条、插进去的 exec 行恰好 1 条、最后整份写回；
+ * 任何一道不对就退出非零，git 因此中止这次 rebase（「没命中就不动」由编辑器的
+ * 非零退出表达，比改坏一份 todo 再回滚可靠）。
+ *
+ * 最后一行必须是 exit 0：git 调编辑器是 `sh -c '<这段> "$@"' … <todo路径>` —— 追加
+ * 的 "$@" 跟在整段脚本末尾，最后一条若是 `rm -f "$todo"`，它就成了
+ * `rm -f "$todo" <todo路径>`，把自己的劳动成果连同 git 的 todo 一起删掉（git 回头
+ * 读 todo 就是 No such file）。exit 让追加的那截永远轮不到执行。 */
+function rewordEditorSnippet(shortHash, msgfile) {
+  const want = 'pick ' + shortHash
+  const execLine = 'exec git commit --amend --only -F ' + shq(msgfile)
+  return [
+    'f="$1"',
+    'todo="$f.dshgit"',
+    'want=' + shq(want),
+    'exec_line=' + shq(execLine),
+    'hits=0',
+    ': > "$todo"',
+    'while IFS= read -r line || [ -n "$line" ]; do',
+    '  printf \'%s\\n\' "$line" >> "$todo"',
+    '  case "$line" in',
+    '    "$want" | "$want "*) hits=$((hits+1)); printf \'%s\\n\' "$exec_line" >> "$todo" ;;',
+    '  esac',
+    'done < "$f"',
+    'if [ "$hits" != "1" ]; then',
+    '  rm -f "$todo"',
+    '  printf \'%s\\n\' "dsh-git-idea: todo 里应当恰好一条 $want，实际 $hits 条 —— 放弃这次改写" >&2',
+    '  exit 1',
+    'fi',
+    'execs=$(grep -c -F -x "$exec_line" "$todo")',
+    'if [ "$execs" != "1" ]; then',
+    '  rm -f "$todo"',
+    '  printf \'%s\\n\' "dsh-git-idea: exec 行没有恰好写进一条 —— 放弃这次改写" >&2',
+    '  exit 1',
+    'fi',
+    'cat "$todo" > "$f"',
+    'rm -f "$todo"',
+    'exit 0',
+  ].join('\n')
+}
+
+/* sequencer 空闲吗：一把探测（62-panel.js 的 sequencerShell 原样复用），有半成品
+   现场就返回它的名字（cherry-pick / revert / merge / rebase），空闲返回空串。
+   git 都不在 / 不是仓库返回空串 —— 那不是「忙」，后面的 git 步骤自己会挡。 */
+async function sequencerBusy(args) {
+  const probe = await invoke(
+    gitGuard()
+      + 'gd=$(' + gitCmd() + ' rev-parse --absolute-git-dir 2>/dev/null)\n'
+      + 'if [ -z "$gd" ]; then exit 0; fi\n'
+      + sequencerShell() + '\n',
+    args, null, { timeoutMs: 10000 })
+  const lines = probe.stdout.split('\n')
+  for (let i = 0; i < lines.length; i += 1) {
+    if (lines[i].indexOf('S:') === 0) return lines[i].slice(2)
+  }
+  return ''
+}
+
+async function rewordRun(input, desc) {
+  const hash = cleanCommitHash(input != null ? input.hash : null)
+  const message = input != null && isStr(input.message) ? input.message : ''
+  const trimmed = message.trim()
+  const expect = input != null && isStr(input.expect) ? input.expect.trim() : ''
+  if (hash.length === 0) {
+    return { ok: false, error: 'bad-value', stderr: '需要一个合法的提交 hash（7–40 位十六进制）—— 没有做任何改动' }
+  }
+  if (trimmed.length === 0) {
+    return { ok: false, error: 'a commit message is required', stderr: '提交消息不能为空 —— 没有做任何改动' }
+  }
+  if (message.length > REWORD_MESSAGE_MAX) {
+    return { ok: false, error: 'message-too-long', stderr: '提交消息太长（' + String(message.length) + ' 字符，上限 ' + String(REWORD_MESSAGE_MAX) + '）—— 没有做任何改动' }
+  }
+  const args = argsFor(input)
+
+  /* 1. 防呆 + 改写前 HEAD：一次 rev-parse 两用（expect 比对、HEAD 与否的分路）。 */
+  const head = await git(args, ['rev-parse', 'HEAD'], null, {})
+  const preHead = head.stdout.trim()
+  if (head.exitCode !== 0 || preHead.length === 0) {
+    return { ok: false, error: 'no-head', repo: args.repo || null, stderr: head.stderr, noGit: gitMissing(head) }
+  }
+  if (expect.length > 0 && preHead !== expect && preHead.indexOf(expect) !== 0) {
+    /* expect 允许是短 hash：答复里给两个都能读的写法（squashRun 同一句话）。 */
+    return {
+      ok: false, error: 'head-moved', repo: args.repo || null,
+      stderr: '改写前的 HEAD 是 ' + preHead.slice(0, 12) + '，现在已经是别的提交（期望 ' + expect.slice(0, 12)
+        + '）—— 列表读数过期了。重新读一次再选，没有做任何改动。',
+    }
+  }
+
+  /* 2. reachable：只改写当前分支走过的提交。 */
+  const ancestor = await gitC(args, ['merge-base', '--is-ancestor', hash, 'HEAD'], null, {})
+  if (ancestor.exitCode !== 0) {
+    return {
+      ok: false, error: 'not-reachable', repo: args.repo || null,
+      stderr: '这个提交不在当前分支的历史上（git merge-base --is-ancestor 退出码 '
+        + String(ancestor.exitCode) + '）—— 改写它不会出现在任何分支上。没有做任何改动。',
+    }
+  }
+
+  /* 3. sequencer 空闲：拣选/还原/合并/变基的半成品现场一个都不能有。 */
+  const busyOp = await sequencerBusy(args)
+  if (busyOp.length > 0) {
+    const SEQ_BUSY_LABELS = { 'cherry-pick': '拣选', 'revert': '还原', 'merge': '合并', 'rebase': '变基' }
+    const said = SEQ_BUSY_LABELS[busyOp] !== undefined ? SEQ_BUSY_LABELS[busyOp] : busyOp
+    return {
+      ok: false, error: 'sequencer-busy', repo: args.repo || null,
+      stderr: '上一次的「' + said + '」还没有结束（.git 里有它留下的现场）—— 先继续或中止它，再改写提交消息。没有做任何改动。',
+    }
+  }
+
+  /* 4. 根提交拒绝：它没有父提交，rebase 那条路无从谈起。 */
+  const parents = await parentCountOf(args, hash)
+  if (parents < 0) {
+    return { ok: false, error: 'commit-not-found', repo: args.repo || null, stderr: '读不到这条提交（git rev-list 失败）—— 它可能已经不在了。没有做任何改动。' }
+  }
+  if (parents === 1) {
+    return {
+      ok: false, error: 'is-root', repo: args.repo || null,
+      stderr: '这是这条分支的第一个提交（根提交），它没有父提交可以变基 —— 暂不支持改写根提交。没有做任何改动。',
+    }
+  }
+
+  /* 5. 消息文件：mktemp -d 建目录，消息经 shq 安全写进去。目录路径先落地，两条
+     动手路（amend / rebase 的 exec 行）都要用它。 */
+  const made = await invoke(
+    'd=$(mktemp -d) || exit 9\n[ -n "$d" ] || exit 9\nprintf \'%s\\n\' ' + shq(message) + ' > "$d/msg" || exit 9\nprintf %s "$d"\n',
+    args, null, { timeoutMs: 10000 })
+  const dir = made.stdout.replace(/\s+$/, '')
+  if (made.exitCode !== 0 || dir.length === 0) {
+    return {
+      ok: false, error: 'temp-failed', repo: args.repo || null,
+      stderr: '建临时目录失败了，消息文件没有落地' + (made.sandboxDenied === true ? '（被文件沙箱拒绝）' : '')
+        + ' —— 没有做任何改动。',
+      sandboxDenied: made.sandboxDenied === true,
+    }
+  }
+  const msgfile = dir + '/msg'
+
+  /* 6. 动手。amend 与 rebase 都走 commitMutation：进「命令」页、失效读缓存、
+     sandboxDenied / noGit 自报（squashRun 同一条变更路）。 */
+  let done
+  const isHead = hash === preHead || (hash.length < preHead.length && preHead.indexOf(hash) === 0)
+  if (isHead === true) {
+    /* --only 是关键：已有暂存的改动也不许卷进这次 amend（--amend 默认吃索引）。 */
+    done = await commitMutation(input, ['commit', '--amend', '--only', '-F', msgfile], { desc: desc })
+  } else {
+    /* short hash 先算好：todo 里 git 写的就是短 hash，编辑器按它找目标行。 */
+    const shortAsk = await gitC(args, ['rev-parse', '--short', hash], null, {})
+    const shortHash = shortAsk.exitCode === 0 ? shortAsk.stdout.replace(/\s+$/, '').split('\n')[0] : ''
+    if (COMMIT_SHA.test(shortHash) !== true) {
+      await invoke('rm -rf ' + shq(dir) + '\n', args, null, { timeoutMs: 10000 })
+      return { ok: false, error: 'short-hash-failed', repo: args.repo || null, stderr: shortAsk.stderr, noGit: gitMissing(shortAsk) }
+    }
+    const editor = rewordEditorSnippet(shortHash, msgfile)
+    done = await commitMutation(input, ['-c', 'sequence.editor=' + editor, 'rebase', '-i', '--autostash', hash + '^'], { desc: desc })
+    if (done.ok !== true) {
+      /* rebase 没走完：现场还在（撞了冲突等）就立刻 `rebase --abort` 收干净；
+         现场已经不在（编辑器退出非零时 git 自己就中止了）就不补一刀 —— 那样只会
+         得到一句 No rebase in progress，还把读者吓一分。两条路都把 git 的原话带回，
+         abort 再失败也要如实回报。 */
+      const stillBusy = await sequencerBusy(args)
+      const aborted = stillBusy.length > 0
+        ? await panelMutate(input, ['rebase', '--abort'], { desc: desc })
+        : null
+      await invoke('rm -rf ' + shq(dir) + '\n', args, null, { timeoutMs: 10000 })
+      const raw = isStr(done.stderr) ? done.stderr.replace(/\s+$/, '').slice(0, 400) : ''
+      const story = stillBusy.length === 0
+        ? '改写消息的 rebase 没有走完，git 已自行收场，分支还在改写前的位置。git 的原话：'
+        : (aborted.ok === true
+            ? '改写消息的 rebase 没有走完，已中止（rebase --abort），分支回到了改写前的样子。git 的原话：'
+            : '改写消息的 rebase 没有走完，而且中止它的尝试也失败了 —— 分支可能还停在 rebase 中间，请先看 git status 再操作。git 的原话：')
+      return {
+        ok: false, error: 'rebase-failed', repo: done.repo,
+        exitCode: done.exitCode, command: done.command,
+        aborted: aborted === null ? true : aborted.ok === true,
+        sandboxDenied: done.sandboxDenied === true,
+        noGit: done.noGit === true,
+        stderr: (raw.length > 0 ? story + '\n' + raw : story),
+      }
+    }
+  }
+  await invoke('rm -rf ' + shq(dir) + '\n', args, null, { timeoutMs: 10000 })
+  if (done.ok !== true) return done
+  /* 成功答复带改写后的 HEAD：amend 换了 hash，客户端要据此选中新行。 */
+  const after = await git(args, ['rev-parse', 'HEAD'], null, {})
+  return Object.assign({}, done, { newHead: after.exitCode === 0 ? after.stdout.trim() : '' })
 }
 /* ─────────────── 宿主常驻监听：仓库签名轮询 + 会话完成推送 ───────────────
  *
@@ -4950,10 +5333,32 @@ onRpc('git/push', function (input) {
    conflicted panel would trap the user with no way back. */
 const SEQUENCER_OPS = ['cherry-pick', 'revert', 'merge']
 
+/* 右键菜单「作用于整个选区」（PhpStorm 同款）的目标集：客户端把选区按要应用的
+   顺序（最旧→最新）放进 targets 数组，这里逐项清洗。目标不限于 hash —— revert /
+   cherry-pick 要认 'HEAD'，merge 的目标本来就是分支名 —— 所以这里只挡 git 会误读
+   的形状：trim 后为空、前导 -（argv 是数组、不过 shell，与 cleanRefHalf 同一套
+   精神），其余原样放行；去重、封顶 50；旧形状（单 target 字符串）兼容成单元素
+   清单。顺序原样保留交给 git：cherry-pick / revert 都按 argv 顺序逐个应用，谁在
+   前谁先落。真正只认 hash 的地方（edit-check / commit-messages / reword /
+   detail-range）各自仍走 78-actions.js 的 COMMIT_SHA 清洗，不在这里。 */
+const SEQUENCE_TARGETS_MAX = 50
+
+function sequenceTargets(input) {
+  const raw = input != null && Array.isArray(input.targets)
+    ? input.targets
+    : [input != null ? input.target : undefined]
+  const out = []
+  for (let i = 0; i < raw.length && out.length < SEQUENCE_TARGETS_MAX; i += 1) {
+    const one = isStr(raw[i]) ? raw[i].trim() : ''
+    if (one.length === 0 || one.charAt(0) === '-' || out.indexOf(one) >= 0) continue
+    out.push(one)
+  }
+  return out
+}
+
 onRpc('git/sequence', function (input) {
   const op = input != null && isStr(input.op) ? input.op : ''
   const action = input != null && isStr(input.action) ? input.action : ''
-  const target = input != null && isStr(input.target) ? input.target.trim() : ''
   if (SEQUENCER_OPS.indexOf(op) < 0) return { ok: false, error: 'unknown operation ' + op }
   /* 拣选 / 还原 / 合并三件事共用一个入口，命令页里也共用一个名字 —— 读者在那一页
      认操作，不认 argv 的拼写。 */
@@ -4961,8 +5366,9 @@ onRpc('git/sequence', function (input) {
 
   if (op === 'merge') {
     if (action === 'start') {
-      if (target.length === 0) return { ok: false, error: 'a branch or commit is required to merge' }
-      return commitMutation(input, ['merge', '--no-edit', target], { desc: said })
+      const targets = sequenceTargets(input)
+      if (targets.length === 0) return { ok: false, error: 'a branch or commit is required to merge' }
+      return commitMutation(input, ['merge', '--no-edit'].concat(targets), { desc: said })
     }
     if (action === 'continue') return commitMutation(input, ['commit', '--no-edit'], { desc: said })
     if (action === 'abort') return panelMutate(input, ['merge', '--abort'], { desc: said })
@@ -4970,10 +5376,11 @@ onRpc('git/sequence', function (input) {
   }
 
   if (action === 'start') {
-    if (target.length === 0) return { ok: false, error: 'a commit is required' }
-    if (op === 'revert') return commitMutation(input, ['revert', '--no-edit', target], { desc: said })
-    if (input != null && input.record === true) return commitMutation(input, ['cherry-pick', '-x', target], { desc: said })
-    return commitMutation(input, ['cherry-pick', target], { desc: said })
+    const targets = sequenceTargets(input)
+    if (targets.length === 0) return { ok: false, error: 'a commit is required' }
+    if (op === 'revert') return commitMutation(input, ['revert', '--no-edit'].concat(targets), { desc: said })
+    if (input != null && input.record === true) return commitMutation(input, ['cherry-pick', '-x'].concat(targets), { desc: said })
+    return commitMutation(input, ['cherry-pick'].concat(targets), { desc: said })
   }
   if (action === 'continue') return commitMutation(input, ['-c', 'core.editor=true', op, '--continue'], { desc: said })
   if (action === 'abort') return panelMutate(input, [op, '--abort'], { desc: said })
@@ -5019,6 +5426,15 @@ onRpc('git/tag', function (input) {
 onRpc('git/squash', function (input) { return squashRun(input, '压缩提交') })
 
 onRpc('git/drop', function (input) { return dropRun(input, '删除提交') })
+
+/* 历史页右键的三条（78-actions.js 底下那一段）：edit-check 与 commit-messages 是
+    只读的体检与取消息（不进「命令」页，与所有读同一个规矩）；reword 是改写，
+    安全链与命令页记录都在 rewordRun 里，desc 是它在「命令」页的名字。 */
+onRpc('git/edit-check', function (input) { return editCheckSnapshot(input) })
+
+onRpc('git/commit-messages', function (input) { return commitMessagesSnapshot(input) })
+
+onRpc('git/reword', function (input) { return rewordRun(input, '改写提交消息') })
 
 onRpc('git/quick', function (input) { return quickRun(input, '快捷命令') })
 
