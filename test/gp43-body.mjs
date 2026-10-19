@@ -10,7 +10,8 @@
    3. 落点只剩 global：写本地那条路整个拆掉，会话只跟着选沙箱
    4. git 位置：PATH 上的 / 设置里写的 / 写错了 / 一个都没有，四种话各不相同
    5. 远程同步：三个开关，以及「也就是」那行照着实参说
-   6. 推送没有上游：开着就自己走完，关着就问一句；走完的那次不再重试
+   6. 推送没有上游：↑ 先弹确认框问一句（git/push 一次都不发），框里的
+   「推送并设为上游（origin）」点了才真推（带 -u、远端与分支），推成关框不再问
 
    两条关于这个骨架的注意（踩过）：同一个组件的两次渲染要用**同一个 label**，否则
    fiber 是新的、组件等于重新挂载（状态和 effect 都会重来）；而 `timer.timeout` 在这
@@ -254,7 +255,7 @@ ok('打开自动上游：那行说的是 push -u，而不是「由面板问一�
   commandLine(st).indexOf('git push -u <remote> <branch>') >= 0 && commandLine(st).indexOf('问一句') < 0)
 ok('三个开关都进了同一个配置文件', configSaves[configSaves.length - 1].pushSetUpstream === true)
 
-/* ── 6. 推送没有上游：自己走完，还是问一句 ── */
+/* ── 6. 推送没有上游：↑ 先弹确认框问一句，点了框里的按钮才真推 ── */
 
 console.log('')
 console.log('== 面板 · 推送没有上游 ==')
@@ -262,9 +263,14 @@ const pushCalls = []
 let pushSetUpstream = false
 const panelSaved = host.call
 host.call = function (method, args) {
+  if (method === 'git/push-preview') {
+    /* 这个分支还没有上游：ok:true + upstream:null —— 弹窗自己翻「设置上游并推送」
+       那一态，远端由面板按 guessPushRemote 现猜（mock 的 git/refs 里只有 origin）。 */
+    return Promise.resolve({ ok: true, repo: '/tmp/ws', branch: 'main', upstream: null, ahead: 0, behind: 0, hasMore: false, maxCount: 200, commits: [] })
+  }
   if (method === 'git/push') {
     pushCalls.push(args)
-    /* 第一次失败在 git 自己的那句话上；带上 -u 的那一次成功。 */
+    /* 确认框里点「推送并设为上游」的那一次成功；不带 -u 的直推在 git 自己那句话上失败。 */
     if (args != null && args.setUpstream === true) return Promise.resolve({ ok: true, repo: '/tmp/ws', stdout: '', stderr: '', exitCode: 0 })
     return Promise.resolve({ ok: false, repo: '/tmp/ws', stdout: '', stderr: 'fatal: The current branch main has no upstream branch', exitCode: 128 })
   }
@@ -291,11 +297,11 @@ const setPushSetting = async function (on) {
   await sectionTree('gp43-net')
 }
 /* 注意 label：`ready` 是弹层自己「开过一次」之后才为真的，而 fiber 是按 label 认的 ——
-   换个 label 渲染就等于重新挂载，`git/refs` 不会发出去，横幅也就永远画不出来（第一版
-   就是这么错的）。所以整段都留在 `openPanel` 用的那个 label 上。 */
+   换个 label 渲染就等于重新挂载，`git/refs` 不会发出去，弹窗也就永远画不出来（旧横幅
+   那一版就是这么错的）。所以整段都留在 `openPanel` 用的那个 label 上。 */
 const clickPush = async function () {
   const t = await openPanel()
-  /* 前面的用例把面板留在了「配置」页；横幅画在历史页的正文里 —— 先切回历史再按 ↑。 */
+  /* 前面的用例把面板留在了「配置」页；确认弹窗盖在历史页的正文上 —— 先切回历史再按 ↑。 */
   const logTab = buttons(t).find(function (b) { return textOf(b) === '历史' })
   if (logTab !== undefined && String(logTab.props.className).indexOf('dsh-git-tab-on') < 0) {
     logTab.props.onClick()
@@ -307,27 +313,46 @@ const clickPush = async function () {
   await wait(30)
   return await settle('pop')
 }
+/* 点确认弹窗里那颗「推送并设为上游（origin）」：这才是真正发 git/push 的那一下。 */
+const clickDialogPush = async function () {
+  const t = await settle('pop')
+  const btn = buttons(t).filter(function (b) { return textOf(b).indexOf('推送并设为上游（') === 0 })[0]
+  if (btn === undefined) throw new Error('推送确认弹窗里没有「推送并设为上游」按钮')
+  btn.props.onClick()
+  await wait(30)
+  return await settle('pop')
+}
 
 await setPushSetting(false)
 let pushTree = await clickPush()
-console.log('  关着:', JSON.stringify({ 次数: pushCalls.length, 横幅: textOf(pushTree).indexOf('推送并设为上游') >= 0 }))
-ok('关着的时候只推一次，然后问一句（原来的行为没变）',
-  pushCalls.length === 1 && pushCalls[0].setUpstream === undefined)
-ok('横幅还在，读者可以自己按', textOf(pushTree).indexOf('推送并设为上游') >= 0)
+console.log('  关着:', JSON.stringify({
+  次数: pushCalls.length,
+  弹窗: textOf(pushTree).indexOf('还没有上游') >= 0,
+  按钮: buttons(pushTree).filter(function (b) { return textOf(b).indexOf('推送并设为上游（') === 0 }).length,
+}))
+ok('关着的时候只问不推：↑ 弹出确认框，git/push 一次都没发',
+  pushCalls.length === 0 && textOf(pushTree).indexOf('还没有上游') >= 0)
+ok('框里给的是「推送并设为上游（origin）」，等读者确认',
+  buttons(pushTree).filter(function (b) { return textOf(b).indexOf('推送并设为上游（') === 0 }).length === 1)
 
 pushCalls.length = 0
 pushSetUpstream = true
 await setPushSetting(true)
 pushTree = await clickPush()
+const askedWithSettingOn = pushCalls.length === 0
+pushTree = await clickDialogPush()
 console.log('  开着:', JSON.stringify({
   次数: pushCalls.length,
   参数: pushCalls.map(function (a) { return a.setUpstream === true ? 'setUpstream' : 'plain' }),
-  横幅: textOf(pushTree).indexOf('推送并设为上游') >= 0,
+  弹窗还开着: textOf(pushTree).indexOf('还没有上游') >= 0,
 }))
-ok('开着的时候自己走完那一步：第二次带着 -u、远端和分支',
-  pushCalls.length === 2 && pushCalls[1].setUpstream === true
-  && pushCalls[1].remote === 'origin' && pushCalls[1].branch === 'main')
-ok('走完了就不用再问一句', textOf(pushTree).indexOf('推送并设为上游') < 0)
+ok('开关开着也不自己推：自动设上游不越过确认框', askedWithSettingOn)
+ok('框里点「推送并设为上游」才真推：一次、带 -u、远端和分支',
+  pushCalls.length === 1 && pushCalls[0].setUpstream === true
+  && pushCalls[0].remote === 'origin' && pushCalls[0].branch === 'main')
+ok('推成了弹窗就关，不再问一句',
+  textOf(pushTree).indexOf('还没有上游') < 0
+  && buttons(pushTree).filter(function (b) { return textOf(b).indexOf('推送并设为上游（') === 0 }).length === 0)
 ok('没有第二次重试（-u 那次失败也不会再套一层）', pushCalls.filter(function (a) { return a.setUpstream === true }).length === 1)
 
 host.call = panelSaved
