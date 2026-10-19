@@ -323,6 +323,28 @@ ok('列表本身有内容（不是没读到）', byClass(fresh, 'dsh-git-crow').
 
 console.log('')
 console.log('== 点一行才选中，并去读它的详情 ==')
+/* 右键菜单如今自带一次「能不能改写」的体检（git/edit-check），「编辑提交消息…」
+   开框时还要读一次原始消息（git/commit-messages）：桩按 gp37 的老风格补上这两条
+   —— 体检对任何 hash 都答「可以改写」（在当前分支历史上、没推送过、不是根提交），
+   HEAD 恒 aaa111（isHead 跟着算）；消息按请求的 hash 原样回一条。别的请求原路
+   委托给上面的桩。撤桩在右键菜单的大段落收尾处。 */
+const menuSavedCall = host.call
+host.call = function (method, args) {
+  if (method === 'git/edit-check') {
+    calls.push({ method: method, args: args })
+    const hashes = args != null && Array.isArray(args.hashes) ? args.hashes : []
+    return Promise.resolve({
+      ok: true, repo: '/tmp/ws', head: 'aaa111',
+      checks: hashes.map((hash) => ({ hash: hash, reachable: true, pushed: false, isHead: hash === 'aaa111', isRoot: false })),
+    })
+  }
+  if (method === 'git/commit-messages') {
+    calls.push({ method: method, args: args })
+    const hashes = args != null && Array.isArray(args.hashes) ? args.hashes : []
+    return Promise.resolve({ ok: true, messages: hashes.map((hash) => ({ hash: hash, subject: 'stub subject', message: 'stub subject\n\nstub body' })) })
+  }
+  return menuSavedCall(method, args)
+}
 calls.length = 0
 byClass(fresh, 'dsh-git-crow')[1].props.onClick()
 await wait(15)
@@ -330,12 +352,18 @@ fresh = await settle('pop')
 ok('点的那一行被选中', crowSel().length === 1 && textOf(crowSel()[0]).indexOf('second commit') >= 0)
 ok('只为点的那一行读详情', calls.filter((c) => c.method === 'git/commit-detail').map((c) => c.args.hash).join(',') === 'bbb222')
 ok('右栏换成了那个提交', textOf(byClass(fresh, 'dsh-git-detail')[0]).indexOf('detail subject') >= 0)
-/* 解禁的判定跟着选中走：对刚选中的那行右键，菜单四项就是可用的 */
+/* 解禁的判定跟着选中走：对刚选中的那行右键，动作项都可用（体检随菜单开着就发了，
+   答复落定后「编辑提交消息…」也解禁）；合并提交… / 批量删除提交…要 ≥2 条的选区
+   才解禁，这里只右键了一条，照旧置灰。 */
 byClass(fresh, 'dsh-git-crow')[1].props.onContextMenu({ preventDefault() {}, stopPropagation() {}, clientX: 11, clientY: 12 })
 await wait(15)
 fresh = await settle('pop')
 const selMenuItems = buttons(byClass(fresh, 'dsh-git-menu')[0])
-ok('选中后右键：菜单四项全部可用', selMenuItems.length === 4 && selMenuItems.every((b) => b.props.disabled !== true))
+ok('选中后右键：菜单八项，动作六项可用（合并/批量删除要选区，先置灰）',
+  selMenuItems.length === 8
+  && ['拣选', '还原', '打标签…', '从这个提交新建分支…', '编辑提交消息…', '复制 Hash'].every((l) => selMenuItems.find((b) => textOf(b) === l).props.disabled !== true)
+  && selMenuItems.find((b) => textOf(b) === '合并提交…').props.disabled === true
+  && selMenuItems.find((b) => textOf(b) === '批量删除提交…').props.disabled === true)
 fakeDoc.fire('keydown', { key: 'Escape', target: OUTSIDE })
 await wait(15)
 fresh = await settle('pop')
@@ -429,11 +457,13 @@ ok('转圈是一条 @keyframes 动画，不是靠改尺寸或位置',
 console.log('')
 console.log('== 提交行右键：先按单选同一条路选中，再开光标处的菜单 ==')
 /* 前面的「重新读历史」段把 graphCommits 永久筛掉过一条（模块级变量）；这里恢复
-   原始三条再挂，crow 的下标（bbb222 在第二行）才是段落里写死的那些。 */
+   原始三条再挂，crow 的下标（bbb222 在第二行）才是段落里写死的那些。parents 补上
+   真实图里就有的那条链（aaa111 → bbb222 → ccc333）：多选「能不能整段改写」的
+   连续性判据（selectionSpan）读它。 */
 graphCommits = [
-  { hash: 'aaa111', subject: 'tip commit', author: 'mays', date: '2026-09-16', committedAt: nowSec - 60, refs: ['HEAD -> dev'] },
-  { hash: 'bbb222', subject: 'second commit', author: 'mays', date: '2026-09-15', committedAt: nowSec - 3600, refs: [] },
-  { hash: 'ccc333', subject: 'third commit', author: 'jiangzx', date: '2026-09-14', committedAt: nowSec - 7200, refs: [] },
+  { hash: 'aaa111', subject: 'tip commit', author: 'mays', date: '2026-09-16', committedAt: nowSec - 60, refs: ['HEAD -> dev'], parents: ['bbb222'] },
+  { hash: 'bbb222', subject: 'second commit', author: 'mays', date: '2026-09-15', committedAt: nowSec - 3600, refs: [], parents: ['ccc333'] },
+  { hash: 'ccc333', subject: 'third commit', author: 'jiangzx', date: '2026-09-14', committedAt: nowSec - 7200, refs: [], parents: [] },
 ]
 fibers.clear()
 t = await openLog()
@@ -453,31 +483,70 @@ ok('只为它读了一次详情', calls.filter((c) => c.method === 'git/commit-d
 ok('菜单开在光标坐标（position:fixed，left/top = clientX/clientY）', ctxMenus().length === 1
   && ctxMenus()[0].props.style.position === 'fixed'
   && ctxMenus()[0].props.style.left === '123px' && ctxMenus()[0].props.style.top === '45px')
-ok('四项：拣选 / 还原 / 打标签… / 从这个提交新建分支…', ctxItems().length === 4
-  && textOf(ctxItems()[0]) === '拣选' && textOf(ctxItems()[1]) === '还原'
-  && textOf(ctxItems()[2]) === '打标签…' && textOf(ctxItems()[3]) === '从这个提交新建分支…')
-ok('title 沿用原工具条四个键的文案',
-  ['拣选：cherry-pick，把这个提交应用到当前分支', '还原：revert，生成一个反向提交来撤销它',
-    '标签：在这个提交上打标签', '分支：从这个提交新建分支并切过去']
-    .every((l, i) => String(ctxItems()[i].props.title) === l))
-ok('四项都可用（右键即选中，!canAct 的置灰不出现）', ctxItems().every((b) => b.props.disabled !== true))
+const singleCheck = calls.filter((c) => c.method === 'git/edit-check')
+ok('菜单开着就问了一次体检，问的是右键那一条（单选目标集 = [bbb222]）', singleCheck.length === 1
+  && JSON.stringify(singleCheck[0].args.hashes) === '["bbb222"]')
+ok('八项：拣选 / 还原 / 打标签… / 从这个提交新建分支… / 编辑提交消息… / 合并提交… / 批量删除提交… / 复制 Hash',
+  ctxItems().length === 8
+  && ctxItems().map(textOf).join('|') === '拣选|还原|打标签…|从这个提交新建分支…|编辑提交消息…|合并提交…|批量删除提交…|复制 Hash')
+ok('title：动作四项沿用工具条的话术（拣选/还原把「依次/各」说了进去），复制说剪贴板',
+  String(ctxItems()[0].props.title) === '拣选：cherry-pick，把这个提交依次应用到当前分支（最旧的先落）'
+  && String(ctxItems()[1].props.title) === '还原：revert，为这个提交各生成一个反向提交来撤销（最旧的先落）'
+  && String(ctxItems()[2].props.title) === '标签：在这个提交上打标签'
+  && String(ctxItems()[3].props.title) === '分支：从这个提交新建分支并切过去'
+  && String(ctxItems()[7].props.title) === '把完整 hash 写进剪贴板')
+/* 只右键了一条：合并提交… / 批量删除提交… 这两项天生置灰（选区不足两条），其余
+   六项都可用 —— 编辑提交消息… 的解禁就是体检回来这一刻（下一句单独钉）。 */
+ok('六项可用；合并提交…与批量删除提交…置灰（只右键了一条，title 说至少 2 条）',
+  ['拣选', '还原', '打标签…', '从这个提交新建分支…', '编辑提交消息…', '复制 Hash'].every((l) => ctxItems().find((b) => textOf(b) === l).props.disabled !== true)
+  && ctxItems().find((b) => textOf(b) === '合并提交…').props.disabled === true
+  && String(ctxItems().find((b) => textOf(b) === '合并提交…').props.title).indexOf('至少 2 条') > 0
+  && ctxItems().find((b) => textOf(b) === '批量删除提交…').props.disabled === true)
+/* 菜单骨架（分支行菜单同一条断法）：动作组后一条分隔线隔开改写三项，改写组后再
+   一条隔开复制 —— 分隔线是 div，不进 buttons()，要下到子元素里数。 */
+const ctxKids = Array.isArray(ctxMenus()[0].props.children) ? ctxMenus()[0].props.children : [ctxMenus()[0].props.children]
+const ctxKidIndex = (label) => ctxKids.findIndex((k) => k != null && k.props !== undefined && textOf(k) === label)
+const ctxKidClass = (i) => (ctxKids[i] == null || ctxKids[i].props === undefined || typeof ctxKids[i].props.className !== 'string' ? '' : ctxKids[i].props.className)
+ok('两条分隔线把菜单分成三段：动作 / 改写三项 / 复制',
+  byClass(ctxMenus()[0], 'dsh-git-menu-sep').length === 2
+  && ctxKidClass(ctxKidIndex('从这个提交新建分支…') + 1).indexOf('dsh-git-menu-sep') >= 0
+  && ctxKidIndex('编辑提交消息…') === ctxKidIndex('从这个提交新建分支…') + 2
+  && ctxKidClass(ctxKidIndex('复制 Hash') - 1).indexOf('dsh-git-menu-sep') >= 0)
+/* 编辑提交消息…要等体检（git/edit-check）回来才解禁 —— 菜单先开、体检后到。
+   右键之后一个 await 都不落、同步渲一帧：此刻答复必然还没回来，这一项必须还是
+   置灰的，title 把「正在检查」说在明处。 */
+byClass(t, 'dsh-git-crow')[1].props.onContextMenu({ preventDefault() {}, stopPropagation() {}, clientX: 7, clientY: 8 })
+const checkPendingFrame = renderRoot(makeElement(popover, { sessionId: 's-1' }), 'pop')
+const pendingReword = buttons(byClass(checkPendingFrame, 'dsh-git-menu')[0]).find((b) => textOf(b) === '编辑提交消息…')
+ok('体检没回来之前「编辑提交消息…」置灰（title 说正在检查）',
+  pendingReword !== undefined && pendingReword.props.disabled === true
+  && String(pendingReword.props.title).indexOf('正在检查这个提交能不能改写') > 0)
+await wait(15)
+t = await settle('pop')
+ok('体检回来之后「编辑提交消息…」解禁（title 换成它自己的说明）',
+  ctxItems().find((b) => textOf(b) === '编辑提交消息…').props.disabled !== true
+  && String(ctxItems().find((b) => textOf(b) === '编辑提交消息…').props.title).indexOf('正在检查') < 0)
 
 /* 菜单开着时点头部 ⇣ fetch：它走同步组自己的运行中标记（syncRunning），不再抬面板级
-   busy —— 菜单照常开着，四项照常可用，这句钉住「同步动作不阻塞面板」。 */
+   busy —— 菜单照常开着，六项照常可用，这句钉住「同步动作不阻塞面板」。合并提交… /
+   批量删除提交…的置灰与 busy 无关（选区不足两条），跟着照旧。 */
 const fetchBtn = byClass(t, 'dsh-git-tool').find((b) => String(b.props.title).indexOf('fetch：') === 0)
 fetchBtn.props.onClick()
 /* renderRoot 的第二个参数是 fiber 的路径前缀：必须照 popTree 用 'pop'，
    才会落在挂着的同一批 fiber 上读到那一帧；换个名字等于新挂一套。 */
 const fetchFrame = renderRoot(makeElement(popover, { sessionId: 's-1' }), 'pop')
 const fetchItems = buttons(byClass(fetchFrame, 'dsh-git-menu')[0])
-ok('fetch 进行中菜单四项照常可用（同步动作不抬面板 busy）', fetchItems.length === 4 && fetchItems.every((b) => b.props.disabled !== true))
+ok('fetch 进行中菜单照常可用（同步动作不抬面板 busy；合并/批量删除仍因选区不足置灰）',
+  fetchItems.length === 8
+  && ['拣选', '还原', '打标签…', '从这个提交新建分支…', '编辑提交消息…', '复制 Hash'].every((l) => fetchItems.find((b) => textOf(b) === l).props.disabled !== true)
+  && fetchItems.find((b) => textOf(b) === '合并提交…').props.disabled === true)
 await wait(15)
 t = await settle('pop')
 
 /* !canAct 的另一条腿（busy）还得有人看得见。同步组的四个键不抬 busy 了，还有一条
    老路照旧抬：序列器横幅的「继续」走的是无键 runOp —— 把 mock 的面板答复临时改成
-   「有一个进行中的变基」，点「继续」把 busy 抬起来，菜单不受影响地开着，四项跟着
-   全部置灰。 */
+   「有一个进行中的变基」，点「继续」把 busy 抬起来，菜单不受影响地开着，除了不带
+   动作的「复制 Hash」，其余七项跟着全部置灰。 */
 OK_PANEL.sequencer = 'rebase'
 t = await settle('pop')
 const contBtn = buttons(t).find((b) => textOf(b) === '继续')
@@ -485,20 +554,25 @@ if (contBtn === undefined) throw new Error('busy 帧：序列器横幅的「继�
 contBtn.props.onClick()
 const busyFrame = renderRoot(makeElement(popover, { sessionId: 's-1' }), 'pop')
 const busyItems = buttons(byClass(busyFrame, 'dsh-git-menu')[0])
-ok('busy 帧里四项全部置灰', busyItems.length === 4 && busyItems.every((b) => b.props.disabled === true))
+ok('busy 帧里除「复制 Hash」外全部置灰（复制不发起动作，busy 不拦它）',
+  busyItems.length === 8
+  && busyItems.find((b) => textOf(b) === '复制 Hash').props.disabled !== true
+  && busyItems.every((b) => textOf(b) === '复制 Hash' || b.props.disabled === true))
 OK_PANEL.sequencer = null
 await wait(15)
 t = await settle('pop')
 
-/* 动作目标 = 右键那一条（与多选无关） */
+/* 动作目标 = 右键那一条（与多选无关）。发参形状是新契约：targets 数组（Host 的
+   sequenceTargets 吃它），不再有 target 字符串。 */
 calls.length = 0
 ctxItems()[0].props.onClick({ stopPropagation() {} })
 await wait(15)
 t = await settle('pop')
 const pickCalls = calls.filter((c) => c.method === 'git/sequence')
-ok('拣选把 cherry-pick 发给右键那一条（record 沿用插件配置）', pickCalls.length === 1
+ok('拣选把 cherry-pick 发给右键那一条（targets 单元素数组，record 沿用插件配置）', pickCalls.length === 1
   && pickCalls[0].args.op === 'cherry-pick' && pickCalls[0].args.action === 'start'
-  && pickCalls[0].args.target === 'bbb222' && pickCalls[0].args.record === false)
+  && JSON.stringify(pickCalls[0].args.targets) === '["bbb222"]' && pickCalls[0].args.target === undefined
+  && pickCalls[0].args.record === false)
 ok('点完动作菜单收起', ctxMenus().length === 0)
 await rightClickCrow(1, 3, 4)
 calls.length = 0
@@ -506,8 +580,36 @@ ctxItems()[1].props.onClick({ stopPropagation() {} })
 await wait(15)
 t = await settle('pop')
 const revCalls = calls.filter((c) => c.method === 'git/sequence')
-ok('还原把 revert 发给右键那一条', revCalls.length === 1
-  && revCalls[0].args.op === 'revert' && revCalls[0].args.target === 'bbb222')
+ok('还原把 revert 发给右键那一条（targets 单元素数组）', revCalls.length === 1
+  && revCalls[0].args.op === 'revert' && JSON.stringify(revCalls[0].args.targets) === '["bbb222"]')
+
+/* 「编辑提交消息…」点开的是 qc-box 对话框：体检答复里的 HEAD 记成 expect，原始
+   消息（git/commit-messages）开框即预填 —— 桩回的那条 stub subject 应当已经在
+   textarea 里；「取消」关框。 */
+await rightClickCrow(1, 3, 4)
+const rewordCallMark = calls.length
+ctxItems().find((b) => textOf(b) === '编辑提交消息…').props.onClick({ stopPropagation() {} })
+await wait(15)
+t = await settle('pop')
+const rewordBoxNode = byClass(t, 'dsh-git-qc-box')[0]
+ok('编辑提交消息… 打开对话框，原始消息已经预填', rewordBoxNode !== undefined
+  && collect(rewordBoxNode).some((n) => n.type === 'textarea' && String(n.props.value).indexOf('stub subject') === 0))
+ok('开框读的是 git/commit-messages，问的正是右键那一条',
+  calls.slice(rewordCallMark).some((c) => c.method === 'git/commit-messages' && JSON.stringify(c.args.hashes) === '["bbb222"]'))
+collect(rewordBoxNode).find((n) => n.type === 'button' && textOf(n) === '取消').props.onClick({ stopPropagation() {} })
+await wait(10)
+t = await settle('pop')
+ok('取消关掉对话框', byClass(t, 'dsh-git-qc-box').length === 0)
+
+/* 复制 Hash：剪贴板在这个环境里写不进去，走的失败路 —— 提示条把完整 hash 原样给出。 */
+await rightClickCrow(1, 3, 4)
+ctxItems().find((b) => textOf(b) === '复制 Hash').props.onClick({ stopPropagation() {} })
+await wait(15)
+t = await settle('pop')
+ok('复制 Hash 落提示条（剪贴板不可用，提示条给了完整 hash）',
+  textOf(byClass(t, 'dsh-git-oknote')[0]).indexOf('无法写入剪贴板') >= 0
+  && textOf(byClass(t, 'dsh-git-oknote')[0]).indexOf('bbb222') >= 0
+  && ctxMenus().length === 0)
 
 /* 打标签…：开的就是原来的内联输入行，可清除框的手感照旧 */
 await rightClickCrow(0, 5, 6)
@@ -561,7 +663,33 @@ await wait(15)
 t = await settle('pop')
 const thirdPick = calls.filter((c) => c.method === 'git/sequence')
 ok('拣选的目标是右键那一条（ccc333），不是多选里的任何一条', thirdPick.length === 1
-  && thirdPick[0].args.target === 'ccc333')
+  && JSON.stringify(thirdPick[0].args.targets) === '["ccc333"]')
+
+/* 上一段的多选（aaa111 + bbb222，图上连续的一段）还在：这回右键的行就在选区里
+   —— 菜单按选区收放（PhpStorm：动作作用于 selection），拣选/还原标出「（2 条）」、
+   发参把整份选区按执行顺序（最旧→最新）交出去；体检问的也是整份。 */
+ok('上一段的两行多选还在（aaa111 + bbb222，图上连续的一段）', multiRows(t).length === 2)
+calls.length = 0
+await rightClickCrow(1, 11, 12)
+ok('右键行在多选里：拣选/还原标出「（2 条）」，体检问整份选区',
+  ctxItems().find((b) => textOf(b) === '拣选（2 条）') !== undefined
+  && ctxItems().find((b) => textOf(b) === '还原（2 条）') !== undefined
+  && ctxItems().find((b) => textOf(b) === '拣选') === undefined
+  && (calls.filter((c) => c.method === 'git/edit-check')[0] || { args: {} }).args.hashes !== undefined
+  && JSON.stringify(calls.filter((c) => c.method === 'git/edit-check')[0].args.hashes) === '["aaa111","bbb222"]')
+ok('选区连续、最新一条就是 HEAD：合并提交…与批量删除提交…解禁（title 说「2 条连续提交」）',
+  ctxItems().find((b) => textOf(b) === '合并提交…').props.disabled !== true
+  && String(ctxItems().find((b) => textOf(b) === '合并提交…').props.title).indexOf('2 条连续提交') > 0
+  && ctxItems().find((b) => textOf(b) === '批量删除提交…').props.disabled !== true)
+ctxItems()[0].props.onClick({ stopPropagation() {} })
+await wait(15)
+t = await settle('pop')
+const selPick = calls.filter((c) => c.method === 'git/sequence')
+ok('拣选把整份选区按最旧→最新发出去（bbb222 在前、aaa111 在后）', selPick.length === 1
+  && JSON.stringify(selPick[0].args.targets) === '["bbb222","aaa111"]')
+
+/* 这一段收工：把体检/消息的桩撤掉，后面段落的 calls 不再有菜单的噪音。 */
+host.call = menuSavedCall
 
 /* Escape 与滚动都收走菜单 */
 await rightClickCrow(0, 3, 4)
