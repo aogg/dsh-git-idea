@@ -210,6 +210,50 @@ tree = await settle()
 ok('返回后又是文件列表', changeRow(tree, 'app.js') !== undefined && byClass(tree, 'dsh-git-diffview').length === 0)
 ok('返回没有再发读取', diffCalls.length === beforeStageCalls)
 
+/* ── 1b. 工具条 ⟳ 与打开的差异 ──
+   面板上有两只刷新键：差异头部的 ⟳（「重新读取这个文件的差异」）和工具条的 ⟳
+   （「重新读取仓库（忽略缓存）」）。过去前者只换补丁，后者只换树下的账 —— 整树读
+   落地后变更列表是新账，可屏上开着的那块补丁原样停在刷新前（diffSig 不动就不重读），
+   选区合并查看开出来的差异连右列与来路一起没了：读者看到的就是「点仓库时差异是
+   新的，⟳ 之后差异就没了」。现在 ⟳ 落地的那一拍把 diffAt +1：视图不关、补丁按
+   新账重读 —— 与差异头部那只 ⟳ 同一个语义。 */
+
+console.log('')
+console.log('== 工具条 ⟳ 与打开的差异 ==')
+/* 先重新点开 src/app.js 的差异（上面第 1 节末尾已经回到了列表）。这里的迷你 React
+   按「路径#组件名#key」复用 fiber：关掉再点开同一个文件的差异，hooks 与 effect 依赖
+   原样存活 —— 重新挂载不发读取、补丁还是上一回的，这只影响测试替身，不影响断言：
+   下面真正较真的是 ⟳ 那一拍有没有把这份（旧的）补丁按新账重读。 */
+changeRow(tree, 'app.js').props.onClick()
+await wait(10)
+tree = await settle()
+ok('差异重新点开（视图回到屏上）', byClass(tree, 'dsh-git-diffview').length === 1)
+
+const panelRefreshMark = diffCalls.length
+toolByTitle(tree, '重新读取仓库（忽略缓存）').props.onClick()
+await wait(10)
+tree = await settle()
+ok('⟳ 之后差异视图还开着，路径没变（刷新不把读者正在看的差异合上）',
+  byClass(tree, 'dsh-git-diffview').length === 1
+  && textOf(byClass(tree, 'dsh-git-diffpath')[0]) === 'src/app.js')
+ok('⟳ 落地的那一拍把打开的差异重读了一遍（仍是已暂存 + 未暂存两段，与差异头部 ⟳ 同语义）',
+  diffCalls.length === panelRefreshMark + 2
+  && diffCalls[diffCalls.length - 2].mode === 'staged' && diffCalls[diffCalls.length - 1].mode === 'worktree'
+  && diffCalls[diffCalls.length - 1].path === 'src/app.js')
+ok('重读后的补丁还画在屏上（表头合计 +3 −1）',
+  textOf(byClass(tree, 'dsh-git-diffcount')[0]).replace(/\s/g, '') === '+3−1')
+
+toolByTitle(tree, '返回文件列表').props.onClick()
+await wait(10)
+tree = await settle()
+const listRefreshMark = diffCalls.length
+toolByTitle(tree, '重新读取仓库（忽略缓存）').props.onClick()
+await wait(10)
+tree = await settle()
+ok('屏上是列表时 ⟳ 不凭空开出差异，也不多发差异读取',
+  byClass(tree, 'dsh-git-diffview').length === 0 && diffCalls.length === listRefreshMark)
+ok('⟳ 之后列表照常在（整树读照常落地）', changeRow(tree, 'app.js') !== undefined)
+
 /* ── 4. 未跟踪的二进制：只读一次，不当作文本 ── */
 
 const binCalls = diffCalls.length
