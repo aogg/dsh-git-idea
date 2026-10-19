@@ -1605,6 +1605,32 @@
         return function () { alive = false }
       }, [logSelKey, tab, freshAt, props.ready])
 
+      /* ── 工作树块（25-worktree.js）的读数：永远跟随生效仓库 ──
+
+         依赖与上面 git/refs 那条 effect 同一组：
+           · appliedRepo —— 一切「切生效仓库」的路径（仓库块单击行、说明页「打开这个
+             目录」、多选分组头单击、分支行双击的 pickBranch）最后都落在 setAppliedRepo
+             上，这里跟着换仓库重读，整块换数据；
+           · freshAt（reloadAt 的可见版）—— ⟳、变更 git 命令后的 bump、watcher 签名
+             变化都推它；Host 那边每次整仓失效本来就把 'worktrees' 一格一起作废
+             （65-worktree.js），重读拿到的必是新账；
+           · repoOk / props.ready —— 不是仓库、面板没就绪时不读。
+         失败不上横幅：答复 ok:false（非仓库、git 读不动）与运输层失败都折成
+         ok:false 的占位，块自己退化成灰说明行 —— 工作树是辅助信息，error 位一次
+         只说一件事的规矩不给它挤（catch 里只留一行控制台）。 */
+      const [worktrees, setWorktrees] = React.useState(null)
+      React.useEffect(function () {
+        if (!repoOk || props.ready !== true) return undefined
+        let alive = true
+        callHost('git/worktrees', base(appliedRepo)).then(function (data) {
+          if (alive) setWorktrees(data)
+        }).catch(function (failure) {
+          console.error('dsh-git-idea: could not read worktrees', failureText(failure))
+          if (alive) setWorktrees({ ok: false, repo: appliedRepo.length > 0 ? appliedRepo : null, error: 'unavailable', worktrees: [] })
+        })
+        return function () { alive = false }
+      }, [appliedRepo, repoOk, freshAt, props.ready])
+
       /* 分支树里双击分支。repo 为空 = 今天的单仓库树，行为一字不差；带仓库 = 多选
          分组里双击「切到那个仓库并只看这个分支」—— 两步并成一步，否则在多选视图里
          双击一个分支什么都不发生，看起来就像双击坏了。 */
@@ -3325,6 +3351,21 @@
               /* 多仓库：仓库列表区（HEAD 分组上方）与多选时的按仓库分组。groups 为
                  null 时这棵树和今天是同一棵 —— 同一函数、空前缀。 */
               repoProps: repoPropsFor('log'),
+              /* 工作树块（25-worktree.js）：数据永远跟生效仓库（上面那条 effect 的
+                 依赖就是 appliedRepo + freshAt）。refs 递分支树同一份 —— 徽章按分支
+                 名免费查，不为块单独读数；activeRef 与分支树的 scope 高亮同一个值，
+                 两边的「选中」因此说的是同一个分支。repo 是 pickBranch 的仓库参数：
+                 单仓库历史传 ''（今天的主路，只 setActiveRef）；多选分组里传生效
+                 仓库，让 pickBranch「先 applyRepo 再 setActiveRef」那支跑 —— 单击
+                 即收拢回单仓库并按该分支过滤历史。 */
+              worktreeProps: {
+                data: worktrees,
+                refs: refs,
+                effective: effectiveRepo,
+                activeRef: shownRef,
+                repo: logSel.length > 0 ? effectiveRepo : '',
+                onPickBranch: pickBranch,
+              },
               groups: logSel.length > 0 ? logSel.map(function (repo) {
                 return { repo: repo, refs: repoRefs[repo] === undefined ? null : repoRefs[repo] }
               }) : null,

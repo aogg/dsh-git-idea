@@ -448,6 +448,12 @@
         rowsForRefs(refs, '', { repo: '', headName: props.headName, dirty: props.dirty })
       }
 
+      /* 仓库块与工作树块都画在分支树行之前，从粗到细一列读完：仓库（看哪个仓库）
+         → 工作树（那个仓库里还开着哪几个工作区）→ 分支（看哪条历史）。两块都可能
+         缺席（说明页那份仓库列表、宿主太旧没有 git/worktrees），各自判空再挂。 */
+      const sideHead = []
+      if (props.repoProps != null) sideHead.push(h(RepoSwitcher, props.repoProps))
+      if (props.worktreeProps != null) sideHead.push(h(WorktreeBox, props.worktreeProps))
       return h('div', { className: 'dsh-git-sidewrap' },
         h('div', { className: 'dsh-git-sidehead' },
           h('span', { key: 'i', className: 'dsh-git-sidehead-ico' }, h(Icon, { name: 'search', size: 12 })),
@@ -463,6 +469,6 @@
            在最先，单击切生效仓库，Ctrl+单击挑进多选。放在这棵树里而不是侧栏外另开一
            列，是因为它和分支树同属「看哪一层」这个问题 —— 仓库在上面，分支在下面。 */
         h('div', { className: 'dsh-git-side' },
-          props.repoProps == null ? rows : [h(RepoSwitcher, props.repoProps)].concat(rows)))
+          sideHead.length > 0 ? sideHead.concat(rows) : rows))
     }
 

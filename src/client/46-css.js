@@ -548,6 +548,25 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-rgroup:hover{background:var(--dsw-alias-bg-layer-2)}
 .dsh-git-rgroup .dsh-git-repo-dim{margin-left:0;padding-left:4px}
 
+/* ── 工作树块（25-worktree.js，历史页左栏、仓库块正下方）──
+    视觉与仓库块同族的实现方式：容器、标题行、行、灰行这四条与 .dsh-git-repo-box
+    / -head / -row / -gone **共用同一组声明**（分组选择器），观感逐像素一致；类名
+    却另起 dsh-git-wt- 前缀 —— 仓库块的行数是测试按个数认的（gp44 数 repo-box /
+    repo-row），工作树块混进同一批类名就会把那些账搅乱。行内的小记号（●、图标、
+    三角、↑↓）直接复用没人按个数认的类。 */
+.dsh-git-repo-box,.dsh-git-wt-box{flex:none;margin:6px 6px 10px;padding:2px 3px 5px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-2)}
+.dsh-git-repo-head,.dsh-git-wt-head{display:flex;align-items:center;gap:5px;min-height:20px;padding:3px 5px;border-radius:5px;color:var(--dsw-alias-label-primary);font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;-webkit-user-select:none;user-select:none}
+.dsh-git-repo-head:hover,.dsh-git-wt-head:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dsh-git-repo-row,.dsh-git-wt-row{display:flex;align-items:center;gap:5px;min-height:20px;padding:1px 5px;border-radius:5px;font-size:11px;cursor:pointer;white-space:nowrap;-webkit-user-select:none;user-select:none}
+.dsh-git-repo-row:hover,.dsh-git-wt-row:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dsh-git-repo-gone,.dsh-git-wt-gone{opacity:.55}
+/* 行尾右侧的一簇（↑↓ 徽章、⚠、🔒）：贴右缘、不抢名字的宽度 —— 名字那格是 flex
+    收缩的第一顺位，徽章数字再多也只是挤名字的省略号，不把行撑爆。 */
+.dsh-git-wt-right{margin-left:auto;display:inline-flex;align-items:center;gap:4px;flex:none}
+/* ⚠（目录已丢失）与 🔒（已锁定）这两个行尾小记号：本版没有 prune / 解锁的动作，
+    它们只是「这条有状况」的眼标，详情全在行 tooltip 里，所以压一点透明度。 */
+.dsh-git-wt-mark{flex:none;font-size:9px;line-height:1;opacity:.85}
+
 /* ── 差异页右列：这批修改的来源文件列表 ──
    补丁区 flex:1、右列固定 240px。右列的行复用树行那套类名（dsh-git-trow），
    悬停/选中/省略号因此和别处的树一个读法；min-width:0 是给补丁区的 —— 行方向

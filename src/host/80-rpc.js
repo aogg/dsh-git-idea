@@ -112,6 +112,11 @@ onRpc('git/refs', function (input) { return refsSnapshot(input) })
 
 onRpc('git/branches', function (input) { return branchesSnapshot(input) })
 
+/* 工作树清单（65-worktree.js，纯只读）：历史页左栏「工作树」块的数据。读缓存按
+    仓库一格（tag 'worktrees'），失效随整仓走 —— 与 refs 同寿命，不单独失效；
+    客户端永远按生效仓库来问（80-panel.js 里跟着 appliedRepo + freshAt 的 effect）。 */
+onRpc('git/worktrees', function (input) { return worktreesSnapshot(input) })
+
 /* 多仓库（61-repos.js）：扫描不进读缓存 —— 它自己的去重（客户端每个工作区只问一次）
    就是缓存，而手动清单那一半每次都该重新核对「还在不在」。 */
 onRpc('git/repos', function (input) { return readWorkspaceRepos(input) })
