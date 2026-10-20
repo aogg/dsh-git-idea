@@ -169,6 +169,16 @@ onRpc('git/restore', function (input) { return restoreRun(input, '还原改动')
 
 onRpc('git/stash', function (input) { return stashRun(input, '收起改动(stash)') })
 
+/* 文件右键菜单的三件（78-actions.js，客户端 61-filemenu.js 的菜单）：从修订中获取
+    （checkout <ref> -- 路径）、还原所选更改（show 补丁反向 apply）、删除所选更改
+    （clean -fd，只删未跟踪）。与 restore/stash 同一条变更路：命令页、读缓存失效、
+    noGit/sandboxDenied 都在各自动作里。 */
+onRpc('git/get-from-rev', function (input) { return getFromRevRun(input, '从修订中获取') })
+
+onRpc('git/revert-paths', function (input) { return revertPathsRun(input, '还原所选更改') })
+
+onRpc('git/clean-paths', function (input) { return cleanRun(input, '删除所选更改') })
+
 /* A failed commit is the one mutation whose failure can be about this machine
    instead of about the repository: git will not author a commit until it knows
    who the author is, and no amount of retrying here changes that. Asked of git

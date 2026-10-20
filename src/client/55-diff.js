@@ -43,6 +43,9 @@
       /* 选区视图（多选合并查看）的一只文件：base..head 整段。 */
       if (target.kind === 'range') return [{ key: 'range', label: '', mode: 'range', ref: target.ref }]
       if (target.kind === 'commit') return [{ key: 'commit', label: '', mode: 'commit', ref: target.ref }]
+      /* 「与本地比较」（文件右键菜单，61-filemenu.js）：ref 是提交本身，读的是
+         git diff <ref> -- 路径 —— 提交里的版本和工作区现在的差在哪。 */
+      if (target.kind === 'local') return [{ key: 'local', label: '', mode: 'local', ref: target.ref }]
       if (target.untracked === true) return [{ key: 'untracked', label: '新文件', mode: 'untracked' }]
       const out = []
       if (target.staged === true) out.push({ key: 'staged', label: '已暂存', mode: 'staged' })
@@ -395,7 +398,24 @@
 
       /* 目录行复用 treeDirRow（44-treerow.js）那份唯一的构造，两边长得一样；
          折叠沿用面板的 collapsed 表 —— 键名与 CommitDetail 的树相同。 */
+      /* 右键挂点：rail 上带 listKind / rev（面板在构造 rail 时写好 —— 提交那一路
+         rev 是 detail.hash，选区那一路是 selSpan.head），别在这里再发读。面板没接
+         onFileContext 时行上不挂右键，行为与从前一字不差。 */
       const dirHandle = { selectedKey: dirKey, onSelect: setDirKey, onToggle: props.onToggle }
+      if (typeof props.onFileContext === 'function') {
+        dirHandle.onContext = function (node, event) {
+          props.onFileContext(fileMenuTarget(rail.listKind, rail.rev, rail.repo, node.path, { dir: true }), event)
+        }
+      }
+      /* 叶子行的右键：同一份 target 拼法，带上这一行已知的标记（暂存/未跟踪/改名
+         来源），菜单的启用矩阵全从这些标记读。 */
+      const rowContext = typeof props.onFileContext === 'function'
+        ? function (path, extra) {
+            return function (event) {
+              props.onFileContext(fileMenuTarget(rail.listKind, rail.rev, rail.repo, path, extra), event)
+            }
+          }
+        : null
       let title = ''
       const rows = []
       if (rail.kind === 'commit') {
@@ -424,6 +444,8 @@
             title: text(file.path) + '（点开看差异）',
             ref: mine === true ? function (node) { rowBox.node = node } : undefined,
             onClick: function () { if (typeof props.onOpenFile === 'function') props.onOpenFile(file) },
+            onContextMenu: rowContext === null ? undefined : rowContext(text(file.path),
+              { untracked: false, staged: false, conflict: false, from: text(file.from), raw: file }),
           },
             h('span', { className: 'dsh-git-tw' }),
             h('span', { className: 'dsh-git-st' + statusClass(file.status) }, statusLabel(file.status)),
@@ -464,6 +486,9 @@
             title: path + '（点开看差异）',
             ref: mine === true ? function (node) { rowBox.node = node } : undefined,
             onClick: function () { if (typeof props.onOpenFile === 'function') props.onOpenFile(entry) },
+            onContextMenu: rowContext === null ? undefined : rowContext(path,
+              { untracked: entry.untracked === true, staged: entry.staged === true,
+                conflict: entry.conflict === true, from: '', raw: entry }),
           },
             h('span', { className: 'dsh-git-tw' }),
             h('span', { className: 'dsh-git-st' + statusClass(entry.displayCode) }, statusLabel(entry.displayCode)),
@@ -522,20 +547,34 @@
       }
     }
 
-    /* 三道守卫全过才返回按钮，否则 null。绝对路径在这里拼成，点击时原样用它：
-       守卫审过的地址和真正打开的地址必须是同一个。 */
-    function viewFileButton(target, sessionId, repoRoot) {
+    /* 三道守卫，一次说清。过了返回 {ok:true, absolute}（绝对路径，调用方原样用它
+       —— 守卫审过的地址和真正打开的地址必须是同一个）；不过返回 {ok:false, why}，
+       why 是一句人话，右键菜单的置灰 title 直接引用它（viewFileButton 那边不过就
+       不画按钮，用不上 why，但一条守卫只该有一份答案）。 */
+    function viewFileGuard(target, sessionId, repoRoot) {
       const side = ctx.get('sidebarRight')
-      if (side == null || typeof side.openResource !== 'function') return null
+      if (side == null || typeof side.openResource !== 'function') {
+        return { ok: false, why: '这个 DSH 版本没有右侧文件页（sidebarRight 服务不在）' }
+      }
       const root = workspaceOf(sessionId).replace(/\\/g, '/').replace(/\/+$/, '')
       const repo = text(repoRoot).replace(/\\/g, '/').replace(/\/+$/, '')
-      if (root.length === 0 || repo.length === 0) return null
+      if (root.length === 0) return { ok: false, why: '会话工作区还没读出来，说不出这个文件在不在里面' }
+      if (repo.length === 0) return { ok: false, why: '还不知道这个仓库的根路径' }
       const absolute = (repo + '/' + text(target.path)).replace(/\\/g, '/')
-      if (absolute !== root && absolute.indexOf(root + '/') !== 0) return null
+      if (absolute !== root && absolute.indexOf(root + '/') !== 0) {
+        return { ok: false, why: '仓库在会话工作区之外，官方文件页拒绝打开工作区外的路径' }
+      }
+      return { ok: true, absolute: absolute }
+    }
+
+    /* 三道守卫全过才返回按钮，否则 null。 */
+    function viewFileButton(target, sessionId, repoRoot) {
+      const guarded = viewFileGuard(target, sessionId, repoRoot)
+      if (guarded.ok !== true) return null
       return h('button', {
         key: 'viewfile', type: 'button', className: 'dsh-git-btn',
         title: '在右侧文件页打开完整文件（工作区当前内容；提交那一路打开的也是工作区里的这一版）',
-        onClick: function () { openDiffFile(sessionId, absolute) },
+        onClick: function () { openDiffFile(sessionId, guarded.absolute) },
       }, '查看文件')
     }
 
@@ -702,6 +741,7 @@
                 onOpenFile: props.onOpenFile,
                 collapsed: props.collapsed,
                 onToggle: props.onToggle,
+                onFileContext: props.onFileContext,
               })
             : null))
     }

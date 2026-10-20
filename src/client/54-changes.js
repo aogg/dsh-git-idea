@@ -246,6 +246,11 @@
          adapter below then forwards untouched, so the rows, their keys and their
          gestures are exactly what they were. */
       const makeScope = function (repo, one) {
+        /* 右键菜单的落仓：与 onOpenDiffAt 同一条规矩 —— 行长在哪个仓库的组里，
+            动作就落在那个仓库上（多仓库分组的菜单动作带组自己的 repo）。 */
+        const fileCtx = typeof props.onFileContextAt === 'function'
+          ? function (target, event) { props.onFileContextAt(text(repo), target, event) }
+          : null
         if (repo == null || repo.length === 0) {
           return {
             repo: '', prefix: '', work: one,
@@ -256,6 +261,7 @@
             onRevert: props.onRevert, onStash: props.onStash,
             untrackedOpen: props.untrackedOpen, untrackedFiles: props.untrackedFiles,
             onToggleUntracked: props.onToggleUntracked,
+            onFileContext: fileCtx,
           }
         }
         const prefix = repo + '\u001f'
@@ -283,19 +289,30 @@
           onSetStaged: function (entries, staged) { props.onSetStagedAt(repo, entries, staged) },
           onOpenDiff: function (entry) { props.onOpenDiffAt(repo, entry) },
           /* 冲突行点击进三方合并界面：与 onOpenDiffAt 同一条「落回文件自己的仓库」
-             的规矩 —— 多选视图里点 repo-b 的冲突，界面问的就是 repo-b 的三个版本。 */
+              的规矩 —— 多选视图里点 repo-b 的冲突，界面问的就是 repo-b 的三个版本。 */
           onOpenConflict: function (entry) { props.onOpenConflictAt(repo, entry) },
           onRevert: function (entries) { props.onRevertAt(repo, entries) },
           onStash: function (entries) { props.onStashAt(repo, entries) },
           untrackedOpen: localView(props.untrackedOpen),
           untrackedFiles: localView(props.untrackedFiles),
           onToggleUntracked: function (dir) { props.onToggleUntrackedAt(repo, dir) },
+          onFileContext: fileCtx,
         }
       }
 
       const rowClass = function (scope, key, extra) {
         return 'dsh-git-trow' + (extra === undefined ? '' : ' ' + extra)
           + (scope.selectedKey === key ? ' dsh-git-trow-sel' : '')
+      }
+
+      /* 右键挂点（61-filemenu.js 的菜单）：worktree 语境没有 rev；这一行已知的
+         标记（暂存/未跟踪/冲突）原样带进 target，菜单的启用矩阵全从这些读。
+         scope.onFileContext 没接（旧宿主/测试替身）时行上不挂右键，与从前一字不差。 */
+      const rowCtx = function (scope, path, extra) {
+        if (scope.onFileContext == null) return undefined
+        return function (event) {
+          scope.onFileContext(fileMenuTarget('worktree', '', '', path, extra), event)
+        }
       }
 
       /* One tracked change: box, status letter, name. In either view the click
@@ -327,6 +344,10 @@
             }
             if (typeof scope.onOpenDiff === 'function') scope.onOpenDiff(entry)
           },
+          onContextMenu: rowCtx(scope, text(entry.path), {
+            untracked: entry.untracked === true, staged: entry.staged === true,
+            conflict: conflict, from: '', raw: entry,
+          }),
         },
           stageBox('box', entry.staged === true ? 'all' : 'none',
             entry.staged === true ? '取消暂存' : (conflict === true ? '标记已解决（git add）' : '暂存'),
@@ -353,6 +374,7 @@
           title: path + '（未跟踪的目录，双击展开）',
           onClick: function () { scope.onSelect(key) },
           onDoubleClick: function () { scope.onToggleUntracked(path) },
+          onContextMenu: rowCtx(scope, path, { dir: true, untracked: true, raw: entry }),
         },
           stageBox('box', entry.staged === true ? 'all' : 'none',
             entry.staged === true ? '取消暂存' : '暂存整个目录',
@@ -383,6 +405,10 @@
                   scope.onSelect(childKey)
                   scope.onOpenDiff({ path: inside, workCode: '??', untracked: true, staged: false, displayCode: '?' })
                 },
+                onContextMenu: rowCtx(scope, inside, {
+                  untracked: true, staged: false, conflict: false,
+                  raw: { path: inside, workCode: '??', untracked: true, staged: false, displayCode: '?' },
+                }),
               },
                 stageBox('box', 'none', '暂存', function () { scope.onSetStaged([{ path: inside, untracked: true }], true) }),
                 indentPad(depth + 1),
@@ -415,12 +441,17 @@
             const stagedCount = child.staged === undefined ? 0 : child.staged
             const allStaged = total > 0 && stagedCount === total
             const someStaged = stagedCount > 0 && stagedCount < total
+            /* 目录行的 node.path 带着树自己的组前缀（'@tracked/a/b'）—— 折叠键认
+               前缀，菜单的 pathspec 不认：剥出仓库里的真实相对路径再拼 target。 */
+            const barePath = node.path.indexOf(groupKey + '/') === 0
+              ? node.path.slice(groupKey.length + 1) : node.path
             rows.push(h('div', {
               className: rowClass(scope, node.id),
               key: node.id,
               title: node.name + '（双击展开/折叠）',
               onClick: function () { scope.onSelect(node.id) },
               onDoubleClick: function () { scope.onToggle(node.path) },
+              onContextMenu: rowCtx(scope, barePath, { dir: true, untracked: false, raw: child }),
             },
               stageBox('box', allStaged ? 'all' : (someStaged ? 'some' : 'none'),
                 allStaged ? '取消暂存该目录' : '暂存该目录',

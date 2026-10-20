@@ -1772,11 +1772,13 @@ await wait(10)
 tree = await settle()
 ok('再双击展开：深处的行回来了', paneDir(tree, 'inner') !== undefined)
 
-/* 一处构造，三个调用点。谁再把它抄回去一份，这里就会红；调用点数不是封死的
-   数字 —— 选区视图（52-detail.js）合法地复用同一份构造，这里跟着数到三。 */
-ok('目录行只有一份构造，三个调用点（分支树、提交文件列表、选区视图）',
+/* 一处构造，五个调用点。谁再把它抄回去一份，这里就会红；调用点数不是封死的
+   数字 —— 每棵合法复用同一份构造的树都跟着数：分支树（50-log.js，传树自己的
+   props，不接 onContext）、提交详情与选区合并视图（52-detail.js，接 onContext
+   的行传各树自己的 handle）、差异右列的 commit / changes 两路（55-diff.js）。 */
+ok('目录行只有一份构造，五个调用点（分支树、提交详情、合并视图、差异右列两路）',
   (panelCss.match(/function treeDirRow/g) || []).length === 1
-  && (panelCss.match(/push\(treeDirRow\(node, props,/g) || []).length === 3)
+  && (panelCss.match(/push\(treeDirRow\(node, \w+,/g) || []).length === 5)
 
 const beforeDetailDiff = diffCalls.length
 press(paneFile(tree, 'app.js'), 'onClick')

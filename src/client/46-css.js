@@ -637,8 +637,13 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-menu-cmd .dsh-git-menu-dim{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* Ctrl+点击挑进多选的提交行：左缘一道强调条 —— 选中行是整行底色，多选得在选中之外
-    另有可区分的记号（两者可同时在一行上）。 */
-.dsh-git-crow-multi{box-shadow:inset 2px 0 0 var(--dsw-alias-state-warn-primary)}
+    另有可区分的记号（两者可同时在一行上）。整行底色与 .dsh-git-crow-sel 同一个：
+    只有一道左缘线的时候，多选里「除了最后点的那条」都看不出来被挑中了 —— 高密度
+    列表里一条 2px 的线读不出选中感。hover 那条不是装饰：本条不带伪类、权重低过
+    .dsh-git-crow:hover 的悬停色，不补同色的话鼠标一扫过多选行，底色就在选中色与
+    悬停色之间跳一下（.dsh-git-crow-sel:hover 在本文件前部，同一条规矩的先例）。 */
+.dsh-git-crow-multi{background:var(--dsw-alias-interactive-bg-hover);box-shadow:inset 2px 0 0 var(--dsw-alias-state-warn-primary)}
+.dsh-git-crow-multi:hover{background:var(--dsw-alias-interactive-bg-hover)}
 
 /* 成功条：与 .dsh-git-error 同一个提示位、同一个密度，绿色系、等宽（多半是命令输出）。 */
 .dsh-git-oknote{flex:none;box-sizing:border-box;max-height:120px;overflow:auto;color:var(--dsw-alias-state-success-primary);background:var(--dsw-alias-bg-layer-2);border-bottom:1px solid var(--dsw-alias-border-l1);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}

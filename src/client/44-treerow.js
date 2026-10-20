@@ -17,7 +17,13 @@
 
        Only the dim text at the right edge differs, and what it counts depends on
        what the tree is a tree of ("12" branches, "3 个文件"), so that is the one
-       argument. */
+       argument.
+
+       props.onContext（可选）：文件右键菜单的挂点（61-filemenu.js 的 fileMenuItems
+       在面板那一侧吃它的产出）。传了的树，目录行右键把整个 node 交给它；分支树
+       （50-log.js）不传 —— onContextMenu 就地 undefined，行为与从前一字不差。
+       preventDefault + stopPropagation 是提交行右键同一条规矩：拦掉浏览器自己的
+       菜单，也不让这一下顺手把行选中。 */
     function treeDirRow(node, props, dim) {
       return h('div', {
         className: 'dsh-git-trow' + (props.selectedKey === node.id ? ' dsh-git-trow-sel' : ''),
@@ -26,6 +32,13 @@
         title: node.name + '（双击展开/折叠）',
         onClick: function () { props.onSelect(node.id) },
         onDoubleClick: function () { props.onToggle(node.path) },
+        onContextMenu: typeof props.onContext === 'function'
+          ? function (event) {
+              event.preventDefault()
+              event.stopPropagation()
+              props.onContext(node, event)
+            }
+          : undefined,
       },
         twisty({ collapsed: node.collapsed, onToggle: function () { props.onToggle(node.path) } }),
         h('span', { className: 'dsh-git-tname' }, node.name),

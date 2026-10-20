@@ -1793,8 +1793,12 @@
          暂存、取消暂存、fetch、push、tag、建/删分支）只动索引或引用 —— 那里用屏上
          那些路径确认就够了。真机上量到的是：一次全树读 8–10s，而且这期间整条 RPC
          通道都被它占着，为一次「提交」让读者等十秒、十秒内点什么都要排队，是没有
-         道理的。 */
-      const REWRITES_TREE = ['git/checkout', 'git/pull', 'git/sequence', 'git/init']
+         道理的。文件右键菜单的三件（从修订中获取 / 还原所选更改 / 删除所选更改，
+         61-filemenu.js）落在这张表上：它们动的路径恰恰多半**不在**变更页的屏上
+         （checkout / clean 尤其）—— 路径收窄的确认读看不见那些路径，答案必须
+         是一次全树读。 */
+      const REWRITES_TREE = ['git/checkout', 'git/pull', 'git/sequence', 'git/init',
+        'git/get-from-rev', 'git/revert-paths', 'git/clean-paths']
 
       /* One path for every panel operation. A failed operation still re-reads,
          because the failures that matter — a conflicting cherry-pick, merge or
@@ -2571,6 +2575,21 @@
         setCtxForce('')
         setCtxMenu({
           kind: 'branch', name: name, remote: kind === 'remote', head: head === true, repo: text(repo),
+          x: event != null && typeof event.clientX === 'number' ? event.clientX : 0,
+          y: event != null && typeof event.clientY === 'number' ? event.clientY : 0,
+        })
+      }
+
+      /* ── 文件（与目录）行的右键菜单（61-filemenu.js 的菜单本体）──
+
+         五棵文件树（单提交详情 / 合并视图 / 差异右列两路 / 变更页）把「右键的是
+         哪一行」拼成 target 递上来；这里只记光标坐标与 target。两段式确认沿用
+         ctxArm 那一格（键串带路径 —— 武装之后换行再右键，旧武装对不上新键，自然
+         失效），开新菜单先作废上一次的武装，与 openBranchMenu 同一条规矩。 */
+      const openFileMenu = function (target, event) {
+        setCtxArm('')
+        setCtxMenu({
+          kind: 'file', target: target, repo: target != null ? text(target.repo) : '',
           x: event != null && typeof event.clientX === 'number' ? event.clientX : 0,
           y: event != null && typeof event.clientY === 'number' ? event.clientY : 0,
         })
@@ -3927,16 +3946,31 @@
            够不着（半个代理的旧稿在这里留过一个 ReferenceError，多仓库分组点开的
            diff 一渲染就炸）。提交那一路它保持 changes 原值，没人读它。 */
         let railChanges = changes
+        /* 右列也带 listKind / rev / repo（61-filemenu.js 的菜单在右列行的挂点上要
+           用 —— rev 是「这棵文件树所属的提交」，range 那路取 selSpan.head 而不是
+           base..head 表达式：菜单的从修订中获取 / 与本地比较都要单个 hash）。 */
         if (diffTarget.kind === 'commit') {
           if (detail != null && detail.ok === true && Array.isArray(detail.files) && detail.files.length > 0) {
-            diffRail = { kind: 'commit', files: detail.files }
+            diffRail = { kind: 'commit', files: detail.files, listKind: 'commit', rev: text(detail.hash), repo: '' }
           }
         } else if (diffTarget.kind === 'range') {
           /* 选区视图点开的差异：右列是同一份合计清单（selectionSpan 的读，key 在
              眼前才算数）—— 退路也是它，与单提交那一路同一个形状。 */
           const rangeRail = rangeRead != null && rangeRead.key === selSpanKey ? rangeRead.reply : null
           if (rangeRail != null && rangeRail.ok === true && Array.isArray(rangeRail.files) && rangeRail.files.length > 0) {
-            diffRail = { kind: 'commit', files: rangeRail.files }
+            diffRail = { kind: 'commit', files: rangeRail.files, listKind: 'range', rev: selSpan != null ? text(selSpan.head) : '', repo: '' }
+          }
+        } else if (diffTarget.kind === 'local') {
+          /* 「与本地比较」（文件右键菜单开的新 diff）：右列还是它的来处那棵文件树
+             —— 提交详情在场用提交的，选区读在场用选区的。换文件走 diffRailOpen
+             的 local 分支，kind 与 ref 不丢。 */
+          if (detail != null && detail.ok === true && Array.isArray(detail.files) && detail.files.length > 0) {
+            diffRail = { kind: 'commit', files: detail.files, listKind: 'commit', rev: text(detail.hash), repo: '' }
+          } else {
+            const rangeRail = rangeRead != null && rangeRead.key === selSpanKey ? rangeRead.reply : null
+            if (rangeRail != null && rangeRail.ok === true && Array.isArray(rangeRail.files) && rangeRail.files.length > 0) {
+              diffRail = { kind: 'commit', files: rangeRail.files, listKind: 'range', rev: selSpan != null ? text(selSpan.head) : '', repo: '' }
+            }
           }
         } else {
           if (diffRepo !== appliedRepo) {
@@ -3944,7 +3978,7 @@
             railChanges = record != null && record.status != null && record.status.ok === true
               ? mergeChanges(record.status) : []
           }
-          diffRail = { kind: 'changes', changes: railChanges }
+          diffRail = { kind: 'changes', changes: railChanges, listKind: 'worktree', rev: '', repo: diffRepo }
         }
         /* ── 打开的差异跟着这一行现在的样子走 ──
 
@@ -3971,8 +4005,9 @@
         }
         /* 右列换文件：提交那一路 ref 不动、只换 path/from/status（和提交详情里
            点开一个文件是同一条路，diffSig 随 shape 变化自动重读补丁）；选区那一路
-           同理，ref 钉在 base..head 上；变更那一路走 changeDiffTarget，仓库跟着
-           文件原来的那一格走。 */
+           同理，ref 钉在 base..head 上；与本地比较那一路 ref 钉在提交上（换一个
+           文件继续比本地）；变更那一路走 changeDiffTarget，仓库跟着文件原来的
+           那一格走。 */
         const diffRailOpen = diffRail === null ? undefined : function (file) {
           if (diffTarget.kind === 'commit') {
             setDiffTarget({
@@ -3994,6 +4029,16 @@
             })
             return
           }
+          if (diffTarget.kind === 'local') {
+            setDiffTarget({
+              kind: 'local',
+              path: text(file.path),
+              from: '',
+              ref: text(diffTarget.ref),
+              status: text(file.status),
+            })
+            return
+          }
           setDiffTarget(changeDiffTarget(file, text(diffTarget.repo)))
         }
         body = h(DiffView, {
@@ -4010,6 +4055,7 @@
           busy: busy,
           rail: diffRail,
           onOpenFile: diffRailOpen,
+          onFileContext: openFileMenu,
           collapsed: collapsed,
           onToggle: toggle,
           onBack: function () { setDiffTarget(null) },
@@ -4052,6 +4098,12 @@
              冲突属于它自己那个仓库），单仓库的调用不带仓库 = 生效仓库。 */
           onOpenConflictAt: function (repo, file) {
             setMergeTarget({ repo: text(repo), path: text(file.path), code: text(file.workCode) })
+          },
+          /* 文件右键菜单（61-filemenu.js）：仓库跟着行走 —— 菜单里的还原/删除/
+             显示历史都要落在这一行自己那个仓库上，与 onOpenDiffAt 同一条规矩。
+             target 由行那一侧拼好（repo 为空 = 组仓库由这里盖章）。 */
+          onFileContextAt: function (repo, target, event) {
+            openFileMenu(Object.assign({}, target, { repo: text(repo) }), event)
           },
           /* One click on a file row, in either list, is what opens the patch —
              selecting a row in IDEA's commit window and getting its diff on the
@@ -4123,6 +4175,8 @@
                   status: text(file.status),
                 })
               },
+              /* 文件右键菜单（61-filemenu.js 的 target 由 52-detail.js 拼好）。 */
+              onFileContext: openFileMenu,
               onExit: function () { setMultiSel([]) },
             })
           : h(CommitDetail, {
@@ -4139,6 +4193,8 @@
                   status: text(file.status),
                 })
               },
+              /* 文件右键菜单：target 的 rev 是 detail.hash（52-detail.js 拼好）。 */
+              onFileContext: openFileMenu,
             })
         /* 不连续多选的置灰入口：解释为什么不能合并查看（选区不连续）。 */
         const rangeAside = rangeBlocked === true
@@ -4605,6 +4661,133 @@
                   onClick: function (event) { stopEvent(event); setCtxArm(ctxMenu.name); setCtxForce('') },
                 }, '删除分支'),
       ]
+
+      /* ── 文件右键菜单的内容（kind === 'file'）──
+
+         菜单项由 61-filemenu.js 的 fileMenuItems 造，这里只递 acts：动作全部接到
+         面板既有的通道（ctxRun / revertPicked / runOp / setDiffTarget / setTab），
+         「打开源文件」用 55-diff.js 的 viewFileGuard 预检三道守卫 —— 按钮和菜单
+         审的是同一套，答案不会分叉。两段式确认的武装在 ctxArm（键串带路径，见
+         openFileMenu）。 */
+      const ctxFileTarget = ctxMenu !== null && ctxMenu.kind === 'file' ? ctxMenu.target : null
+      const ctxFileItems = ctxFileTarget === null ? [] : (function () {
+        const repoNow = text(ctxFileTarget.repo).length > 0 ? text(ctxFileTarget.repo) : appliedRepo
+        const list = Array.isArray(ctxFileTarget.paths) ? ctxFileTarget.paths : []
+        const first = list.length > 0 ? list[0] : null
+        const openGuard = first == null
+          ? { ok: false, why: '这一行没有路径' }
+          : viewFileGuard({ path: text(first.path) }, sessionId, repoNow)
+        /* 显示历史记录的仓库核对：历史页只显示生效仓库的图 —— 多仓库分组里点了
+           别的仓库的行，先把生效仓库切过去才有得看。 */
+        const historyOk = text(ctxFileTarget.repo).length === 0 || text(ctxFileTarget.repo) === appliedRepo
+        const cleanPaths = function () {
+          const out = []
+          for (let i = 0; i < list.length; i += 1) {
+            const path = text(list[i].path).replace(/\/+$/, '')
+            if (path.length > 0) out.push(path)
+          }
+          return out
+        }
+        return fileMenuItems(ctxFileTarget, {
+          busy: busy === true,
+          arm: ctxArm,
+          setArm: setCtxArm,
+          setCtxMenu: setCtxMenu,
+          canOpenFile: openGuard.ok === true,
+          openWhy: openGuard.why,
+          historyOk: historyOk,
+          historyWhy: '在左栏的仓库行上单击切到它',
+          onCompareLocal: function (paths) {
+            if (paths.length === 0 || text(ctxFileTarget.rev).length === 0) return
+            setDiffTarget({
+              kind: 'local',
+              path: paths[0],
+              from: '',
+              ref: text(ctxFileTarget.rev),
+              status: first != null && first.raw != null ? text(first.raw.status) : '',
+            })
+          },
+          onOpenFile: function (paths) {
+            if (paths.length === 0) return
+            const again = viewFileGuard({ path: paths[0] }, sessionId, repoNow)
+            if (again.ok !== true) { setError('打不开源文件：' + again.why); return }
+            openDiffFile(sessionId, again.absolute)
+          },
+          onShowDiff: function (one) {
+            const raw = one != null && one.raw != null ? one.raw : null
+            if (ctxFileTarget.listKind === 'commit') {
+              setDiffTarget({
+                kind: 'commit',
+                path: one != null ? text(one.path) : '',
+                from: raw != null ? text(raw.from) : '',
+                ref: detail != null ? text(detail.hash) : '',
+                status: raw != null ? text(raw.status) : '',
+              })
+              return
+            }
+            if (ctxFileTarget.listKind === 'range') {
+              setDiffTarget({
+                kind: 'range',
+                path: one != null ? text(one.path) : '',
+                from: raw != null ? text(raw.from) : '',
+                ref: selSpanKey,
+                status: raw != null ? text(raw.status) : '',
+              })
+              return
+            }
+            /* worktree：既有 changeDiffTarget —— 目录行没有现成的 entry，按「目录
+               pathspec 的未暂存聚合」拼一枚最小 entry（git diff -- 目录）。 */
+            const entry = raw != null && (one == null || one.dir !== true)
+              ? raw
+              : { path: one != null ? text(one.path).replace(/\/+$/, '') : '',
+                  staged: false, workCode: ' M', untracked: false, displayCode: '' }
+            setDiffTarget(changeDiffTarget(entry, text(ctxFileTarget.repo)))
+          },
+          onRevert: function (paths) {
+            if (ctxFileTarget.listKind === 'worktree') {
+              revertPicked(paths.map(function (path) { return { path: path } }), text(ctxFileTarget.repo))
+              return
+            }
+            ctxRun('git/revert-paths', { ref: text(ctxFileTarget.rev), paths: paths }, text(ctxFileTarget.repo),
+              '还原所选更改失败', function () {
+                setOkNote('已撤销 ' + hashShort(ctxFileTarget.rev) + ' 对 ' + String(paths.length) + ' 项的改动：'
+                  + (paths.length === 1 ? paths[0] : String(paths.length) + ' 条路径')
+                  + '（反向补丁应用到工作区和索引）')
+              })
+          },
+          onCherryPick: function () {
+            /* 合并视图 = 整份 multiSel（图序新→旧，反转为旧→新交给 git）；单提交
+               文件树 = 右键那一条。与提交行右键菜单的拣选是同一条 runOp 路。 */
+            const targets = ctxFileTarget.listKind === 'range' && multiSel.length > 1
+              ? multiSel.slice().reverse()
+              : [text(ctxFileTarget.rev)]
+            runOp('git/sequence', {
+              op: 'cherry-pick', action: 'start',
+              targets: targets,
+              record: plugin.cherryPickRecord === true,
+            })
+          },
+          onClean: function (paths) {
+            ctxRun('git/clean-paths', { paths: paths }, text(ctxFileTarget.repo), '删除所选更改失败', function () {
+              setOkNote('已删除 ' + String(paths.length) + ' 项未跟踪的'
+                + (paths.length === 1 && first != null && first.dir === true ? '目录（git clean -fd）' : '路径（git clean -fd）'))
+            })
+          },
+          onGetFromRev: function (paths) {
+            ctxRun('git/get-from-rev', { ref: text(ctxFileTarget.rev), paths: paths }, text(ctxFileTarget.repo),
+              '从修订中获取失败', function () {
+                setOkNote('已从 ' + hashShort(ctxFileTarget.rev) + ' 取回 ' + String(paths.length) + ' 项'
+                  + '（覆盖工作区并放进索引）')
+              })
+          },
+          onShowHistory: function (paths) {
+            if (paths.length === 0) return
+            setPathDraft(paths[0])
+            setPathFilter(paths[0])
+            setTab('log')
+          },
+        })
+      })()
       const ctxPos = ctxMenu === null ? { left: 0, top: 0 } : ctxMenuPos()
       /* 选择层标题行里的「现在跟的是谁」：渲染期算一次，选择层开着时每帧都新鲜。 */
       const upPickNow = upstreamPick === null ? null : upstreamOfBranch(upstreamPick.name, upstreamPick.repo)
@@ -4756,12 +4939,13 @@
               }))
           : null,
         /* 右键菜单：光标锚的浮层（position:fixed）。挂在面板根部 —— 与 ⚡ 的下拉
-            不同它不属于任何一格，开关只随 ctxMenu。 */
+            不同它不属于任何一格，开关只随 ctxMenu。内容按种类二选一：提交行菜单
+            （ctxCommitItems）与文件/目录行菜单（ctxFileItems，61-filemenu.js 造）。 */
         ctxMenu !== null
           ? h(ContextMenu, {
               key: 'ctx', open: true, x: ctxPos.left, y: ctxPos.top,
               onClose: function () { setCtxMenu(null) },
-            }, ctxCommitItems)
+            }, ctxMenu.kind === 'file' ? ctxFileItems : ctxCommitItems)
           : null)
     }
 

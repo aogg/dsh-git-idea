@@ -148,7 +148,7 @@ async function commitRangeDetail(input, base, head) {
    while the flagged one did 0 of 20 (`git status` writes 20 of 20) — a read that
    may refresh the index may also take the lock, occasionally being exactly the
    case that hurts. */
-const DIFF_MODES = ['worktree', 'staged', 'commit', 'untracked', 'range']
+const DIFF_MODES = ['worktree', 'staged', 'commit', 'untracked', 'range', 'local']
 const DIFF_LINES_MAX = 6000
 const DIFF_CHARS_MAX = 400000
 const DIFF_SHA = /^[0-9a-f]{7,40}$/i
@@ -167,6 +167,10 @@ function diffArgv(mode, paths, ref) {
   /* range：两棵树之间的一只文件（`git diff <base> <head> -- <path>`），选区视图
      「这一段提交合计改了它什么」的答案。 */
   if (mode === 'range') return common.concat([ref, '--']).concat(paths)
+  /* local：「与本地比较」（文件右键菜单，61-filemenu.js）—— `git diff <提交> --
+     <路径>`，提交里的版本和工作区现在的差在哪。ref 与 commit/range 同一道
+     DIFF_SHA 校验（见 readFileDiff）。 */
+  if (mode === 'local') return common.concat([ref, '--']).concat(paths)
   if (mode === 'untracked') return common.concat(['--no-index', '--', '/dev/null', paths[0]])
   if (mode === 'staged') return common.concat(['--cached', '--']).concat(paths)
   return common.concat(['--']).concat(paths)
@@ -230,6 +234,10 @@ async function readFileDiff(input) {
   }
   if (mode === 'range' && !DIFF_RANGE.test(ref)) {
     return { ok: false, error: 'invalid-ref', exitCode: null, stderr: 'ref must be base..head（两段十六进制提交 hash）' }
+  }
+  /* local 的 ref 就是那一个提交（「与本地比较」里比的是它）。 */
+  if (mode === 'local' && !DIFF_SHA.test(ref)) {
+    return { ok: false, error: 'invalid-ref', exitCode: null, stderr: 'a commit hash is required' }
   }
   const paths = from.length > 0 && from !== path ? [from, path] : [path]
 

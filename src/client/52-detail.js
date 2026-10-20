@@ -18,11 +18,24 @@
       const tree = buildTree(entries)
       /* 末位 false：文件树不压扁，每个目录段独立一行（见 42-tree.js flattenTree）。 */
       const flat = flattenTree(tree, 0, '@files', props.collapsed, [], '@files', false)
+      /* 右键挂点（61-filemenu.js 的菜单）：面板接了 onFileContext 才挂 —— 目录行经
+         treeDirRow 的 props.onContext，叶子行直接带 onContextMenu。target 的 rev 是
+         这条提交本身，仓库为空 = 生效仓库（详情栏只显示生效仓库的历史）。 */
+      const ctxOf = typeof props.onFileContext === 'function'
+        ? function (path, extra) {
+            return function (event) {
+              props.onFileContext(fileMenuTarget('commit', text(detail.hash), '', path, extra), event)
+            }
+          }
+        : null
+      const dirHandle = ctxOf === null ? props : Object.assign({}, props, {
+        onContext: function (node, event) { ctxOf(node.path, { dir: true })(event) },
+      })
       const fileRows = []
       for (let i = 0; i < flat.length; i += 1) {
         const node = flat[i]
         if (node.kind === 'dir') {
-          fileRows.push(treeDirRow(node, props, String(node.count) + ' 个文件'))
+          fileRows.push(treeDirRow(node, dirHandle, String(node.count) + ' 个文件'))
         } else {
           const file = node.data || {}
           fileRows.push(h('div', {
@@ -34,6 +47,8 @@
               props.onSelect(node.id)
               if (typeof props.onOpenDiff === 'function') props.onOpenDiff(file)
             },
+            onContextMenu: ctxOf === null ? undefined : ctxOf(text(file.path),
+              { untracked: false, staged: false, conflict: false, from: text(file.from), raw: file }),
           },
             h('span', { className: 'dsh-git-tw' }),
             h('span', { className: 'dsh-git-st' + statusClass(file.status) }, statusLabel(file.status)),
@@ -79,10 +94,22 @@
         const tree = buildTree(entries)
         /* 末位 false：文件树不压扁，每个目录段独立一行（与单提交详情同一条规矩）。 */
         const flat = flattenTree(tree, 0, '@files', props.collapsed, [], '@files', false)
+        /* 右键挂点：rev 是 selSpan.head（整段最新一条）—— 与本地比较 / 从修订中
+           获取都取这一版；拣选由面板对整份 multiSel 做（旧的先落）。 */
+        const ctxOf = typeof props.onFileContext === 'function'
+          ? function (path, extra) {
+              return function (event) {
+                props.onFileContext(fileMenuTarget('range', text(span.head), '', path, extra), event)
+              }
+            }
+          : null
+        const dirHandle = ctxOf === null ? props : Object.assign({}, props, {
+          onContext: function (node, event) { ctxOf(node.path, { dir: true })(event) },
+        })
         for (let i = 0; i < flat.length; i += 1) {
           const node = flat[i]
           if (node.kind === 'dir') {
-            rows.push(treeDirRow(node, props, String(node.count) + ' 个文件'))
+            rows.push(treeDirRow(node, dirHandle, String(node.count) + ' 个文件'))
             continue
           }
           const file = node.data || {}
@@ -95,6 +122,8 @@
               props.onSelect(node.id)
               if (typeof props.onOpenDiff === 'function') props.onOpenDiff(file)
             },
+            onContextMenu: ctxOf === null ? undefined : ctxOf(text(file.path),
+              { untracked: false, staged: false, conflict: false, from: text(file.from), raw: file }),
           },
             h('span', { className: 'dsh-git-tw' }),
             h('span', { className: 'dsh-git-st' + statusClass(file.status) }, statusLabel(file.status)),
