@@ -118,7 +118,7 @@ ok('进页读快照与远端表都明说 repo:/tmp/ws + 会话',
   && callsOf56(mark56, 'git/remotes').length === 1 && lastArgs('git/remotes').repo === '/tmp/ws')
 
 console.log('')
-console.log('== 新排版：「仓库」外框内收三个下级组，组头点名目标短名 ==')
+console.log('== 新排版：「仓库」外框内收四个下级组，组头点名目标短名 ==')
 const scopeBox56 = () => byClass(tree, 'dsh-git-set-scope')[0]
 const scopeBody56 = () => byClass(tree, 'dsh-git-set-scope-body')[0]
 const subGroups56 = () => (scopeBody56() === undefined ? [] : byClass(scopeBody56(), 'dsh-git-set-group').map(textOf))
@@ -126,14 +126,15 @@ const subJoin56 = () => subGroups56().join('|')
 ok('外框在：仓库切换器与下级容器都收在它里面',
   scopeBox56() !== undefined && byClass(scopeBox56(), 'dsh-git-repo-box').length === 1
   && byClass(scopeBox56(), 'dsh-git-set-scope-body').length === 1)
-ok('三个下级组（提交身份/远端/换行符）都在 scope-body 里；会话完成组留在外框外',
-  subGroups56().length === 3
+ok('四个下级组（提交身份/远端/换行符/git 忽略项）都在 scope-body 里；会话完成组留在外框外',
+  subGroups56().length === 4
   && subGroups56().some((s) => s.indexOf('提交身份') === 0)
   && subGroups56().some((s) => s.indexOf('远端') === 0)
   && subGroups56().some((s) => s.indexOf('换行符') === 0)
+  && subGroups56().some((s) => s.indexOf('git 忽略项') === 0)
   && collect(tree).some((n) => hasClass56(n, 'dsh-git-set-group') && textOf(n) === '会话完成')
   && byClass(scopeBox56(), 'dsh-git-set-group').every((g) => textOf(g) !== '会话完成'))
-ok('三个组头都点名当前目标短名（/tmp/ws → ws）',
+ok('三个组头都点名当前目标短名（/tmp/ws → ws）；忽略项组是只读扫描，不跟编辑目标走',
   subJoin56().indexOf('提交身份（只写 ws 的 .git/config）') >= 0
   && subJoin56().indexOf('远端（ws 的 remote 清单）') >= 0
   && subJoin56().indexOf('换行符（ws 的 git 换行配置）') >= 0)
@@ -157,7 +158,7 @@ ok('「此刻生效」跟着换了仓库：Lab（来自 .git/config）', saysOn(
 ok('对着上一个仓库打的草稿被清空（不留给下一个仓库误写）',
   nameBox56() !== undefined && nameBox56().props.value === '')
 ok('远端表也换了仓库：lab 的远端是 up', saysOn(tree, 'https://example.com/lab.git'))
-ok('组头跟着换目标：三个下级组改点名 lab',
+ok('组头跟着换目标：写配置的三个组头改点名 lab（忽略项组头不点名）',
   subJoin56().indexOf('提交身份（只写 lab 的 .git/config）') >= 0
   && subJoin56().indexOf('远端（lab 的 remote 清单）') >= 0
   && subJoin56().indexOf('换行符（lab 的 git 换行配置）') >= 0)
