@@ -2051,7 +2051,7 @@ async function commitRangeDetail(input, base, head) {
    while the flagged one did 0 of 20 (`git status` writes 20 of 20) — a read that
    may refresh the index may also take the lock, occasionally being exactly the
    case that hurts. */
-const DIFF_MODES = ['worktree', 'staged', 'commit', 'untracked', 'range']
+const DIFF_MODES = ['worktree', 'staged', 'commit', 'untracked', 'range', 'local']
 const DIFF_LINES_MAX = 6000
 const DIFF_CHARS_MAX = 400000
 const DIFF_SHA = /^[0-9a-f]{7,40}$/i
@@ -2070,6 +2070,10 @@ function diffArgv(mode, paths, ref) {
   /* range：两棵树之间的一只文件（`git diff <base> <head> -- <path>`），选区视图
      「这一段提交合计改了它什么」的答案。 */
   if (mode === 'range') return common.concat([ref, '--']).concat(paths)
+  /* local：「与本地比较」（文件右键菜单，61-filemenu.js）—— `git diff <提交> --
+     <路径>`，提交里的版本和工作区现在的差在哪。ref 与 commit/range 同一道
+     DIFF_SHA 校验（见 readFileDiff）。 */
+  if (mode === 'local') return common.concat([ref, '--']).concat(paths)
   if (mode === 'untracked') return common.concat(['--no-index', '--', '/dev/null', paths[0]])
   if (mode === 'staged') return common.concat(['--cached', '--']).concat(paths)
   return common.concat(['--']).concat(paths)
@@ -2133,6 +2137,10 @@ async function readFileDiff(input) {
   }
   if (mode === 'range' && !DIFF_RANGE.test(ref)) {
     return { ok: false, error: 'invalid-ref', exitCode: null, stderr: 'ref must be base..head（两段十六进制提交 hash）' }
+  }
+  /* local 的 ref 就是那一个提交（「与本地比较」里比的是它）。 */
+  if (mode === 'local' && !DIFF_SHA.test(ref)) {
+    return { ok: false, error: 'invalid-ref', exitCode: null, stderr: 'a commit hash is required' }
   }
   const paths = from.length > 0 && from !== path ? [from, path] : [path]
 
@@ -3958,10 +3966,12 @@ function cmdrecMerge(lists) {
   }
   return out
 }
-/* ─────────────── 压缩提交 / 删除提交 / 快捷命令 / 变更页三件套 / 改写提交消息 ───────────────
+/* ─────────────── 压缩提交 / 删除提交 / 快捷命令 / 变更页三件套 / 文件右键菜单三件 / 改写提交消息 ───────────────
  *
  * 前三个在面板「更多操作（⋯）」和「快捷命令（⚡）」按钮底下（客户端 78-actions.js），
  * 后两个是变更页「默认变更列表」那排按钮里的还原与暂存（客户端 54-changes.js）；
+ * 「从修订中获取 / 还原所选更改 / 删除所选更改」（getFromRevRun / revertPathsRun /
+ * cleanRun）是五棵文件树共用的右键菜单（客户端 61-filemenu.js）的三件；
  * 最后一段是历史页右键的三条：git/edit-check（能不能改写的体检）、git/commit-messages
  * （整条原始消息）与 git/reword（reword 本体，安全链照 squashRun 的思路）。
  * 放在 80-rpc.js 前面只影响阅读顺序：squashRun 用到的 commitMutation、restoreRun
@@ -4212,6 +4222,138 @@ async function stashRun(input, desc) {
   const message = input != null && isStr(input.message) ? input.message.trim() : ''
   const said = message.length > 0 ? ['-m', message] : []
   return panelMutate(input, ['stash', 'push'].concat(said, ['--'], paths), { desc: desc })
+}
+
+/* ── git/get-from-rev · git/revert-paths · git/clean-paths：文件右键菜单的三件 ──
+ *
+ * 客户端 61-filemenu.js 的菜单（五棵文件树共用）递上来的 {ref, paths}。与上面
+ * restore/stash 同一条 panelMutate 路（「命令」页、读缓存失效、sandboxDenied/noGit
+ * 统一给出），多出来的两道关卡是这三件共有的：
+ *
+ * · ref 一律先走 cleanCommitHash（7–40 位十六进制）—— 这三条 RPC 只认「图上那一个
+ *   提交」，ref 名、带 ^ 的表达式一律拒；
+ * · 路径在 panelPaths（只收字符串）之外再过一遍 repoRelativePath —— git/diff 的
+ *   untracked 读用同一条关卡拦绝对路径与「..」，写命令没有理由更宽。
+ *
+ * revert-paths 是三件里唯一多步的：先 `git show` 拿补丁（读），再把补丁反向
+ * `git apply -R`（写）。补丁经 stdin 进 apply（conflict-save 的同一条路：几百 KB
+ * 的文本塞不进 argv，命令页的展示串也不该是它），截断的补丁绝不应用 —— 半份补丁
+ * 反向打上去不是还原，是改坏。 */
+
+/* 路径清单的公共入口：panelPaths 的口径 + repoRelativePath 逐条核对。
+   有一条非法就返回 null（调用方按 invalid-path 拒），否则返回干净清单。 */
+function cleanActionPaths(input) {
+  const raw = panelPaths(input)
+  const out = []
+  for (let i = 0; i < raw.length; i += 1) {
+    if (repoRelativePath(raw[i]).length > 0) return null
+    out.push(raw[i])
+  }
+  return out
+}
+
+const ACTION_PATHS_BAD = { ok: false, error: 'invalid-path', stderr: '路径必须是仓库内的相对路径（不能是绝对路径，也不能用 .. 往上走）' }
+
+async function getFromRevRun(input, desc) {
+  const ref = cleanCommitHash(input != null ? input.ref : null)
+  if (ref.length === 0) {
+    return { ok: false, error: 'bad-value', stderr: '需要一个合法的提交 hash（7–40 位十六进制）—— 没有做任何改动' }
+  }
+  const paths = cleanActionPaths(input)
+  if (paths === null) return ACTION_PATHS_BAD
+  if (paths.length === 0) return { ok: false, error: 'no paths given' }
+  /* `git checkout <rev> -- <paths>`：工作区与索引一起换成 rev 里那一版 —— 危险在
+     「覆盖工作区」，客户端已经两段式确认过，这里照办（restoreRun 同一个先例）。 */
+  return panelMutate(input, ['checkout', ref, '--'].concat(paths), { desc: desc })
+}
+
+async function cleanRun(input, desc) {
+  const paths = cleanActionPaths(input)
+  if (paths === null) return ACTION_PATHS_BAD
+  if (paths.length === 0) return { ok: false, error: 'no paths given' }
+  /* `git clean -fd -- <paths>`：删未跟踪的文件与目录；不带 -x，.gitignore 忽略的
+     不动 —— 与菜单 title 里承诺的一致。clean 只碰未跟踪，已跟踪的路径给它也是
+     no-op，不会误伤。 */
+  return panelMutate(input, ['clean', '-fd', '--'].concat(paths), { desc: desc })
+}
+
+const REVERT_PATCH_MAX = 1200000
+
+async function revertPathsRun(input, desc) {
+  const ref = cleanCommitHash(input != null ? input.ref : null)
+  if (ref.length === 0) {
+    return { ok: false, error: 'bad-value', stderr: '需要一个合法的提交 hash（7–40 位十六进制）—— 没有做任何改动' }
+  }
+  const paths = cleanActionPaths(input)
+  if (paths === null) return ACTION_PATHS_BAD
+  if (paths.length === 0) return { ok: false, error: 'no paths given' }
+  const args = argsFor(input)
+
+  /* 1. 取补丁（读）：`git show -m --first-parent --format= -- <paths>`。-m
+     --first-parent 与 commit 模式的 diff 同一条理由 —— 合并提交按第一父提交出
+     补丁，combined diff 是空的，还原会莫名「无事可做」。 */
+  const patch = await git(args, ['-c', 'core.quotePath=false', 'show', '-m', '--first-parent',
+    '--format=', ref, '--'].concat(paths), null, { maxBytes: REVERT_PATCH_MAX })
+  if (patch.exitCode !== 0) {
+    return { ok: false, error: 'show-failed', exitCode: patch.exitCode, stderr: patch.stderr, noGit: gitMissing(patch) }
+  }
+  if (patch.truncated === true) {
+    return {
+      ok: false, error: 'patch-too-large', ref: ref,
+      stderr: '这个提交对这些路径的补丁太大，读的时候被截断了 —— 用半份补丁做反向应用不是还原，是改坏工作区，所以整件事没有开始。',
+    }
+  }
+  /* 补丁是空的 = 这个提交根本没碰这些路径。apply 对空输入会报 unrecognized
+     input，与其让读者读那句，不如把原因直接说出来。 */
+  if (patch.stdout.replace(/\s+$/, '').length === 0) {
+    return {
+      ok: false, error: 'empty-patch', ref: ref,
+      stderr: '这个提交里没有这些路径的改动（提交没碰它们，或路径写错了）—— 没有做任何改动。',
+    }
+  }
+
+  /* 2. 反向应用（写）：cmdrecGit 包记录（conflict-save 同一条路 —— 不经
+     panelMutate 的变更入口用它把手里的 git 调用原样包上「命令」页的一行）。
+
+     两段尝试，各有各的适用面（git apply 是原子的，整份不适用就一个字节不动，
+     两次尝试因此不会互相污染）。两刀都带 --index：还原的语义（客户端 title 也是
+     这么说的）是「索引和工作区一起回去」，只动工作区会留下「工作区回去了、索引
+     还是旧账」的脏状态 —— 与变更页 git/restore 的 --staged --worktree 同一口径：
+     · `apply -R --index`：工作区与索引一致、且正是 rev 里的内容时干净成立 ——
+       历史页浏览的常态（干净地站在某个提交上看它的文件树），也是任务里写的那一条；
+     · 不成立时补一刀 `--3way`（隐含 --index）：补丁带着 index 行、两个 blob 都在
+       仓库里，按内容三方合照样干净落地；工作区里这些路径有未暂存的本地改动时它会
+       拒绝（does not match index）—— 那句话是真的：本地改过的路径请用「从修订中
+       获取」整版覆盖，或先处理本地改动。真合不上的冲突留标记、退出非零，git 的
+       原话一路带回错误条 —— 与 git revert 撞冲突是同一个形状。两刀各自进「命令」
+       页，做了什么读者看得到。 */
+  const plainArgv = ['apply', '-R', '--index', '--whitespace=nowarn']
+  const plain = await cmdrecGit(input, desc, plainArgv, function () {
+    return git(args, plainArgv, null, { stdin: patch.stdout })
+  })
+  if (plain.exitCode === 0) {
+    invalidateRepo(repoFrom(input, null) !== undefined ? repoFrom(input, null) : plain.cwd)
+    return {
+      ok: true, repo: plain.cwd != null ? plain.cwd : (repoFrom(input, null) || null),
+      exitCode: plain.exitCode, command: plain.command,
+      stdout: plain.stdout, stderr: plain.stderr,
+      sandboxDenied: plain.sandboxDenied === true, noGit: gitMissing(plain),
+      ref: ref, paths: paths, threeWay: false,
+    }
+  }
+  const threeWayArgv = ['apply', '-R', '--index', '--whitespace=nowarn', '--3way']
+  const merged = await cmdrecGit(input, desc, threeWayArgv, function () {
+    return git(args, threeWayArgv, null, { stdin: patch.stdout })
+  })
+  invalidateRepo(repoFrom(input, null) !== undefined ? repoFrom(input, null) : merged.cwd)
+  return {
+    ok: merged.exitCode === 0,
+    repo: merged.cwd != null ? merged.cwd : (repoFrom(input, null) || null),
+    exitCode: merged.exitCode, command: merged.command,
+    stdout: merged.stdout, stderr: merged.stderr,
+    sandboxDenied: merged.sandboxDenied === true, noGit: gitMissing(merged),
+    ref: ref, paths: paths, threeWay: true,
+  }
 }
 
 /* ── git/branch-upstream：改一个本地分支跟踪的远端分支 ──
@@ -5152,6 +5294,16 @@ onRpc('git/unstage', function (input) {
 onRpc('git/restore', function (input) { return restoreRun(input, '还原改动') })
 
 onRpc('git/stash', function (input) { return stashRun(input, '收起改动(stash)') })
+
+/* 文件右键菜单的三件（78-actions.js，客户端 61-filemenu.js 的菜单）：从修订中获取
+    （checkout <ref> -- 路径）、还原所选更改（show 补丁反向 apply）、删除所选更改
+    （clean -fd，只删未跟踪）。与 restore/stash 同一条变更路：命令页、读缓存失效、
+    noGit/sandboxDenied 都在各自动作里。 */
+onRpc('git/get-from-rev', function (input) { return getFromRevRun(input, '从修订中获取') })
+
+onRpc('git/revert-paths', function (input) { return revertPathsRun(input, '还原所选更改') })
+
+onRpc('git/clean-paths', function (input) { return cleanRun(input, '删除所选更改') })
 
 /* A failed commit is the one mutation whose failure can be about this machine
    instead of about the repository: git will not author a commit until it knows
