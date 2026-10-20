@@ -1,12 +1,16 @@
 import fs from 'node:fs'
 
-/* ── 历史页工作树块的 Host 那一半：git/worktrees（65-worktree.js）──
+/* ── 历史页 worktree 块的 Host 那一半：git/worktrees（65-worktree.js）──
  *
  * 这条 RPC 是一份 `git worktree list --porcelain` 的翻译，v1 纯只读。盯四片：
- *   1. 解析：porcelain 按空行分块；`worktree ` 之后的整行是路径（带空格的路径
- *      不许被截断）；`branch refs/heads/x` 剥成短名；`detached` / `bare` 光一个
+ *   1. 解析与过滤：porcelain 按空行分块；`worktree ` 之后的整行是路径（带空格的
+ *      路径不许被截断）；`branch refs/heads/x` 剥成短名；`detached` / `bare` 光一个
  *      关键字一行；`locked` / `prunable` 只在成立时出现，且带与不带原因都要收
- *      —— 原因就是关键字之后的那一段原文，一个字节不加工；
+ *      —— 原因就是关键字之后的那一段原文，一个字节不加工。解析完按新口径过滤：
+ *      主工作区（porcelain 的第一条记录，git 保证它排第一）与所有 bare === true 的
+ *      记录解析完即丢 —— 返回的 worktrees 只含 `git worktree add` 出来的链接
+ *      工作区，detached / prunable / locked 的链接工作区原样保留（含原因字段），
+ *      顺序保持 porcelain 原序；
  *   2. 失败折返：非零退出折成 ok:false（error: 'not-a-repository'、worktrees: []
  *      、stderr 原话带回），127 + gitGuard 的标记时 noGit 自报 —— 不另立错误通道，
  *      客户端只认 ok:false 一副长相；
@@ -60,7 +64,9 @@ const check = (label, value) => {
 const wtRuns = (runs) => runs.filter((r) => r.command.indexOf("'worktree' 'list' '--porcelain'") >= 0)
 
 /* 一份把每种形状都摆出来的 porcelain：主仓 + 带空格路径 + detached + bare +
-   locked 带原因 + locked 不带原因 + prunable 带原因 + prunable 不带原因。 */
+   locked 带原因 + locked 不带原因 + prunable 带原因 + prunable 不带原因。
+   主仓与 bare 是原始 git 输出里真实会有的形状，罐头照旧整份喂进去 —— 过滤本身
+   就是被测行为，断言的则是答复：这两行不在返回里。 */
 const PORCELAIN = [
   'worktree /tmp/gp57/ws',
   'HEAD aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111',
@@ -100,7 +106,7 @@ const PORCELAIN = [
 ].join('\n')
 
 console.log('')
-console.log('=== git/worktrees：porcelain 解析（空行分块 / 空格路径 / 剥短名 / 四个旗标） ===')
+console.log('=== git/worktrees：porcelain 解析 + 只发链接工作区（空行分块 / 空格路径 / 剥短名 / 旗标 / 丢主仓与 bare） ===')
 {
   porcelainText = PORCELAIN
   worktreeExit = 0
@@ -109,27 +115,36 @@ console.log('=== git/worktrees：porcelain 解析（空行分块 / 空格路径 
   const reply = await a.H('git/worktrees')({ sessionId: 's-x', repo: '/tmp/lab' })
   check('ok，答复的 repo 是请求点名的那个仓库',
     reply.ok === true && reply.repo === '/tmp/lab')
-  check('空行分块：8 份记录都在（多一少一都是把块切错了）',
-    Array.isArray(reply.worktrees) && reply.worktrees.length === 8)
+  check('新口径只发链接工作区：8 份原始记录，滤掉主仓（第一条）与 bare 后剩 6 份',
+    Array.isArray(reply.worktrees) && reply.worktrees.length === 6)
   const wt = reply.worktrees
-  check('主仓记录：path / HEAD / branch 全收，refs/heads/ 剥成短名 main，旗标全歇',
-    wt[0].path === '/tmp/gp57/ws' && wt[0].head === 'aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111'
-    && wt[0].branch === 'main' && wt[0].detached === false && wt[0].bare === false
+  check('主仓与 bare 不在返回里（解析照做，发之前统一丢掉）',
+    wt.some((w) => w.path === '/tmp/gp57/ws') === false
+    && wt.some((w) => w.path === '/tmp/gp57/bare main') === false)
+  check('顺序保持 porcelain 原序（只删不挪）',
+    wt.map((w) => w.path).join('\n') === [
+      '/tmp/gp57/wt dir with space',
+      '/tmp/gp57/detached one',
+      '/tmp/gp57/locked why',
+      '/tmp/gp57/locked bare word',
+      '/tmp/gp57/pruned why',
+      '/tmp/gp57/pruned bare word',
+    ].join('\n'))
+  check('带空格的路径整行收下（worktree 关键字之后的原样），带斜杠的分支短名照剥，旗标全歇',
+    wt[0].path === '/tmp/gp57/wt dir with space' && wt[0].head === 'bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222'
+    && wt[0].branch === 'feature/one'
+    && wt[0].detached === false && wt[0].bare === false
     && wt[0].locked === false && wt[0].lockReason === '' && wt[0].prunable === false && wt[0].pruneReason === '')
-  check('带空格的路径整行收下（worktree 关键字之后的原样），带斜杠的分支短名照剥',
-    wt[1].path === '/tmp/gp57/wt dir with space' && wt[1].branch === 'feature/one')
   check('detached：旗标立、没有 branch（游离记录本来就没有这一行）',
-    wt[2].path === '/tmp/gp57/detached one' && wt[2].detached === true && wt[2].branch === '')
-  check('bare：旗标立、没有 HEAD 也没有 branch（bare 记录只有两行）',
-    wt[3].path === '/tmp/gp57/bare main' && wt[3].bare === true && wt[3].head === '' && wt[3].branch === '')
+    wt[1].path === '/tmp/gp57/detached one' && wt[1].detached === true && wt[1].branch === '')
   check('locked 带原因：原因 = 关键字之后那一段原文（非 ASCII 不被加工）',
-    wt[4].locked === true && wt[4].lockReason === '变更多，暂不动')
+    wt[2].path === '/tmp/gp57/locked why' && wt[2].locked === true && wt[2].lockReason === '变更多，暂不动')
   check('locked 不带原因：旗标立、原因是空串',
-    wt[5].locked === true && wt[5].lockReason === '')
+    wt[3].path === '/tmp/gp57/locked bare word' && wt[3].locked === true && wt[3].lockReason === '')
   check('prunable 带原因：原因同样原样收',
-    wt[6].prunable === true && wt[6].pruneReason === 'gitdir 文件指向不存在的地方')
+    wt[4].path === '/tmp/gp57/pruned why' && wt[4].prunable === true && wt[4].pruneReason === 'gitdir 文件指向不存在的地方')
   check('prunable 不带原因：旗标立、原因是空串',
-    wt[7].prunable === true && wt[7].pruneReason === '')
+    wt[5].path === '/tmp/gp57/pruned bare word' && wt[5].prunable === true && wt[5].pruneReason === '')
   check('workdir 跟请求的仓库走（git 落在那个目录里列工作树）',
     wtRuns(a.runs).length === 1 && wtRuns(a.runs)[0].workdir === '/tmp/lab')
 }
