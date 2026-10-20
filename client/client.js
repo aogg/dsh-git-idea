@@ -2737,6 +2737,31 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-set-scope-body{display:flex;flex-direction:column;gap:14px;margin-top:2px;padding-left:12px;border-left:2px solid var(--dsw-alias-border-l2)}
 .dsh-git-set-scope > .dsh-git-set-group:first-child,
 .dsh-git-set-scope-body > .dsh-git-set-group:first-child{margin-top:0;padding-top:0;border-top:0}
+/* ── 配置页「仓库」组内「git 忽略项」分组（80-panel.js GitIgnoredScanGroup）──
+    仓库 → 工作树 → 条目 三层的只读清单。类名另起 dsh-git-ign- 前缀，不混仓库块 /
+    工作树块的 dsh-git-repo-box/-row、dsh-git-wt-box/-row —— 那两批是测试按个数认的
+    控件（gp44 数 repo-box / repo-row 的个数，25-worktree.js 的注释说明），混进来会
+    把那些账搅乱；折叠三角这类没人按个数认的小记号才借现成的（dsh-git-repo-caret）。
+    「主 / 链接」徽标是同一枚小签的两种画法：主工作区浅底实签，链接工作区描边空签
+    —— 分支树「本地 / 远程」同一种读法。条目用等宽字体（与远端地址、提交哈希同一
+    习惯），目录条目（带尾斜杠，git --directory 折叠的整个目录）压暗一级 —— 尾斜杠
+    加颜色，目录与文件扫一眼就分得开。变量统一用全页主流的 dsw-alias 那组（306 行
+    set-select 的 --dsh-alias-* 是历史笔误，那几个键在主题里没有定义，不跟）。 */
+.dsh-git-ign{display:flex;flex-direction:column;gap:4px}
+.dsh-git-ign-repo-head,.dsh-git-ign-wt{display:flex;align-items:center;gap:6px;min-height:20px;padding:1px 5px;border-radius:5px;font-size:11px;color:var(--dsw-alias-label-primary);white-space:nowrap;-webkit-user-select:none;user-select:none}
+.dsh-git-ign-repo-head{cursor:pointer;font-weight:600;margin-top:2px}
+.dsh-git-ign-repo-head:hover,.dsh-git-ign-wt:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dsh-git-ign-wt{cursor:pointer}
+.dsh-git-ign-repo-name{overflow:hidden;text-overflow:ellipsis}
+.dsh-git-ign-tag{flex:none;padding:0 4px;border-radius:4px;background:var(--dsw-alias-interactive-bg-hover);font-size:10px;line-height:15px;color:var(--dsw-alias-label-primary)}
+.dsh-git-ign-tag-link{background:transparent;border:1px solid var(--dsw-alias-border-l1);padding:0 3px;color:var(--dsw-alias-label-secondary)}
+.dsh-git-ign-branch{flex:none;max-width:45%;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-secondary)}
+.dsh-git-ign-count{margin-left:auto;flex:none;font-size:10px;color:var(--dsw-alias-label-secondary)}
+.dsh-git-ign-note{color:var(--dsw-alias-label-secondary)}
+.dsh-git-ign-gone{opacity:.55}
+.dsh-git-ign-items{display:flex;flex-direction:column;margin:1px 0 3px 24px;padding-left:8px;border-left:1px solid var(--dsw-alias-border-l2)}
+.dsh-git-ign-item{font-size:11px;line-height:16px;font-family:ui-monospace,monospace;word-break:break-all;color:var(--dsw-alias-label-primary)}
+.dsh-git-ign-item-dir{color:var(--dsw-alias-label-secondary)}
 .dsh-git-hidden{display:none}
 /* Only while the header's switcher is open: the card hangs off the header and
    must be allowed past the panel's own clip, or a panel dragged short enough
@@ -9540,7 +9565,10 @@ textarea.dsh-git-input{resize:vertical}
          竖线，46-css.js 的 dsh-git-set-scope / -scope-body，组头点名目标仓库）：
          只写该仓库 .git/config 的提交身份、git 自己管换行符的两个键
          （core.autocrlf / core.safecrlf）、远端表（长在 .git/config 里，走
-         git remote 自己的三条子命令，74-identity.js）。
+         git remote 自己的三条子命令，74-identity.js）。最末一组「git 忽略项」
+         （GitIgnoredScanGroup）是例外：只读、不跟本页编辑目标走 —— 一口扫描
+         shown 清单里的全部仓库、每个仓库再逐个 worktree 工作树（主/链接都标），
+         列出被 git 忽略的文件与目录。
        · 全局配置 —— 跟着插件与这台机器走（79-globalconfig.js 的 GitGlobalConfigPane，
          原先是 DSH 设置面板里的「dsh-git-idea配置」页，2026-10 起搬到这里）：初始化
          分支、远程同步实参、快捷命令、git 位置、提交身份（--global）、换行符
@@ -9878,6 +9906,219 @@ textarea.dsh-git-input{resize:vertical}
             key: 'no', type: 'button', className: 'dsh-git-btn',
             onClick: function (event) { stopEvent(event); props.onClose() },
           }, '取消')))
+    }
+
+    /* ── 「git 忽略项」分组（配置页「仓库」组的第四个下级组）──
+
+       与收在它前面的三个下级组（提交身份 / 远端 / 换行符）不是一类账：那三组读写
+       「本页正在编辑的那个仓库」的 .git/config，这一组是**只读扫描**，吃的是页首
+       仓库清单里的**全部**可选仓库（shown 清单：工作区扫到 + 手动登记，missing
+       不在列）—— 被忽略的文件是每个工作树各一份的，所以每个仓库还要逐个 worktree
+       工作树（主工作区 + git worktree add 出来的链接工作区）列一遍，行上标主/链接
+       与分支。数据来自 Host 的 git/ignored-scan（65-worktree.js 下半，不进读缓存
+       —— 要的就是「现在点、现在看」），点按钮才发，结果只住 React state：不持久化、
+       不自动刷新，换会话面板重挂即清零。
+
+       纯只读也写在明面上：扫描不写 .git/config、不动文件系统、更不删任何被忽略的
+       项，分组说明与按钮 tooltip 都这么说。
+
+       交互防重入：扫描在飞时按钮禁用（再点无效），单飞不排队 —— 结果回来整份替换
+       上一次的。展示按 仓库 → 工作树 → 条目 三层折叠：仓库组头可收起（折叠惯例与
+       RepoSwitcher / WorktreeBox 同一家：标题行即折叠开关、跟着组件挂载走）；工作树
+       行默认收起、单击展开条目（2000 条的清单不该开门就糊一脸）。类名另起
+       dsh-git-ign- 前缀，不混 dsh-git-repo-* / -wt-* —— 那两批是测试按个数认的
+       控件（46-css.js 的说明），折叠三角这类没人按个数认的小记号才借。 */
+    function GitIgnoredScanGroup(props) {
+      const sessionId = props.sessionId
+      const repos = Array.isArray(props.repos) ? props.repos : []
+      const labels = props.labels != null ? props.labels : {}
+      const [scan, setScan] = React.useState(null)
+      const [scanning, setScanning] = React.useState(false)
+      const [problem, setProblem] = React.useState('')
+      /* 折叠账：仓库按路径、工作树按「仓库路径 \0 工作树路径」，一只 state 收两本。
+         默认仓库全展开、工作树全收起 —— 第一次看到的是「有多少、在哪个仓库」，
+         条目要一层层点开看。 */
+      const [folded, setFolded] = React.useState(function () { return { repos: {}, trees: {} } })
+      /* 宿主旧版（git/ignored-scan 还没注册）：与「远端」组的 remoteHostOld 同一个
+         判据 —— callHost 把 HOST_NOT_READY 重试耗尽的原话带回来，那与仓库、与 git
+         都无关，甩原文只会把读者引去查仓库。 */
+      const hostOld = problem.indexOf(HOST_NOT_READY) >= 0
+
+      const toggle = function (book, key) {
+        setFolded(function (prev) {
+          const next = { repos: Object.assign({}, prev.repos), trees: Object.assign({}, prev.trees) }
+          next[book][key] = next[book][key] !== true
+          return next
+        })
+      }
+
+      const runScan = function () {
+        if (scanning === true) return
+        setScanning(true)
+        setProblem('')
+        const body = sessionId.length > 0 ? { sessionId: sessionId } : {}
+        body.repos = repos.slice()
+        callHost('git/ignored-scan', body).then(function (data) {
+          setScanning(false)
+          if (data == null || data.ok !== true) {
+            setProblem(commandDetail(data) || '扫描失败')
+            return
+          }
+          setScan(data)
+        }, function (failure) {
+          setScanning(false)
+          setProblem(failureText(failure))
+        })
+      }
+
+      const rows = []
+      /* 组头行：标题吃剩余宽度，主视觉扫描按钮贴行尾 —— 与「远端」组头挂 ⟳ 同一个
+         group-row 画法，按钮用这一页的主按钮长相（这一页不新造按钮长相）。 */
+      rows.push(h('div', { key: 'head', className: 'dsh-git-set-group dsh-git-set-group-row' },
+        h('span', null, 'git 忽略项（只读）'),
+        h('button', {
+          type: 'button', className: 'dsh-git-btn dsh-git-primary',
+          disabled: scanning === true || repos.length === 0,
+          title: repos.length === 0
+            ? '上面还没有可选的仓库 —— 先把仓库加进清单再来扫描'
+            : '列出清单里全部仓库（含每个 worktree 工作树）被 git 忽略的文件与目录。只读：不写 .git、不动文件、不删任何被忽略的项',
+          onClick: function () { runScan() },
+        }, scanning === true ? '扫描中…' : '扫描忽略项')))
+
+      rows.push(h('div', { key: 'hint', className: 'dsh-git-set-hint' },
+        '扫的是上面仓库清单里的全部仓库（不只是本页正在编辑的那个），每个仓库再逐个 worktree 工作树列：忽略规则按 .gitignore、.git/info/exclude 与全局排除一起算，整个被忽略的目录折成一行带尾斜杠。结果不保存、不自动刷新，每次都是点了按钮现扫；扫描只读，不会改任何文件。'))
+
+      if (repos.length === 0) {
+        rows.push(h('div', { key: 'norepos', className: 'dsh-git-set-hint' },
+          '这个工作区还没有可选的仓库 —— 先在上面把仓库加进清单，再来扫忽略项。'))
+        return h('div', { className: 'dsh-git-ign' }, rows)
+      }
+
+      if (problem.length > 0) {
+        rows.push(h('div', { key: 'problem', className: 'dsh-git-set-hint dsh-git-warn' },
+          hostOld === true
+            ? '忽略项扫描要在重启 DSH、加载新版宿主之后才可用 —— 现在运行的宿主进程还是旧版；重启后回到这里再点一次扫描'
+            : '扫描失败：' + problem))
+      }
+
+      if (scan == null) {
+        if (problem.length === 0) {
+          rows.push(h('div', { key: 'unscanned', className: 'dsh-git-set-hint' },
+            scanning === true ? '正在扫描…' : '还没扫描过 —— 点右上角的「扫描忽略项」开始。'))
+        }
+        return h('div', { className: 'dsh-git-ign' }, rows)
+      }
+
+      /* 两把闸的汇总说明（Host 的 truncated / timedOut）：先讲「数字为什么少」，
+         再讲「哪些格子没扫」—— 都说清楚边界，不装作结果完整。 */
+      if (scan.truncated === true) {
+        rows.push(h('div', { key: 'truncated', className: 'dsh-git-set-hint dsh-git-warn' },
+          '忽略项太多，清单在 2000 条处截断 —— 数字比实际少。'))
+      }
+      if (scan.timedOut === true) {
+        rows.push(h('div', { key: 'timedout', className: 'dsh-git-set-hint dsh-git-warn' },
+          '扫描总时长到了上限（约 30 秒）：标着「没有扫」的仓库与工作树是到点后停下来的，再点一次扫描可以重试。'))
+      }
+
+      const reports = Array.isArray(scan.repos) ? scan.repos : []
+      if (reports.length === 0) {
+        rows.push(h('div', { key: 'empty', className: 'dsh-git-set-hint' }, '清单里没有可扫描的仓库。'))
+        return h('div', { className: 'dsh-git-ign' }, rows)
+      }
+
+      /* 单棵工作树条目区的展示上限：拿到 2000 条也只展开渲染 300 条，更多的一句话
+         交代 —— 一次糊几千行 DOM 谁都不好受，要看的那几条多半在前排。 */
+      const ITEM_SHOW_MAX = 300
+
+      for (let i = 0; i < reports.length; i += 1) {
+        const one = reports[i]
+        const repoPath = text(one.path)
+        const repoFolded = folded.repos[repoPath] === true
+        const trees = Array.isArray(one.worktrees) ? one.worktrees : []
+        let count = 0
+        for (let t = 0; t < trees.length; t += 1) {
+          count += Array.isArray(one.worktrees[t].items) ? one.worktrees[t].items.length : 0
+        }
+        rows.push(h('div', {
+          key: 'repo:' + repoPath,
+          className: 'dsh-git-ign-repo-head',
+          title: repoPath + (repoFolded === true ? '\n单击展开这个仓库的工作树' : '\n单击收起这个仓库的工作树'),
+          onClick: function () { toggle('repos', repoPath) },
+        },
+          h('span', { className: 'dsh-git-repo-caret' + (repoFolded === true ? ' dsh-git-repo-caret-off' : '') },
+            h(Icon, { name: 'down', size: 10 })),
+          h('span', { className: 'dsh-git-ign-repo-name' }, repoShortName(labels, repoPath)),
+          h('span', { className: 'dsh-git-ign-count' },
+            one.ok === true ? trees.length + ' 个工作树 · ' + count + ' 项' : '扫描失败')))
+        if (repoFolded === true) continue
+        if (one.ok !== true) {
+          rows.push(h('div', { key: 'repofail:' + repoPath, className: 'dsh-git-ign-wt dsh-git-ign-gone' },
+            h('span', { className: 'dsh-git-ign-note' }, '这个仓库没扫出来：' + text(one.reason))))
+          continue
+        }
+        if (trees.length === 0) {
+          rows.push(h('div', { key: 'nobare:' + repoPath, className: 'dsh-git-ign-wt dsh-git-ign-gone' },
+            h('span', { className: 'dsh-git-ign-note' }, '这个仓库没有可用的工作树（bare 仓库只有版本库，扫不了忽略项）')))
+          continue
+        }
+        for (let t = 0; t < trees.length; t += 1) {
+          const wt = trees[t]
+          const wtPath = text(wt.path)
+          const isMain = wt.main === true
+          const branch = text(wt.branch)
+          const wtKey = repoPath + '\u0000' + wtPath
+          const wtOpen = folded.trees[wtKey] === true
+          const okWt = wt.ok !== false
+          const items = Array.isArray(wt.items) ? wt.items : []
+          const wtTitle = [wtPath, isMain ? '主工作区' : 'git worktree add 出来的链接工作区',
+            wt.detached === true ? '游离 HEAD（不站任何分支）' : (branch.length > 0 ? '分支：' + branch : '——')]
+          if (okWt === true) {
+            wtTitle.push(wtOpen === true ? '单击收起条目清单' : '单击展开条目清单')
+          }
+          rows.push(h('div', {
+            key: 'wt:' + wtKey,
+            className: 'dsh-git-ign-wt' + (okWt === true ? '' : ' dsh-git-ign-gone'),
+            title: wtTitle.join('\n'),
+            onClick: okWt === true ? function () { toggle('trees', wtKey) } : undefined,
+          },
+            h('span', { className: 'dsh-git-repo-caret' + (wtOpen === true ? '' : ' dsh-git-repo-caret-off') },
+              okWt === true ? h(Icon, { name: 'down', size: 10 }) : null),
+            h('span', { className: 'dsh-git-ign-tag' + (isMain === true ? '' : ' dsh-git-ign-tag-link') },
+              isMain === true ? '主' : '链接'),
+            h('span', { className: 'dsh-git-ign-branch' },
+              wt.detached === true ? '游离 HEAD' : (branch.length > 0 ? branch : '——')),
+            h('span', { className: 'dsh-git-ign-count' },
+              okWt === true
+                ? (items.length === 0 ? '没有忽略项' : items.length + ' 项' + (wt.truncated === true ? '（不完整）' : ''))
+                : '没有扫')))
+          if (okWt !== true) {
+            rows.push(h('div', { key: 'wtfail:' + wtKey, className: 'dsh-git-ign-wt dsh-git-ign-gone' },
+              h('span', { className: 'dsh-git-ign-note' }, '读取失败：' + text(wt.reason))))
+            continue
+          }
+          if (wtOpen !== true) continue
+          const itemRows = []
+          if (items.length === 0) {
+            itemRows.push(h('div', { key: 'none', className: 'dsh-git-ign-item dsh-git-ign-note' },
+              '这个工作树没有被 git 忽略的文件'))
+          } else {
+            for (let k = 0; k < items.length && k < ITEM_SHOW_MAX; k += 1) {
+              const item = items[k]
+              itemRows.push(h('div', {
+                key: 'it:' + k,
+                className: 'dsh-git-ign-item' + (item.dir === true ? ' dsh-git-ign-item-dir' : ''),
+              }, text(item.path)))
+            }
+            if (items.length > ITEM_SHOW_MAX) {
+              itemRows.push(h('div', { key: 'more', className: 'dsh-git-ign-item dsh-git-ign-note' },
+                '…还有 ' + (items.length - ITEM_SHOW_MAX) + ' 项没有显示（这个工作树共 ' + items.length + ' 项）'))
+            }
+          }
+          rows.push(h('div', { key: 'items:' + wtKey, className: 'dsh-git-ign-items' }, itemRows))
+        }
+      }
+
+      return h('div', { className: 'dsh-git-ign' }, rows)
     }
 
     function GitConfigPane(props) {
@@ -10358,7 +10599,7 @@ textarea.dsh-git-input{resize:vertical}
         h('div', { className: 'dsh-git-set-scope' },
           h('div', { className: 'dsh-git-set-group' }, '仓库（这一页在编辑哪个仓库）'),
           h('div', { className: 'dsh-git-set-hint' },
-            '收在本组内的提交身份、远端、换行符三个下级组，读写的都是这里选中的仓库，默认是当前生效仓库（带 ● 的行）。单击行只换本页的编辑目标 —— 面板的生效仓库（历史、提交、推送用的那个）不跟着换，要换生效仓库去「历史」或「变更」页的仓库列表。会话工作区本身不是仓库时这组照常可用：把仓库目录「＋ 添加目录」登记进来，就能直接配置它。'),
+            '收在本组内的提交身份、远端、换行符三个下级组，读写的都是这里选中的仓库，默认是当前生效仓库（带 ● 的行）。单击行只换本页的编辑目标 —— 面板的生效仓库（历史、提交、推送用的那个）不跟着换，要换生效仓库去「历史」或「变更」页的仓库列表。会话工作区本身不是仓库时这组照常可用：把仓库目录「＋ 添加目录」登记进来，就能直接配置它。最末的「git 忽略项」是只读扫描，不跟这里的单选走 —— 它扫的是整份清单里的全部仓库。'),
           h(RepoSwitcher, {
             key: 'cfg-repos',
             sessionId: sessionId, pane: 'config', list: repoList, effective: effective,
@@ -10488,7 +10729,12 @@ textarea.dsh-git-input{resize:vertical}
               '两条都是 git 的换行符配置，同样只写上面选中的仓库（--local）：autocrlf=true 检出转 CRLF、提交转回 LF，input 只在提交时转 LF，false 不转；safecrlf 是把关开关，换行转换不可逆（行尾抹过一遍还原不回去）时 true 让 git 拒绝、warn 只警告、false 不把关。改动立即写进该仓库的 .git/config；选「跟随全局」= 清掉该仓库的这条（不存在算成功）。'),
 
             lineSelect('core.autocrlf', autocrlf, ['true', 'false', 'input'], '检出时把 LF 转 CRLF、提交时转回 LF（input 只在提交时转 LF，false 什么都不转）'),
-            lineSelect('core.safecrlf', safecrlf, ['true', 'false', 'warn'], '换行转换不可逆（会丢字）时的把关开关：true 让 git 拒绝这次操作、warn 只警告照做、false 不把关'))),
+            lineSelect('core.safecrlf', safecrlf, ['true', 'false', 'warn'], '换行转换不可逆（会丢字）时的把关开关：true 让 git 拒绝这次操作、warn 只警告照做、false 不把关'),
+
+            /* 「git 忽略项」：第四个下级组，只读、不跟本页编辑目标走 —— 扫的是
+               整份 shown 清单（pickable）里全部仓库的每个工作树，仓库短名也用
+               同一份标签账（cfgLabels），分组头与切换器里叫的是同一个名字。 */
+            h(GitIgnoredScanGroup, { key: 'ignored-scan', sessionId: sessionId, repos: pickable, labels: cfgLabels }))),
 
         note.length > 0 ? h('div', { className: 'dsh-git-set-row dsh-git-set-hint' }, note) : null,
         problem.length > 0 ? h('div', { className: 'dsh-git-set-row dsh-git-error' }, problem) : null)
