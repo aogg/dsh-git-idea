@@ -4086,6 +4086,19 @@
           /* 多仓库：侧栏、分组、按仓库落下去的四个回调。分组为 null 时（单选/没多选）
              变更树与今天完全一样 —— 分组、键名、勾选手势一字不差。 */
           repoProps: repoPropsFor('changes'),
+          /* 工作树块（25-worktree.js）：数据复用面板级 worktrees/refs 读数 —— 那
+             两条 effect 的依赖是 [appliedRepo, repoOk, freshAt, props.ready]，不分
+             tab，变更页白拿，不为此多发一次读数。这里的行点击不是过滤历史而是
+             「切生效仓库」：走 repoSingle —— 多选时先收拢回单仓库再切到那个工作
+             区，变更列表跟着新仓库重读；点的就是当前生效工作区时 repoSingle 原地
+             返回，无副作用。只给 onPickWorktree、不给 onPickBranch/activeRef/repo，
+             WorktreeBox 自己退回按路径高亮的仓库模式（25-worktree.js 顶部注释）。 */
+          worktreeProps: {
+            data: worktrees,
+            refs: refs,
+            effective: effectiveRepo,
+            onPickWorktree: function (path) { repoSingle('changes', path) },
+          },
           groups: changeGroups,
           onRepoSingle: function (path) { repoSingle('changes', path) },
           onSetStagedAt: function (repo, files, staged) { setStaged(files, staged, repo) },

@@ -11,6 +11,14 @@
        其中 detached 与 bare 没有分支可选，单击不动；bare 的分支留作防御 —— Host
        只发 `git worktree add` 出来的链接工作区，主目录与 bare 不在列。
 
+       v1.1 起有第二种用法（变更页左栏）：props 里给了 onPickWorktree 就是「仓库
+       模式」—— 单击一行 = 80-panel.js 的 repoSingle，把生效仓库切到那个工作区
+       目录，变更列表跟着新仓库重读。这个模式下「选中」按路径算（path == 生效
+       仓库亮 ●，折叠后标题行记的也是它），detached 也算可点的行（变更页看的是
+       工作区改动，与站在哪个分支无关），bare / prunable 仍不可点；↑↓ 徽章照旧
+       按分支名从 refs 免费查。不给 onPickWorktree 就是上面那段历史模式，逐行
+       不差 —— 同一个组件两种语义，全看这一个 prop 给没给。
+
        视觉与仓库块同族：容器、标题行、行的 CSS 规则在 46-css.js 里与 .dsh-git-repo-box
        / -head / -row 那几条**共用同一组声明**（分组选择器），观感逐像素一致；类名却
        刻意另起 dsh-git-wt- 前缀 —— 仓库行/仓库块是测试按个数认的控件（gp44 数
@@ -25,6 +33,9 @@
       const refs = props.refs
       const effective = text(props.effective)
       const activeRef = text(props.activeRef)
+      /* 仓库模式（变更页）：给了 onPickWorktree 就是「单击 = 切生效仓库到这个
+         工作区」（顶部注释的第二种用法）；没给就是历史页的分支过滤，逐行照旧。 */
+      const repoMode = typeof props.onPickWorktree === 'function'
       /* 折叠只收起这一块的行，不碰任何选择，跟着组件挂载走 —— 与 RepoSwitcher 的
          折叠同一个约定（折叠后标题行仍记着当前选中的那一个）。 */
       const [folded, setFolded] = React.useState(false)
@@ -38,14 +49,23 @@
       }
 
       const list = data != null && Array.isArray(data.worktrees) ? data.worktrees : []
-      /* 选中联动：这个 worktree 的分支 == 历史视图当前选中的分支（面板传进来的
-         activeRef，与分支树 dsh-git-trow-scope 高亮用的同一个值）时行首亮 ●。
-         折叠后标题行记的也是它。 */
+      /* 选中联动，两种口径：仓库模式按路径（path == 生效仓库，即「变更列表正
+         看着这个工作区」，bare 行本来就进不了数据，不用挑）；历史模式按分支
+         （这个 worktree 的分支 == 面板传进来的 activeRef，与分支树
+         dsh-git-trow-scope 高亮用的同一个值）。行首亮 ● 与折叠后标题行记的
+         都是这一个。 */
       let current = null
-      for (let i = 0; i < list.length; i += 1) {
-        const one = list[i]
-        if (one != null && one.bare !== true && one.detached !== true
-          && text(one.branch).length > 0 && text(one.branch) === activeRef) { current = one; break }
+      if (repoMode) {
+        for (let i = 0; i < list.length; i += 1) {
+          const one = list[i]
+          if (one != null && text(one.path) === effective) { current = one; break }
+        }
+      } else {
+        for (let i = 0; i < list.length; i += 1) {
+          const one = list[i]
+          if (one != null && one.bare !== true && one.detached !== true
+            && text(one.branch).length > 0 && text(one.branch) === activeRef) { current = one; break }
+        }
       }
 
       /* 标题行同时是折叠开关，与仓库块同一副长相：三角、图标、名字、计数。 */
@@ -61,7 +81,7 @@
         h('span', { key: 't', className: 'dsh-git-repo-head-name' },
           data != null && data.ok === true ? 'worktree ' + String(list.length) : 'worktree'),
         current != null
-          ? h('span', { key: 'now', className: 'dsh-git-repo-now', title: text(current.path) + '\n历史正按这个 worktree 的分支过滤' },
+          ? h('span', { key: 'now', className: 'dsh-git-repo-now', title: text(current.path) + '\n' + (repoMode ? '变更列表正看着这个工作区' : '历史正按这个 worktree 的分支过滤') },
             '● ' + repoBaseName(text(current.path)))
           : null,
         data == null
@@ -99,12 +119,16 @@
         const locked = one.locked === true
         const lockReason = text(one.lockReason)
         const pruneReason = text(one.pruneReason)
-        /* bare / detached / prunable 都是「这一行不完整」：压暗。分支还在的 prunable
-            行仍可点 —— 单击只是过滤历史，不碰 git 状态，目录丢了不影响这件事；
-            detached 与 bare 没有分支可选，单击不动。 */
-        const dim = bare || detached || prunable
-        const selectable = bare !== true && detached !== true && branch.length > 0
-        const isCur = selectable && branch === activeRef
+        /* 「这一行不完整」才压暗。历史模式：bare / detached / prunable 都算 ——
+            detached 与 bare 没有分支可选，单击不动；分支还在的 prunable 行仍可点
+            （单击只是过滤历史，不碰 git 状态，目录丢了不影响这件事）。仓库模式：
+            只有 bare / prunable 算 —— detached 的工作区照常能看变更，行不灰、
+            单击切过去（灰行配「可点」的说法就自相矛盾了）。 */
+        const dim = repoMode ? (bare || prunable) : (bare || detached || prunable)
+        const selectable = repoMode
+          ? path.length > 0 && bare !== true && prunable !== true
+          : bare !== true && detached !== true && branch.length > 0
+        const isCur = selectable && (repoMode ? path === effective : branch === activeRef)
         const meta = metaOf[branch] === undefined ? null : metaOf[branch]
         const ahead = meta != null && typeof meta.ahead === 'number' ? meta.ahead : 0
         const behind = meta != null && typeof meta.behind === 'number' ? meta.behind : 0
@@ -113,7 +137,12 @@
         const tip = [path, '归属仓库：' + (effective.length > 0 ? effective : '（本会话工作区）')]
         if (text(one.head).length > 0) tip.push('HEAD ' + text(one.head))
         if (selectable) {
-          tip.push('单击 = 历史按分支 ' + branch + ' 过滤（只改历史视图：不 checkout、不切换分支、不动任何工作区）')
+          tip.push(repoMode
+            ? '单击 = 变更列表切到这个工作区（只切查看的仓库：不 checkout、不切分支、不动任何工作区）'
+            : '单击 = 历史按分支 ' + branch + ' 过滤（只改历史视图：不 checkout、不切换分支、不动任何工作区）')
+          /* 仓库模式里 detached 是可点的行，click 行之外补一句它为什么叫「游离」
+             —— 历史模式 selectable 本来就排除 detached，这句在那边永远不触发。 */
+          if (repoMode && detached) tip.push('游离 HEAD：这个 worktree 停在具体提交上、不站任何分支；不影响切过去看工作区改动')
           if (upstream.length > 0) tip.push(trackTitle(ahead, behind) + ' · ' + upstream)
         } else if (detached) {
           tip.push('游离 HEAD：这个 worktree 停在具体提交上，没有选中分支，单击不选分支')
@@ -129,7 +158,9 @@
           className: 'dsh-git-wt-row' + (dim ? ' dsh-git-wt-gone' : ''),
           title: tip.join('\n'),
           onClick: selectable
-            ? function () { props.onPickBranch(props.repo, branch) }
+            ? (repoMode
+              ? function () { props.onPickWorktree(path) }
+              : function () { props.onPickBranch(props.repo, branch) })
             : undefined,
         },
           h('span', { key: 'm', className: 'dsh-git-repo-mark' }, isCur ? '●' : ''),

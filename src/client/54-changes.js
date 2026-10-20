@@ -782,7 +782,14 @@
         ref: narrowSlot.attach,
       },
         props.repoProps == null ? null : h('div', { key: 'repos', className: 'dsh-git-reposide' },
-          h(RepoSwitcher, props.repoProps)),
+          h(RepoSwitcher, props.repoProps),
+          /* worktree 块（25-worktree.js，拼接 bundle 里的全局函数，25 < 54 直接
+             引用）与历史页左栏同款、同一个从上到下：仓库在上、worktree 在下。
+             差别只在点击语义 —— 这页给了 onPickWorktree，单击 = 80-panel.js 的
+             repoSingle，把生效仓库切到那个工作区目录；高亮也因此在组件里按路径
+             对生效仓库，不按分支。数据（worktreeProps）由 80-panel.js 给，组件
+             自己不发读数；worktreeProps 缺席（宿主太旧等）就不挂，判空同历史页。 */
+          props.worktreeProps != null ? h(WorktreeBox, props.worktreeProps) : null),
         h('div', { className: 'dsh-git-changes-tree' },
           h('div', { key: 'list', className: 'dsh-git-clist' }, rows.length > 0 ? rows : h('div', { className: 'dsh-git-pane dsh-git-ok' }, '工作区干净'))),
         commitCollapsed === true ? commitBar : side)
