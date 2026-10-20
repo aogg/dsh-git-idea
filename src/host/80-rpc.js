@@ -117,6 +117,14 @@ onRpc('git/branches', function (input) { return branchesSnapshot(input) })
     客户端永远按生效仓库来问（80-panel.js 里跟着 appliedRepo + freshAt 的 effect）。 */
 onRpc('git/worktrees', function (input) { return worktreesSnapshot(input) })
 
+/* git 忽略项扫描（65-worktree.js 下半，配置页「仓库」组里那个只读分组的数据）：
+    一次吃下客户端 shown 清单的**全部仓库**（请求显式带 repos 绝对路径数组，不由
+    宿主重新发现 —— 清单就是仓库组的账），逐仓库枚举全部工作树（主工作区 + 链接
+    工作树，跳过 bare）逐棵跑 ls-files。刻意**不进读缓存**、与 git/worktrees 的
+    cached 分道：扫描的意义就是「点按钮、看现在」，缓存旧账反而误导（git/repos
+    不进缓存的同一条理由）。 */
+onRpc('git/ignored-scan', function (input) { return ignoredScanSnapshot(input) })
+
 /* 多仓库（61-repos.js）：扫描不进读缓存 —— 它自己的去重（客户端每个工作区只问一次）
    就是缓存，而手动清单那一半每次都该重新核对「还在不在」。 */
 onRpc('git/repos', function (input) { return readWorkspaceRepos(input) })
