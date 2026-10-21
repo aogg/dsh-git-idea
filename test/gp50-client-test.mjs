@@ -234,6 +234,17 @@ let graphCommits = [
   { hash: 'bbb222', subject: 'second commit', author: 'mays', date: '2026-09-15', committedAt: nowSec - 3600, refs: [] },
   { hash: 'ccc333', subject: 'third commit', author: 'jiangzx', date: '2026-09-14', committedAt: nowSec - 7200, refs: [] },
 ]
+/* ── 假 liveBus（真包由 client-pre.js 提供）──
+   98-register.js 的推送订阅在插件加载时就发生，所以它必须在加载前就位：watcher 的
+   「变化核对」已推送化（再无定时器轮询），测试用 livePush(...) 模拟宿主的推送
+   （repo-changed / session-complete / cmdlog-start/exit / live-open）。 */
+const liveSubs = []
+globalThis.liveBus = {
+  open() {},
+  close() {},
+  subscribe(cb) { liveSubs.push(cb); return function () { const i = liveSubs.indexOf(cb); if (i >= 0) liveSubs.splice(i, 1) } },
+}
+const livePush = function (message) { liveSubs.slice().forEach(function (cb) { cb(message) }) }
 const registered = []
 const slots = { inject: (k, cb) => cb(), register: (o, c) => { registered.push({ options: o, component: c }); return () => {} } }
 const ctx = {
@@ -868,8 +879,10 @@ const APPLIED_KEY = 'dsh.git-idea.applied-repos'
 const appliedAccount = function () {
   try { return JSON.parse(store[APPLIED_KEY]) } catch (error) { return null }
 }
+/* 推送化之后没有定时器一拍：核对的一拍由 live-open 触发（98-register.js）。
+ * 这里两个插件实例（原实例 + 刷新后那份）都订在同一个假 liveBus 上，一拍都核对。 */
 const tickWatchers = function () {
-  timers.filter((t) => t.kind === 'interval' && t.dead !== true).forEach((t) => t.cb())
+  livePush({ kind: 'live-open' })
 }
 reposReply = { ok: true, workspace: '/tmp/ws', repos: ['/tmp/ws/alpha', '/tmp/ws/beta'], manual: [], missing: [] }
 delete store[APPLIED_KEY]

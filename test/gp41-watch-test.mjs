@@ -234,6 +234,17 @@ let graphCommits = [
   { hash: 'bbb222', subject: 'second commit', author: 'mays', date: '2026-09-15', committedAt: nowSec - 3600, refs: [] },
   { hash: 'ccc333', subject: 'third commit', author: 'jiangzx', date: '2026-09-14', committedAt: nowSec - 7200, refs: [] },
 ]
+/* ── 假 liveBus（真包由 client-pre.js 提供）──
+   98-register.js 的推送订阅在插件加载时就发生，所以它必须在加载前就位：watcher 的
+   「变化核对」已推送化（再无定时器轮询），测试用 livePush(...) 模拟宿主的推送
+   （repo-changed / session-complete / cmdlog-start/exit / live-open）。 */
+const liveSubs = []
+globalThis.liveBus = {
+  open() {},
+  close() {},
+  subscribe(cb) { liveSubs.push(cb); return function () { const i = liveSubs.indexOf(cb); if (i >= 0) liveSubs.splice(i, 1) } },
+}
+const livePush = function (message) { liveSubs.slice().forEach(function (cb) { cb(message) }) }
 const registered = []
 const slots = { inject: (k, cb) => cb(), register: (o, c) => { registered.push({ options: o, component: c }); return () => {} } }
 const ctx = {
@@ -300,7 +311,12 @@ const ok = (label, value) => console.log('  ' + (value ? '✓' : '✗') + ' ' + 
 
    主机侧「签名里必须能看出换了分支」由 gp34a 用真 git 证明（外部 `git switch`
    之后 `git/watch` 的签名确实不同）。这一节接上后半段：签名变了以后，chip 到底
-   有没有重读、有没有换名字，以及什么时候它根本不该读。 */
+   有没有重读、有没有换名字，以及什么时候它根本不该读。
+
+   2026-10 推送化之后的新契约：浏览器侧不再有任何定时器轮询 —— 变化由宿主 WS
+   推送（repo-changed）与事件驱动的一次性核对（live-open（重）连、页面回可见）
+   发现。这里的「一拍」一律由 livePush({kind:'live-open'}) 触发；第一拍只记基线
+   （不发 git/flush、监听者不被调），签名变了之后的下一拍才 flush + 通知。 */
 
 const realCall = host.call
 let watchSig = 'SIG-A'
@@ -316,34 +332,42 @@ const labelOf = (tree) => {
   const span = byClass(tree, 'dsh-git-chip-label')[0]
   return span === undefined ? '' : textOf(span)
 }
+/* 活着的 interval 定时器：推送化之后 watcher 一条都不该排（变更页整树重读的时钟
+   是另一件事，本套件不开变更页）。 */
 const lanes = () => timers.filter((t) => t.kind === 'interval' && t.dead !== true)
-const tick = () => lanes().forEach((t) => t.cb())
+/* 推进假时钟：把活着的 interval 全都摇 N 拍 —— 旧世界每一拍都会问一次签名，
+   新世界一拍都不该问。 */
+const beatClock = (n) => { for (let i = 0; i < (n || 3); i += 1) lanes().forEach((t) => t.cb()) }
+/* 一拍核对：live-open（（重）连上）触发的一次性 watcherTickAll（98-register.js）。 */
+const beat = async () => { livePush({ kind: 'live-open' }); await wait(30) }
 const since = (mark) => calls.slice(mark)
 const methodsSince = (mark) => since(mark).map((c) => c.method)
 
 console.log('')
-console.log('=== 手动切分支之前：chip 的轮询长什么样 ===')
+console.log('=== 手动切分支之前：挂载不排任何轮询，时钟走了也不问 ===')
 const first = await chipTree()
 ok('chip 显示当前分支 main', labelOf(first) === 'main')
-ok('chip 自己注册了一个轮询', lanes().length === 1)
-/* 5 秒是慢车道的默认值（20-prefs.js）：它只发一次便宜签名（真机上 0.12s），
-   所以问得比过去勤 —— 15 秒的话，终端里提交完要过十几秒 chip 才改口。 */
-ok('没有面板时走慢车道（5 秒）', lanes()[0].delay === 5000)
-
+ok('chip 不再注册任何轮询定时器（watcher 推送化，没有快慢车道）', lanes().length === 0)
 let mark = calls.length
-tick()
+beatClock(6)
 await wait(30)
+ok('假时钟摇了 6 拍，一次 git/watch 都没有（任何时刻都没有定时器触发的核对）',
+  since(mark).filter((c) => c.method === 'git/watch').length === 0)
+ok('时钟空转也没有惊动数据读', methodsSince(mark).indexOf('git/panel') < 0)
+
+mark = calls.length
+await beat()
 const watchArgs = since(mark).filter((c) => c.method === 'git/watch').map((c) => c.args)
-ok('第一次轮询只记下签名，不白读一遍数据', methodsSince(mark).indexOf('git/panel') < 0)
-ok('轮询问的是廉价签名，不带 deep（慢盘上 deep 是秒级）',
+ok('live-open 的一拍核对：只记基线，不白读一遍数据', methodsSince(mark).indexOf('git/panel') < 0)
+ok('核对问的是廉价签名，不带 deep（慢盘上 deep 是秒级）',
   watchArgs.length === 1 && watchArgs[0].deep === undefined && watchArgs[0].sessionId === 's-1')
 
 console.log('')
-console.log('=== 外面切了分支：签名变了 ===')
+console.log('=== 外面切了分支（repo-changed 丢在断线期，live-open 补核对） ===')
 mark = calls.length
 watchSig = 'SIG-B'
 OK_PANEL.branch = 'release/2.0'
-tick()
+await beat()
 await wait(30)
 const moved = await chipTree()
 ok('签名变了 → chip 换成新分支 release/2.0', labelOf(moved) === 'release/2.0')
@@ -357,44 +381,45 @@ ok('重读走的是先便宜、再只问那些路径那两段，不是一整条�
   seq.filter((m) => m === 'git/panel').length === 2)
 
 console.log('')
-console.log('=== 签名没变：一次都不该读 ===')
+console.log('=== 签名没变：再核对几拍也一次都不该读 ===')
 mark = calls.length
-tick()
-await wait(30)
-tick()
-await wait(30)
-ok('仓库没动就不重读（不会每 15 秒白读一次）', methodsSince(mark).indexOf('git/panel') < 0)
+await beat()
+await beat()
+ok('仓库没动就不重读（核对是核对，重读只在签名变了之后）', methodsSince(mark).indexOf('git/panel') < 0)
 ok('没动的时候 flush 也不会发', methodsSince(mark).indexOf('git/flush') < 0)
 
 console.log('')
-console.log('=== 面板打开之后：同一个仓库改成快车道 ===')
+console.log('=== 面板打开之后：同一拍核对同时喂饱面板与 chip ===')
 await openPanel()
-const after = lanes().map((t) => t.delay).sort((a, b) => a - b)
-console.log('  活跃轮询间隔：', after.join('ms, ') + 'ms')
-ok('面板一开，这个仓库上就多出一条 3 秒的快车道', after.indexOf(3000) >= 0)
+/* 面板开着（历史页）也不该多出任何轮询定时器：变化只由推送与事件核对发现。 */
+ok('面板开着也没有新增轮询定时器', lanes().length === 0)
 mark = calls.length
 watchSig = 'SIG-C'
 OK_PANEL.branch = 'main'
-tick()
+await beat()
 await wait(40)
 const back = await settle()
 ok('面板开着时切回去，chip 与面板同时跟上', labelOf(await chipTree()) === 'main' && textOf(back).indexOf('main') >= 0)
-ok('快车道那一次也仍然先 flush', methodsSince(mark).indexOf('git/flush') >= 0)
+ok('事件核对发现变化也仍然先 flush', methodsSince(mark).indexOf('git/flush') >= 0)
 
 console.log('')
 console.log('=== 页面被切到后台，再切回来 ===')
 fakeDoc.hidden = true
 mark = calls.length
-tick()
+await beat()
 await wait(30)
-ok('页面在后台时不轮询', methodsSince(mark).indexOf('git/watch') < 0)
+ok('页面在后台时连事件核对也跳过（藏着不读）', methodsSince(mark).filter((c) => c.method === 'git/watch').length === 0)
+beatClock(4)
+await wait(20)
+ok('后台空转时钟也不产生任何核对（没有轮询兜底）',
+  methodsSince(mark).filter((c) => c.method === 'git/watch').length === 0)
 watchSig = 'SIG-D'
 OK_PANEL.branch = 'release/3.1'
 fakeDoc.hidden = false
 mark = calls.length
 fakeDoc.fire('visibilitychange')
 await wait(40)
-ok('切回页面立刻对一次签名，不用等下一个间隔', methodsSince(mark).indexOf('git/watch') >= 0)
+ok('切回页面立刻对一次签名（回可见触发的一轮 tickAll）', methodsSince(mark).indexOf('git/watch') >= 0)
 ok('对完发现仓库动了，chip 立刻跟上', labelOf(await chipTree()) === 'release/3.1')
 mark = calls.length
 fakeDoc.fire('visibilitychange')
@@ -409,7 +434,7 @@ ok('仓库没动时切回来也不会白读一遍', methodsSince(mark).indexOf('
    过一会才出来」。这一节盯住那个瞬间。 */
 
 console.log('')
-console.log('=== 轮询之后，未提交数量不许先消失 ===')
+console.log('=== 核对发现变化之后，未提交数量不许先消失 ===')
 const beforePanel = host.call
 let fullPending = 3
 let fullGate = null
@@ -439,7 +464,7 @@ ok('第一次完整读之后徽标显示 3', badgeText(s2) === '3' && !/stale/.t
 watchSig = 'SIG-E'
 /* 把完整读按住，才看得见中间那一刻 —— 在真机上那一段是 7 秒，在测试里是 0 微秒 */
 fullGate = true
-tick()
+await beat()
 await wait(40)
 const during = await renderUntilStable(makeElement(chip, { sessionId: 's-2' }), 'chip-s2')
 ok('便宜的第一次读回来后徽标还在，没有先掉到 0', badgeText(during) === '3')
@@ -470,23 +495,23 @@ ok('它自己的完整读回来后就转正了', badgeText(s3done) === '3' && !/
 /* 提交干净之后：数字该变成「没有徽标」，而且不再是核对中的样子 */
 fullPending = 0
 watchSig = 'SIG-G'
-tick()
+await beat()
 await wait(60)
 const clean = await renderUntilStable(makeElement(chip, { sessionId: 's-3' }), 'chip-s3')
 ok('改动清零后徽标消失', badgeOf(clean).length === 0)
 ok('tooltip 这时才说工作区干净', String(clean.props.title).indexOf('工作区干净') >= 0)
 
 console.log('')
-console.log('=== 一个页面里的两个会话：各自轮询自己的工作区 ===')
-/* 没有应用过仓库时，轮询问的是「这个会话自己的工作区」，而每个面板和 chip 都是
+console.log('=== 一个页面里的两个会话：各自核对各自的工作区 ===')
+/* 没有应用过仓库时，核对问的是「这个会话自己的工作区」，而每个面板和 chip 都是
    从这个状态开始的。按仓库路径当键的时候，这个状态只有一个条目：两个会话先后
-   把自己的 id 写进去，最后一个赢 —— 另一个会话于是去轮询别人的工作区，自己改
-   了看不见，别人改了自己重读。键里带上会话，一个 tick 就该问出两个 id。 */
+   把自己的 id 写进去，最后一个赢 —— 另一个会话于是去核对别人的工作区，自己改
+   了看不见，别人改了自己重读。键里带上会话，一拍核对就该问出两个 id。 */
 const beforeTwo = calls.length
 await renderUntilStable(makeElement('div', null,
   makeElement(chip, { sessionId: 's-A', key: 'a' }),
   makeElement(chip, { sessionId: 's-B', key: 'b' })), 'two-chips')
-tick()
+await beat()
 await wait(40)
 const askedSessions = since(beforeTwo).filter((c) => c.method === 'git/watch').map((c) => c.args.sessionId)
 console.log('  这一轮问过的会话:', JSON.stringify(askedSessions))
@@ -494,7 +519,7 @@ ok('两个会话各问各的（不是同一个 id 问两遍）',
   askedSessions.indexOf('s-A') >= 0 && askedSessions.indexOf('s-B') >= 0)
 
 console.log('')
-console.log('=== 轮询的监听者按「注册」记，不按「回调函数」记 ===')
+console.log('=== 核对的监听者按「注册」记，不按「回调函数」记 ===')
 /* chip 和面板要的是同一个回调（bumpData），而以回调为键的 Set 会把两次注册并成
    一条：先注销的那个把另一个的通知、以及以「还有没有人在看」为准的定时器一起带走。
    面板不再认为这是仓库时必然如此；只是关掉面板时，谁先谁后取决于浏览器里两个 slot
@@ -511,9 +536,9 @@ ok('通知时把每个注册的回调都调一遍',
 
 console.log('')
 console.log('=== 面板里打开另一个目录之后，chip 要看的是那个目录 ===')
-/* chip 的读和轮询都拿「会话自己的工作区」当入参，而这个入参以前不随面板里应用的
-   目录变化：面板已经在新仓库上按 3 秒轮询，chip 还在问一个不是仓库的目录，签名
-   永远不变 —— 面板反应过来了，对话框上的图标一直不动。 */
+/* chip 的读和核对都拿「会话自己的工作区」当入参，而这个入参以前不随面板里应用的
+   目录变化：面板已经在新仓库上核对，chip 还在问一个不是仓库的目录，签名永远
+   不变 —— 面板反应过来了，对话框上的图标一直不动。 */
 /* 上面那一段把 host.call 换成了它自己的 git/panel 回答（都是「是仓库」）。这里
    再套一层：这个会话自己的工作区不是仓库，而面板里打开的目录是 —— 这正是用户在
    引导页上「打开这个目录」之后的状态。 */
@@ -572,8 +597,8 @@ openHere.props.onClick()
 await wait(30)
 await chipTree()
 mark = calls.length
-tick()
+await beat()
 await wait(40)
 const askedAfterApply = since(mark).filter((c) => c.method === 'git/watch').map((c) => c.args)
 console.log('  chip 这一轮问的入参:', JSON.stringify(askedAfterApply))
-ok('chip 轮询的是面板里打开的那个目录', askedAfterApply.some((a) => a.repo === '/tmp/applied'))
+ok('chip 核对的是面板里打开的那个目录', askedAfterApply.some((a) => a.repo === '/tmp/applied'))

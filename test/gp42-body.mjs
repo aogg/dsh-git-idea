@@ -2143,9 +2143,11 @@ ok('开关自己的框亮了（dsh-git-cbox-on / ☑，与变更树同一套 cla
   crBoxNow !== undefined && String(crBoxNow.props.className).indexOf('dsh-git-cbox-on') >= 0
   && textOf(crBoxNow) === '☑')
 ok('切换只重画不重发：git/diff 一次都没多问', diffCalls.length === crCallsBefore)
-ok('设置写进了存储层且经过 normalizeSettings：diffShowCr 为 true，其余默认值一并就位',
+/* watch 设置组已删除：normalizeSettings 不再产出 watch* 键，落盘 JSON 里没有它们
+   （等价于旧断言里「watchEnabled/watchFastSec/watchSlowSec 默认值一并就位」）。 */
+ok('设置写进了存储层且经过 normalizeSettings：diffShowCr 为 true，watch* 键不再存在',
   crStoreOf() !== null && crStoreOf().diffShowCr === true
-  && crStoreOf().watchEnabled === true && crStoreOf().watchFastSec === 3 && crStoreOf().watchSlowSec === 5)
+  && crStoreOf().watchEnabled === undefined && crStoreOf().watchFastSec === undefined && crStoreOf().watchSlowSec === undefined)
 
 /* 再点一下回到默认：⏎ 消失，diffShowCr 存回 false，git/diff 还是一次没多问。 */
 press(byClass(tree, 'dsh-git-diffcr')[0], 'onClick')

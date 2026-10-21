@@ -542,12 +542,19 @@ host.call = function (method, args) {
   if (method === 'git/watch') return Promise.resolve({ ok: true, repo: '/tmp/ws', sig: watchSig })
   return realCall(method, args)
 }
-/* 走真实路径：后台监测发现仓库变了 → flush + 通知所有表面重读 */
-const iv = timers.filter((t) => t.kind === 'interval' && !t.dead)[0]
-iv.cb()
+/* 推送化之后没有定时器轮询（本套件的加载现场就没有 liveBus，正是 bridge 版）：
+ * 先把假时钟摇光 —— 0 次 git/watch，证明没有轮询兜底；变化改由事件驱动的
+ * 一拍核对发现（这里用回可见触发，fakeDoc 上的 visibility 监听是挂载时注册的）。 */
+const watchesBefore = calls.filter((c) => c.method === 'git/watch').length
+for (let i = 0; i < 4; i += 1) timers.filter((t) => t.kind === 'interval' && !t.dead).forEach((t) => t.cb())
 await wait(20)
+ok('无 WS 推送也不轮询兜底：摇光时钟，一次 git/watch 都没有',
+  calls.filter((c) => c.method === 'git/watch').length === watchesBefore)
+/* 走真实路径：事件核对发现仓库变了 → flush + 通知所有表面重读 */
+const beat34b = async () => { fakeDoc.hidden = false; fakeDoc.fire('visibilitychange'); await wait(20) }
+await beat34b()
 watchSig = 'SIG-2'
-iv.cb()
+await beat34b()
 await wait(20)
 let t6 = await settle('pop')
 const box6 = byClass(t6, 'dsh-git-bs-check')

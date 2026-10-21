@@ -234,6 +234,17 @@ let graphCommits = [
   { hash: 'bbb222', subject: 'second commit', author: 'mays', date: '2026-09-15', committedAt: nowSec - 3600, refs: [] },
   { hash: 'ccc333', subject: 'third commit', author: 'jiangzx', date: '2026-09-14', committedAt: nowSec - 7200, refs: [] },
 ]
+/* ── 假 liveBus（真包由 client-pre.js 提供）──
+   98-register.js 的推送订阅在插件加载时就发生，所以它必须在加载前就位：watcher 的
+   「变化核对」已推送化（再无定时器轮询），测试用 livePush(...) 模拟宿主的推送
+   （repo-changed / session-complete / cmdlog-start/exit / live-open）。 */
+const liveSubs = []
+globalThis.liveBus = {
+  open() {},
+  close() {},
+  subscribe(cb) { liveSubs.push(cb); return function () { const i = liveSubs.indexOf(cb); if (i >= 0) liveSubs.splice(i, 1) } },
+}
+const livePush = function (message) { liveSubs.slice().forEach(function (cb) { cb(message) }) }
 const registered = []
 const slots = { inject: (k, cb) => cb(), register: (o, c) => { registered.push({ options: o, component: c }); return () => {} } }
 const ctx = {
@@ -373,16 +384,15 @@ const lanes = () => timers.filter((t) => t.kind === 'interval' && t.dead !== tru
 const laneDelays = () => lanes().map((t) => t.delay).sort((a, b) => a - b)
 const pendingTimeouts = () => timers.filter((t) => t.kind === 'timeout' && t.dead !== true)
 const fireTimeouts = () => pendingTimeouts().forEach((t) => { t.dead = true; t.cb() })
-/* 只推轮询那两条 lane（3 秒 / 5 秒）：面板那个「多久整棵树重来一遍」的时钟是另一件
-   事 —— 它自己到点就会发一次全树读，测试要分开看这两件事。 */
-const watcherLanes = () => lanes().filter((t) => t.delay <= 5000)
-const tick = () => watcherLanes().forEach((t) => t.cb())
-/* 第一个 tick 只记下签名（打开面板不白读一遍），第二个才看得见变化。 */
+/* 推送化之后 watcher 一条轮询 lane 都不排了：核对的两拍由 live-open（（重）连）
+   触发（98-register.js），面板那个「多久整棵树重来一遍」的时钟是另一件事 ——
+   它自己到点就会发一次全树读，测试要分开看这两件事。 */
+/* 第一拍只记下签名（不白读一遍数据），签名变了之后的第二拍才看得见变化。 */
 const bump = async function (sig) {
-  tick()
+  livePush({ kind: 'live-open' })
   await wait(30)
   watchSig = sig
-  tick()
+  livePush({ kind: 'live-open' })
   await wait(30)
 }
 const shape = (c) => (c.args != null && c.args.quick === true ? '身份'
@@ -452,7 +462,7 @@ console.log('')
 console.log('=== 在面板里提交：确认读也只有那些路径 ===')
 await clickIn(seen.panel, '变更')
 seen = await repaint()
-console.log('  活跃轮询间隔:', JSON.stringify(laneDelays()))
+console.log('  活跃定时器:', JSON.stringify(laneDelays()))
 ok('「变更」页开着，面板那个时钟才起，读得快时停在下限 30 秒', laneDelays().indexOf(30000) >= 0)
 const box = collect(seen.panel).find((n) => n.type === 'textarea')
 ok('变更页上有提交信息框', box !== undefined)
@@ -482,7 +492,7 @@ await clickIn(seen.panel, '⟳')
 seen = await repaint()
 console.log('  刷新按钮的读:', JSON.stringify(shapesSince(mark)))
 ok('⟳ 是明确要求：整棵树重读一次', shapesSince(mark).indexOf('整树') >= 0)
-console.log('  活跃轮询间隔:', JSON.stringify(laneDelays()))
+console.log('  活跃定时器:', JSON.stringify(laneDelays()))
 /* 一次读量的代价越高，下一次来得越晚（8×8 起，上限 5 分钟）。这里同时有两条全树读
    在跑，所以量到的代价比 8 秒还大 —— 断言的是「不再是 30 秒那个下限」。 */
 ok('这一次实测 8 秒，面板的时钟按倍数放大（不再是 30 秒）',

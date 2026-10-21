@@ -571,8 +571,10 @@ const APPLIED_KEY = 'dsh.git-idea.applied-repos'
 const appliedAccount = function () {
   try { return JSON.parse(store[APPLIED_KEY]) } catch (error) { return null }
 }
+/* 推送化之后没有定时器一拍：核对的一拍由 live-open 触发（98-register.js）。
+ * 这里两个插件实例（原实例 + 刷新后那份）都订在同一个假 liveBus 上，一拍都核对。 */
 const tickWatchers = function () {
-  timers.filter((t) => t.kind === 'interval' && t.dead !== true).forEach((t) => t.cb())
+  livePush({ kind: 'live-open' })
 }
 reposReply = { ok: true, workspace: '/tmp/ws', repos: ['/tmp/ws/alpha', '/tmp/ws/beta'], manual: [], missing: [] }
 delete store[APPLIED_KEY]

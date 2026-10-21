@@ -287,8 +287,14 @@ mark = calls.length
 await renderChipE()
 fireTimers(2000)
 await wait(20)
-ok('页面藏着：那一刷不发（回可见时靠既有补读兜底）', callsOf(mark, 'git/flush').filter((c) => c.args.sessionId === 's-c3').length === 0)
+ok('页面藏着：那一刷不发（记成欠账，回可见/live-open 先补）', callsOf(mark, 'git/flush').filter((c) => c.args.sessionId === 's-c3').length === 0)
 fakeDoc.hidden = false
+/* 回可见：先补欠的那一刷（30-watch.js 的 settleOwedCompleteRefresh），再对签名。 */
+mark = calls.length
+fakeDoc.fire('visibilitychange')
+await wait(30)
+ok('回可见先把欠账那一刷补上（s-c3 的 flush 重发）',
+  callsOf(mark, 'git/flush').some((c) => c.args.sessionId === 's-c3'))
 
 console.log('')
 console.log('=== 会话状态 hook 的真契约：选择器进、选择器的返回值出 ===')

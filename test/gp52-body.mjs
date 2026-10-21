@@ -18,12 +18,12 @@
  * 面板的 ↑ 一个数都不动；Host 缓存里的 panel-ident 停在几个提交之前，一次 flush
  * 才回真）：
  *   3. 前端组合没有 timer 服务（部署的 dsh-web-frontend 只 mixin 了 reflect/fiber/
- *      registry/events，ctx.get('timer') 永远 undefined）→ 轮询 watcher 一档都不排，
- *      签名变化永远没人 flush。timerOf() 的 window 定时器兜底让它在无 timer 环境里
- *      照常排班、照常对签名、照常 flush+bump。
- *   4. 页面藏着时会话完成：那一刷过去直接丢，唯一补偿（回可见 watcherTickAll）在
- *      无轮询环境下第一次 tick 只记基线、永远看不到变化 —— 现在记成欠账，回可见
- *      先补那一刷（flush+bump），面板当场换数。
+ *      registry/events，ctx.get('timer') 永远 undefined），bridge 版更连 WS 都没有 ——
+ *      推送化之后核对只由 live-open 与页面回可见驱动，定时器一条都不排：无 timer +
+ *      无 WS 的现场把假时钟摇光也是 0 次 git/watch（故意不设轮询兜底），手动刷新
+ *      那条路照旧能用（第 5 节守着）。
+ *   4. 页面藏着时会话完成：那一刷记成欠账，回可见（或 live-open 重连）先补那一刷
+ *      （flush+bump），面板当场换数。
  *   5. 就算上面全断了，重开面板也不能把 Host 缓存里的旧 ahead 当新的画：开面板
  *      边界只作废 panel-ident/branches 两格缓存并补一次身份读，↑ 校正回来，重开
  *      照旧接近零成本。
@@ -65,8 +65,8 @@ const fireTimers52 = function (delay) {
     if (t.kind === 'timeout' && !t.dead && (delay === undefined || t.delay === delay)) { t.dead = true; t.cb() }
   }
 }
-/* 兜底的轮询是 interval（ctx 的 timer 表里 interval 由 fireTimers52 之外的路管），
- * 单独摇一格。 */
+/* interval 定时器（推送化之后 watcher 一条都不排；这套桩留着当「假时钟」，
+ * 用来证没有定时器触发的 git/watch）。 */
 const fireIntervals52 = function (delay) {
   const list = timers.slice()
   for (const t of list) {
@@ -161,11 +161,13 @@ ok('分支 chip 显示 ↑5', branchChipMarks(tree).some((n) => textOf(n) === '�
 ok('完成补刷也不推送', pushCalls52.length === 0)
 
 console.log('')
-console.log('=== 无 timer 服务的前端：window 定时器兜底，轮询照常对签名 ===')
+console.log('=== 无 timer 服务的前端 + bridge 版没有 WS：也不许有轮询兜底 ===')
 /* 部署的 dsh-web-frontend 组合里没有 timer 服务（ctx.get('timer') 永远 undefined），
- * 过去 watcherSchedule 拿不到 timer 一档都不排 —— 十个提交没人 flush，↑ 冻结在几个
- * 提交之前。把 ctx 的 timer 摘掉、window 的四个定时器全局换成「进 harness 那张表」
- * 的桩，钉 timerOf() 的兜底：interval 照排、tick 照问、签名变了照 flush+bump。 */
+ * bridge 版更连 liveBus 都没有。推送化之后核对只由 live-open 与回可见驱动 —— 故意
+ * 不设轮询兜底：WS 断着，屏幕就让它停着，手动刷新照旧。把 ctx 的 timer 摘掉、
+ * window 的定时器换成「进 harness 那张表」的桩、liveBus 摘掉，再求值一份插件
+ * （gp50 同款「刷新页面」模拟 = 真正的 bridge 加载现场），摇光时钟钉住 0 次
+ * git/watch。 */
 const realGet52 = ctx.get
 const realInterval52 = { setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval }
 let fallbackSeq52 = 0
@@ -182,37 +184,35 @@ globalThis.clearInterval = function (id) {
   const t = fallbackTimers52.get(id)
   if (t != null) t.dead = true
 }
-let running54 = false
-const hooks54 = {
-  useSession: function (sel) { return sel({ running: running54 }) },
-  useSessionStatus: function (sel) { return sel(status52) },
+const realLiveBus52 = globalThis.liveBus
+globalThis.liveBus = undefined
+const registeredF = []
+const ctxF = {
+  get(n) {
+    if (n === 'slots') return { inject: (k, cb) => cb(), register: (o, c) => { registeredF.push({ options: o, component: c }); return () => {} } }
+    return undefined
+  },
+  effect(cb) { const d = cb(); return typeof d === 'function' ? d : () => {} },
 }
-const renderChip54 = () => renderUntilStable(makeElement(chip, Object.assign({ sessionId: 's-1' }, hooks54)), 'chip-54')
-await renderChip54()
-tree = await settle()
-/* 第一摇：仓库还没动，这一下只记基线（老规矩，开面板不白读一遍数据）。 */
+new Function('ctx', 'React', 'host', 'styles', 'console', fs.readFileSync(process.env.GP_SRC || new URL('../client.js', import.meta.url).pathname, 'utf8'))(
+  ctxF, React, host, { insert: () => () => {} }, console).apply(ctxF)
+const chipF = registeredF.find((r) => r.options.id === 'dsh-git-idea-chip').component
+const timersMarkF = timers.length
+await renderUntilStable(makeElement(chipF, { sessionId: 's-1' }), 'chip-fallback')
+ok('无 timer + 无 WS 的现场：挂载不排任何轮询定时器（一条 interval 都不加）',
+  timers.slice(timersMarkF).every((t) => t.kind !== 'interval'))
 mark52 = calls.length
-fireIntervals52(3000)
-await wait(20)
-ok('无 timer 环境里兜底照样排了轮询（面板开着走 3 秒快车道）',
-  timers.filter((t) => t.kind === 'interval' && !t.dead).some((t) => t.delay === 3000))
-ok('第一摇只记基线：仓库没动，一个 flush 都不发', callsOf52(mark52, 'git/flush').length === 0)
-/* agent 提交：仓库 ahead 5 → 7，签名跟着变；下一摇就得追上来。 */
-quickAhead = 7
-workAhead = 7
-watchSig52 = 'SIG2'
-mark52 = calls.length
-fireIntervals52(3000)
-await wait(30)
-tree = await settle()
-ok('兜底的轮询对了一次签名（git/watch 发出去了）', callsOf52(mark52, 'git/watch').length >= 1)
-ok('签名变了照样先 flush（轮询的看家活）', callsOf52(mark52, 'git/flush').length >= 1)
-ok('面板跟上：↑ 角标显示 7', pushToolBadges(tree).some((n) => textOf(n) === '7') === true)
-ok('分支 chip 显示 ↑7', branchChipMarks(tree).some((n) => textOf(n) === '↑7'))
+for (let i = 0; i < 8; i += 1) fireIntervals52()
+await wait(40)
+ok('兜底不轮询：假时钟摇了 8 拍，0 次 git/watch（WS 断着就让它断着）',
+  callsOf52(mark52, 'git/watch').length === 0)
+ok('时钟空转也没有 flush（旧断言「兜底的轮询对了一次签名」就此反转）',
+  callsOf52(mark52, 'git/flush').length === 0)
 /* 摘掉桩：别把这套假定时器带进后面的节。 */
 ctx.get = realGet52
 globalThis.setInterval = realInterval52.setInterval
 globalThis.clearInterval = realInterval52.clearInterval
+globalThis.liveBus = realLiveBus52
 watchSig52 = 'SIG'
 
 console.log('')

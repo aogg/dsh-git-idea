@@ -234,6 +234,17 @@ let graphCommits = [
   { hash: 'bbb222', subject: 'second commit', author: 'mays', date: '2026-09-15', committedAt: nowSec - 3600, refs: [] },
   { hash: 'ccc333', subject: 'third commit', author: 'jiangzx', date: '2026-09-14', committedAt: nowSec - 7200, refs: [] },
 ]
+/* ── 假 liveBus（真包由 client-pre.js 提供）──
+   98-register.js 的推送订阅在插件加载时就发生，所以它必须在加载前就位：watcher 的
+   「变化核对」已推送化（再无定时器轮询），测试用 livePush(...) 模拟宿主的推送
+   （repo-changed / session-complete / cmdlog-start/exit / live-open）。 */
+const liveSubs = []
+globalThis.liveBus = {
+  open() {},
+  close() {},
+  subscribe(cb) { liveSubs.push(cb); return function () { const i = liveSubs.indexOf(cb); if (i >= 0) liveSubs.splice(i, 1) } },
+}
+const livePush = function (message) { liveSubs.slice().forEach(function (cb) { cb(message) }) }
 const registered = []
 const slots = { inject: (k, cb) => cb(), register: (o, c) => { registered.push({ options: o, component: c }); return () => {} } }
 const ctx = {

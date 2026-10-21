@@ -234,6 +234,17 @@ let graphCommits = [
   { hash: 'bbb222', subject: 'second commit', author: 'mays', date: '2026-09-15', committedAt: nowSec - 3600, refs: [] },
   { hash: 'ccc333', subject: 'third commit', author: 'jiangzx', date: '2026-09-14', committedAt: nowSec - 7200, refs: [] },
 ]
+/* ── 假 liveBus（真包由 client-pre.js 提供）──
+   98-register.js 的推送订阅在插件加载时就发生，所以它必须在加载前就位：watcher 的
+   「变化核对」已推送化（再无定时器轮询），测试用 livePush(...) 模拟宿主的推送
+   （repo-changed / session-complete / cmdlog-start/exit / live-open）。 */
+const liveSubs = []
+globalThis.liveBus = {
+  open() {},
+  close() {},
+  subscribe(cb) { liveSubs.push(cb); return function () { const i = liveSubs.indexOf(cb); if (i >= 0) liveSubs.splice(i, 1) } },
+}
+const livePush = function (message) { liveSubs.slice().forEach(function (cb) { cb(message) }) }
 const registered = []
 const slots = { inject: (k, cb) => cb(), register: (o, c) => { registered.push({ options: o, component: c }); return () => {} } }
 const ctx = {
@@ -2440,9 +2451,11 @@ ok('开关自己的框亮了（dsh-git-cbox-on / ☑，与变更树同一套 cla
   crBoxNow !== undefined && String(crBoxNow.props.className).indexOf('dsh-git-cbox-on') >= 0
   && textOf(crBoxNow) === '☑')
 ok('切换只重画不重发：git/diff 一次都没多问', diffCalls.length === crCallsBefore)
-ok('设置写进了存储层且经过 normalizeSettings：diffShowCr 为 true，其余默认值一并就位',
+/* watch 设置组已删除：normalizeSettings 不再产出 watch* 键，落盘 JSON 里没有它们
+   （等价于旧断言里「watchEnabled/watchFastSec/watchSlowSec 默认值一并就位」）。 */
+ok('设置写进了存储层且经过 normalizeSettings：diffShowCr 为 true，watch* 键不再存在',
   crStoreOf() !== null && crStoreOf().diffShowCr === true
-  && crStoreOf().watchEnabled === true && crStoreOf().watchFastSec === 3 && crStoreOf().watchSlowSec === 5)
+  && crStoreOf().watchEnabled === undefined && crStoreOf().watchFastSec === undefined && crStoreOf().watchSlowSec === undefined)
 
 /* 再点一下回到默认：⏎ 消失，diffShowCr 存回 false，git/diff 还是一次没多问。 */
 press(byClass(tree, 'dsh-git-diffcr')[0], 'onClick')

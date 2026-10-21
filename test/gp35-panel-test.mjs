@@ -225,10 +225,19 @@ const chipClose = async () => {
   if (t.props.className.indexOf('dsh-git-chip-open') >= 0) { t.props.onClick(); await wait(10) }
   await settle('pop')
 }
-const tick = async () => {
-  const iv = timers.filter((t) => t.kind === 'interval' && !t.dead)[0]
-  iv.cb()
+/* 推送化之后没有定时器一拍：核对的一拍由事件驱动（回可见触发的 watcherTickAll，
+ * 30-watch.js）。本套件的加载现场没有 liveBus，正是 bridge 版 —— 先把假时钟摇光，
+ * 证明没有轮询兜底；「tick」改叫「beat」。 */
+const beat = async () => {
+  fakeDoc.hidden = false
+  fakeDoc.fire('visibilitychange')
   await wait(25)
+}
+const noTimerWatch = async () => {
+  const before = calls.filter((c) => c.method === 'git/watch').length
+  for (let i = 0; i < 4; i += 1) timers.filter((t) => t.kind === 'interval' && !t.dead).forEach((t) => t.cb())
+  await wait(20)
+  return calls.filter((c) => c.method === 'git/watch').length === before
 }
 
 console.log('== 打开面板：第一次要读全，之后不该再读 ==')
@@ -247,12 +256,13 @@ ok('不动它时不再重读', calls.length === 0)
 console.log('')
 console.log('== 关掉面板后，仓库变化不再让隐藏面板重读 ==')
 await chipClose()
-await tick()
+ok('关着面板也不轮询兜底：摇光时钟，一次 git/watch 都没有', await noTimerWatch())
+await beat()
 calls.length = 0
 watchSig = 'SIG-2'
-await tick()
+await beat()
 console.log('  变化后发出的 RPC:', JSON.stringify(calls.map((c) => c.method)))
-ok('确实发现了变化（问了 watch）', calls.some((c) => c.method === 'git/watch'))
+ok('确实发现了变化（事件核对问了 watch）', calls.some((c) => c.method === 'git/watch'))
 ok('也把缓存清了', calls.some((c) => c.method === 'git/flush'))
 ok('但隐藏面板没有重读历史', heavy().length === 0)
 

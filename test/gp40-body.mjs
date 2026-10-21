@@ -20,17 +20,22 @@ ok('老 mru 键不再被读取', String(store['dsh.git-idea.mru'] || '').indexOf
 ok('老键没有被改写（也不再被复制）', store['dsh.gitops.mru'] === JSON.stringify(['legacy-branch']))
 ok('新键里的既有内容原样保留', JSON.parse(store['dsh.git-idea.stars'])[0] === 'already-new')
 
-/* 改一个设置：写进的就是新键，而且写的是默认值而不是老键里的 7 秒。
-   设置页已经搬进面板「配置」页的「全局配置」档（79-globalconfig.js），这里从
-   面板走同一条路。最后一个勾选框属于「本浏览器」（悬停切换）：拨它不影响后面的
-   用例 —— watchEnabled 关掉的话整个套件后半段都不会再有轮询了，头一个不能碰。 */
+/* 改一个设置：写进的就是新键，老键里的 watch* 三个键 normalize 后静默丢弃、
+   保存时不回写。设置页已经搬进面板「配置」页的「全局配置」档（79-globalconfig.js），
+   这里从面板走同一条路。最后一个勾选框属于「本浏览器」（悬停切换）：拨它不影响
+   后面的用例 —— 监听/自动刷新那一组设置已整个删除，头一个不能碰的换成了它。 */
 const settingsTree = await openConfig('global', 'gp40-store')
 const localBoxes = inputs(settingsTree).filter((n) => n.props.type === 'checkbox')
 localBoxes[localBoxes.length - 1].props.onChange({ target: { checked: false } })
 await wait(10)
 const savedSettings = JSON.parse(store['dsh.git-idea.settings'])
 ok('设置写进 dsh.git-idea.settings', savedSettings.hoverSwitch === false)
-ok('写进去的是默认值，不是老键里的 7 秒', savedSettings.watchFastSec === 3)
+/* 新契约：watch 设置组不存在（watchEnabled/watchFastSec/watchSlowSec 已从
+   SETTINGS 删除），老配置里的 watch* 键被 normalize 静默丢弃，落盘的 JSON 里
+   也不该再出现 —— 等价于旧断言「写的是默认值，不是老键里的 7 秒」。 */
+ok('watch* 老键丢弃且不回写：保存的设置里再没有它们',
+  savedSettings.watchFastSec === undefined && savedSettings.watchSlowSec === undefined
+  && savedSettings.watchEnabled === undefined)
 
 /* 页面拒绝存储时：配置页照样渲染，写入不抛错 */
 const realStorage = fakeDoc.defaultView.localStorage
@@ -364,7 +369,7 @@ const noSelection = await settle()
 const emptyPane = byClass(noSelection, 'dsh-git-detail-empty')
 ok('右栏空态有自己的版式', emptyPane.length === 1 && textOf(emptyPane[0]).indexOf('选择一个提交') >= 0 && textOf(emptyPane[0]).indexOf('未选择提交') >= 0)
 
-/* ── 7. 加载更多 + 面板分两段读 + 轮询按需加深 ── */
+/* ── 7. 加载更多 + 面板分两段读 + 核对按需加深 ── */
 
 console.log('')
 console.log('== 加载更多 / 分两段读 ==')
@@ -409,24 +414,30 @@ const changesTab = await settle()
 const panelAsks = calls.filter((c) => c.method === 'git/panel')
 ok('切到变更页时先发便宜的身份读', panelAsks.length >= 1 && panelAsks[0].args.quick === true)
 
-/* ── 轮询：历史页用便宜的签名；变更页的深读只问屏幕上那些路径 ──
+/* ── 核对：历史页用便宜的签名；变更页的深读只问屏幕上那些路径 ──
 
-   整棵树的 `git status` 在慢挂载上是 7.4s（README 里那组数字），而这个 tick 隔
-   几秒就跑一次：探针比间隔还长，挂载就没有休息的时候，旁边的分支列表和日志都
-   在排队。所以深读带的是 pathspec，路径来自面板正在显示的那份快照；一份什么都
-   没有的快照没有可看的路径，深读就交给面板自己的整树时钟（见「深读问哪些路径」）。 */
+   推送化之后这一问不再隔几秒跑一次：只有 live-open（（重）连）与页面回可见各触发
+   一拍核对，其余时候一声不吭。深读带的是 pathspec，路径来自面板正在显示的那份
+   快照；一份什么都没有的快照没有可看的路径，深读就交给面板自己的整树时钟
+   （见「深读问哪些路径」）。 */
 buttons(changesTab).find((b) => textOf(b) === '历史').props.onClick()
 await wait(20)
 let logTab = await settle()
-const tickIntervals = async () => {
-  timers.filter((t) => t.kind === 'interval' && t.dead !== true).forEach((t) => t.cb())
+/* 推进假时钟：把活着的 interval 摇 5 拍 —— 旧世界每一拍都问一次签名，新世界
+   一次都不该问。 */
+const advanceClock = async () => {
+  for (let i = 0; i < 5; i += 1) timers.filter((t) => t.kind === 'interval' && t.dead !== true).forEach((t) => t.cb())
   await wait(10)
 }
 const lastWatch = () => calls.filter((c) => c.method === 'git/watch').pop()
 calls.length = 0
-await tickIntervals()
+await advanceClock()
+ok('历史页摇光时钟也没有一次 git/watch（没有定时器触发的核对）',
+  calls.filter((c) => c.method === 'git/watch').length === 0)
+livePush({ kind: 'live-open' })
+await wait(10)
 const watchLog = lastWatch()
-ok('历史页的轮询不带 deep', watchLog !== undefined && watchLog.args.deep === undefined)
+ok('历史页的一拍核对不带 deep', watchLog !== undefined && watchLog.args.deep === undefined)
 
 /* 让面板看到一处改动，它才有路径可交给深读 */
 const panelBeforePaths = host.call
@@ -444,9 +455,10 @@ calls.length = 0
 buttons(logTab).find((b) => textOf(b) === '变更').props.onClick()
 await wait(20)
 const backToChanges = await settle()
-await tickIntervals()
+livePush({ kind: 'live-open' })
+await wait(10)
 const watchChanges = lastWatch()
-ok('变更页的轮询带 deep（要看工作区）', watchChanges !== undefined && watchChanges.args.deep === true)
+ok('变更页的一拍核对带 deep（要看工作区）', watchChanges !== undefined && watchChanges.args.deep === true)
 ok('深读带着屏幕上那些路径（整棵树 7.4s，这些路径 0.5s）',
   Array.isArray(watchChanges.args.paths) && watchChanges.args.paths.indexOf('src/app.js') >= 0)
 ok('路径里还有它所在的目录（旁边新出现的文件同样被看见）',

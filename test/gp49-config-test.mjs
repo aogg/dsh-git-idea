@@ -234,6 +234,17 @@ let graphCommits = [
   { hash: 'bbb222', subject: 'second commit', author: 'mays', date: '2026-09-15', committedAt: nowSec - 3600, refs: [] },
   { hash: 'ccc333', subject: 'third commit', author: 'jiangzx', date: '2026-09-14', committedAt: nowSec - 7200, refs: [] },
 ]
+/* ── 假 liveBus（真包由 client-pre.js 提供）──
+   98-register.js 的推送订阅在插件加载时就发生，所以它必须在加载前就位：watcher 的
+   「变化核对」已推送化（再无定时器轮询），测试用 livePush(...) 模拟宿主的推送
+   （repo-changed / session-complete / cmdlog-start/exit / live-open）。 */
+const liveSubs = []
+globalThis.liveBus = {
+  open() {},
+  close() {},
+  subscribe(cb) { liveSubs.push(cb); return function () { const i = liveSubs.indexOf(cb); if (i >= 0) liveSubs.splice(i, 1) } },
+}
+const livePush = function (message) { liveSubs.slice().forEach(function (cb) { cb(message) }) }
 const registered = []
 const slots = { inject: (k, cb) => cb(), register: (o, c) => { registered.push({ options: o, component: c }); return () => {} } }
 const ctx = {
@@ -584,8 +595,14 @@ mark = calls.length
 await renderChipE()
 fireTimers(2000)
 await wait(20)
-ok('页面藏着：那一刷不发（回可见时靠既有补读兜底）', callsOf(mark, 'git/flush').filter((c) => c.args.sessionId === 's-c3').length === 0)
+ok('页面藏着：那一刷不发（记成欠账，回可见/live-open 先补）', callsOf(mark, 'git/flush').filter((c) => c.args.sessionId === 's-c3').length === 0)
 fakeDoc.hidden = false
+/* 回可见：先补欠的那一刷（30-watch.js 的 settleOwedCompleteRefresh），再对签名。 */
+mark = calls.length
+fakeDoc.fire('visibilitychange')
+await wait(30)
+ok('回可见先把欠账那一刷补上（s-c3 的 flush 重发）',
+  callsOf(mark, 'git/flush').some((c) => c.args.sessionId === 's-c3'))
 
 console.log('')
 console.log('=== 会话状态 hook 的真契约：选择器进、选择器的返回值出 ===')
