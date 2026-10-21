@@ -117,6 +117,15 @@ onRpc('git/branches', function (input) { return branchesSnapshot(input) })
     客户端永远按生效仓库来问（80-panel.js 里跟着 appliedRepo + freshAt 的 effect）。 */
 onRpc('git/worktrees', function (input) { return worktreesSnapshot(input) })
 
+/* worktree 的主目录（65-worktree.js 下半）：git/wt-main 是「这个目录是什么身份、
+    它的主仓库在哪」的一次性读（读缓存 tag 'wt-main'，随整仓失效）；git/wt-main-save
+    把读者纠正过的主目录写进插件配置（70-config.js 的 worktreeMains），答复带最新
+    一份 wt-main 读数。主仓库被删/搬走的 worktree 靠这两条认路 —— 说明页那块
+    WorktreeMainSetup 与配置页的「worktree 主目录」组吃的都是它们。 */
+onRpc('git/wt-main', function (input) { return wtMainSnapshot(input) })
+
+onRpc('git/wt-main-save', function (input) { return saveWorktreeMain(input) })
+
 /* git 忽略项扫描（65-worktree.js 下半，配置页「仓库」组里那个只读分组的数据）：
     一次吃下客户端 shown 清单的**全部仓库**（请求显式带 repos 绝对路径数组，不由
     宿主重新发现 —— 清单就是仓库组的账），逐仓库枚举全部工作树（主工作区 + 链接

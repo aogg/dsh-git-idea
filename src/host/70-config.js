@@ -47,6 +47,13 @@ function normalizeConfig(raw) {
        工作区，草稿还是同一份；客户端 20-prefs.js 那份整配置归一化也照 repos 的
        先例原样搬运它，设置页一次整份保存不至于把草稿抹掉。 */
     drafts: {},
+    /* worktree → 主目录（65-worktree.js 的 saveWorktreeMain 写，wtMainSnapshot 读）。
+       键是链接工作区（worktree/子模块这类 .git 是文件的目录）的绝对路径，值是它
+       指向的主仓库绝对路径。跟 repos 同一个理由：它描述的是「这个项目的这个
+       worktree 属于哪个主仓库」，主仓库被删/搬走后读者手动改对的那个答案必须跟着
+       项目走，而不是跟着某台浏览器；客户端 20-prefs.js 同样照 repos 的先例原样
+       搬运，配置页一次整份保存不至于把手工配置的主目录抹掉。 */
+    worktreeMains: {},
   }
   if (raw == null || typeof raw !== 'object') return out
   if (isStr(raw.initBranch)) out.initBranch = raw.initBranch.trim().slice(0, 120)
@@ -60,6 +67,7 @@ function normalizeConfig(raw) {
   out.repos = normalizeRepoMap(raw.repos)
   out.quickCommands = normalizeQuickCommands(raw.quickCommands)
   out.drafts = normalizeDrafts(raw.drafts)
+  out.worktreeMains = normalizeWorktreeMains(raw.worktreeMains)
   return out
 }
 
@@ -108,6 +116,31 @@ function normalizeRepoMap(raw) {
       if (clean.indexOf(trimmed) < 0) clean.push(trimmed)
     }
     if (clean.length > 0) { out[key] = clean; kept += 1 }
+  }
+  return out
+}
+
+/* worktree → 主目录。清洗口径与 normalizeRepoMap 一致：键（链接工作区的绝对路径）
+   与值（主目录的绝对路径）都必须是「非空字符串 + 以 / 开头」，超长的整条丢掉 ——
+   4096 与 REPO_MAP 同款，是磁盘路径的边界而不是 git 的；条数封顶 64（一个项目的
+   worktree 数远够用了，drafts 的 DRAFT_REPOS_MAX 同一个数）。清洗后为空的映射就
+   存空对象：一个读不出来的条目比一个被悄悄改写过的条目诚实。 */
+const WT_MAIN_MAP_MAX = 64
+const WT_MAIN_PATH_MAX = 4096
+
+function normalizeWorktreeMains(raw) {
+  const out = {}
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return out
+  let kept = 0
+  for (const key in raw) {
+    if (!Object.prototype.hasOwnProperty.call(raw, key)) continue
+    if (kept >= WT_MAIN_MAP_MAX) break
+    const worktree = key.trim()
+    const main = isStr(raw[key]) ? raw[key].trim() : ''
+    if (worktree.charAt(0) !== '/' || worktree.length > WT_MAIN_PATH_MAX) continue
+    if (main.charAt(0) !== '/' || main.length > WT_MAIN_PATH_MAX) continue
+    out[worktree] = main
+    kept += 1
   }
   return out
 }

@@ -34,13 +34,25 @@ const REPO_LIST_MAX = 64
    每个路径现在还是不是一个仓库（逐个 `[ -e "$p"/.git ]`）。合成一次 spawn 是这个
    文件一贯的规矩 —— 通道一次只跑一个处理函数，两次便宜的总比一次便宜加一次贵的好。
    `.git` 既可以是目录（普通仓库）也可以是文件（worktree/submodule 的 gitlink），所以
-   不加 -type；`-prune -print` 让匹配到的 .git 自己也不再往里走。 */
+   不加 -type；`-prune -print` 让匹配到的 .git 自己也不再往里走。
+
+   find 那一半是一只 while-read 管道（v1 只回 `R:<仓库根>`，v1.1 起分两色）：每一行
+   .git 现场判 `[ -f ]` —— 是文件就是 gitlink，仓库根发 `W:`（worktree/子模块，答复
+   的 links 那一列）；是目录或别的就发 `R:`。分色放在管道里而不是读回来再 stat 一遍，
+   是为了让「哪个仓库是链接的」与「有哪些仓库」同一条命令答完，spawn 数一个不加；
+   head 的数量截断仍在管道上游（掐的是 find 的行，while-read 收到的都是完整的行，
+   不会出现半截路径）。while 在管道右侧的子 shell 里跑，只往 stdout 打标记，没有
+   别的状态要带回来。 */
 function reposScanCommand(workspace, manual) {
   const skip = REPO_SCAN_SKIP.map(function (name) { return '-name ' + shq(name) }).join(' -o ')
   const lines = [
     '{ find ' + shq(workspace) + ' -maxdepth ' + String(REPO_SCAN_DEPTH)
       + ' \\( ' + skip + ' \\) -prune -o -name .git -prune -print 2>/dev/null'
-      + ' | head -n ' + String(REPO_SCAN_HEAD) + '; }',
+      + ' | head -n ' + String(REPO_SCAN_HEAD)
+      + ' | while IFS= read -r p; do',
+    'case "$p" in */.git) ;; *) continue ;; esac',
+    'if [ -f "$p" ]; then printf \'W:%s\\n\' "${p%/.git}"; else printf \'R:%s\\n\' "${p%/.git}"; fi',
+    'done; }',
   ]
   for (let i = 0; i < manual.length; i += 1) {
     const quoted = shq(manual[i])
@@ -65,13 +77,15 @@ function manualReposOf(config, workspace) {
 
 /* 读一遍：扫描 + 合并手动清单。手动清单里已经不在（或已不是仓库）的路径单独放在
    `missing` 里 —— 配置是持久化的，目录会被删掉；这里宁可报出来让人移除，也不能让
-   一条死路径把面板弄崩。 */
+   一条死路径把面板弄崩。扫描那半现在带颜色（reposScanCommand）：R=普通仓库、
+   W=`.git` 是文件的仓库（worktree/子模块），两色都进 repos，W 的根另外进 `links`
+   —— 客户端在仓库行旁标一个「wt」小标，说明这一行不是独立仓库而是链接工作区。 */
 async function readWorkspaceRepos(input) {
   /* 扫的是**会话自己的工作区**，不是当前生效的仓库：读操作按 repo 参数化之后，
      面板可能正看着工作区外的某个路径，而仓库清单跟随的是项目本身。 */
   const workspace = sessionWorkdir(input)
   if (workspace === undefined) {
-    return { ok: false, error: 'no-path', workspace: null, repos: [], manual: [], missing: [] }
+    return { ok: false, error: 'no-path', workspace: null, repos: [], manual: [], missing: [], links: [] }
   }
   const config = await readConfigFile()
   const manual = manualReposOf(config, workspace)
@@ -79,11 +93,12 @@ async function readWorkspaceRepos(input) {
      发生，可一旦发生不该把后面的请求都堵到默认的 120s。 */
   const probe = await invoke(reposScanCommand(workspace, manual), argsAt(input, sessionWorkdir(input)), null, { timeoutMs: 30000 })
   if (probe.exitCode !== 0 && probe.stdout.length === 0) {
-    return { ok: false, error: 'scan-failed', workspace: workspace, repos: [], manual: manual, missing: [],
+    return { ok: false, error: 'scan-failed', workspace: workspace, repos: [], manual: manual, missing: [], links: [],
       stderr: probe.stderr.slice(0, 400), sandboxDenied: probe.sandboxDenied === true }
   }
   const found = []
   const gone = []
+  const linked = []
   const rows = probe.stdout.split('\n')
   for (let i = 0; i < rows.length; i += 1) {
     const row = rows[i]
@@ -95,20 +110,27 @@ async function readWorkspaceRepos(input) {
       else if (row.charAt(0) === 'G') gone.push(path)
       continue
     }
-    /* find 那一半：打印的是 .git 的路径，仓库根是它的父目录。输出被 head 截断过
-       的话最后一行可能只剩半截 —— 不以 /.git 结尾的行直接丢掉，宁少勿错。 */
-    if (row.slice(-5) !== '/.git') continue
-    const root = row.slice(0, -5)
-    if (root.length > 0 && found.indexOf(root) < 0) found.push(root)
+    /* find 那一半（管道里已经判完 [ -f ]）：R=普通仓库，W=.git 是文件的仓库根。
+       输出被通道截断的话最后一行可能只剩半截 —— 不以 R:/W: 开头、或根为空的行
+       直接丢掉，宁少勿错。 */
+    const kind = row.charAt(0) === 'R' || row.charAt(0) === 'W' ? row.charAt(0) : ''
+    if (kind === '') continue
+    const root = row.slice(2)
+    if (root.length === 0 || root.charAt(0) !== '/') continue
+    if (found.indexOf(root) < 0) found.push(root)
+    if (kind === 'W' && linked.indexOf(root) < 0) linked.push(root)
   }
   found.sort()
   gone.sort()
+  linked.sort()
   return {
     ok: true, workspace: workspace,
     /* 合并、去重、按路径排序：列表的顺序是路径的性质，不是 git 回答的顺序。 */
     repos: found.slice(0, REPO_LIST_MAX),
     manual: manual,
     missing: gone,
+    /* links 与 repos 同一套排序与封顶：清单是给人读的，顺序稳定比什么都要紧。 */
+    links: linked.slice(0, REPO_LIST_MAX),
     truncated: found.length > REPO_LIST_MAX,
   }
 }

@@ -86,6 +86,291 @@ async function worktreesSnapshot(input) {
   return await cached(repo, 'worktrees', function () { return readWorktrees(input, repo) })
 }
 
+/* ─────────────── worktree 的主目录（读 + 配置）─────────────── */
+
+/* 「这个 worktree 属于哪个主仓库」的读数（git/wt-main）与配置（git/wt-main-save）。
+
+   背景（真机实测）：dsh 把一个 worktree 目录当会话工作区打开时，目录里的 .git 是
+   一个**文件**（gitlink，内容 `gitdir: <主目录>/.git/worktrees/<名>`）。主仓库被删
+   /搬走后 rev-parse 直接失败（fatal: not a git repository），而 62-panel.js 的
+   repoHere 只判 `[ -e dir/.git ]` —— 判真，git 却读不动，面板于是落到说明页的
+   'not-a-repo'，那一页 editable:false：读者既看不出这是 worktree，也没有任何地方
+   能把「主目录现在在哪」告诉面板。这两条 RPC 就是补那个洞：读的那条把目录身份
+   （linked / main / bare / plain / broken-gitlink / missing / file）、gitlink 原文、
+   git 与文件系统各答的主目录候选一次带回；写的那条把读者纠正过的主目录存进插件
+   配置（70-config.js 的 worktreeMains，按 worktree 绝对路径一钩一份），下次读数
+   的 mainSource 就是 'config'，git 那头死活都不影响面板认路。
+
+   边界（one directory, no discovery，62-panel.js 的教条）：只看 target 这**一个**
+   目录，绝不向上找父目录 —— git rev-parse 在非仓库目录里会替你找爸爸，答出另一个
+   项目的分支，所以 git 那一半全部用 `-C <target>` 显式钉死；gitlink 的文本解析也
+   只匹配 `^(.*)/\.git/worktrees/[^/]+$` 这一种形状，配不上就 null，不猜。 */
+
+/* 一次 spawn 答完所有问题（62-panel.js pathShell 同款的多路复用 stdout 标记风格；
+   通道一次只跑一个处理函数，两趟便宜的不如一趟全的）。分段：
+     K:   目标存在性（dir/file/none，口径同 pathShell）
+     GT:  .git 的类型（dir=目录 / file=gitlink / none=没有）
+     G:   gitlink 文件的第一行原文（只有 GT:file 才有）
+     AM:  从 gitlink 文本解出的主目录候选（`^(.*)/\.git/worktrees/[^/]+$` 第 1 组）
+     AC:  [ -e "$AM/.git" ] 的答案（broken-gitlink 时 mainOk 的依据）
+     MC:  [ -e "<配置里记的主目录>/.git" ] 的答案（只在配置里真有值时才发这一行）
+     N:   机器上没有 git（PANEL_NO_GIT 同一个标记字）
+     GD:  `git rev-parse --absolute-git-dir` 的答案；GRC: 带出它的退出码
+     CD:  `--path-format=absolute --git-common-dir`，失败退化 `--git-common-dir`
+          后手动绝对化（老 git 不认 --path-format，实测 2.25 一类直接报 unknown
+          option，stdout 为空正好落进退化分支）
+     LC:  CD 去尾部 /.git 之后的那个目录 [ -e <它>/.git ] 的答案（linked 时 mainOk）
+     TL:  `git rev-parse --show-toplevel` 的答案（bare 仓库没有，空串）
+     WT-BEGIN … WT-END:<rc>：`git worktree list --porcelain` 的原文（porcelain 的
+          行只会以 worktree /HEAD /branch /bare /detached /locked /prunable 开头或
+          为空，撞不上上面任何标记；rc 非 0 整段作废）。
+   git 那一半只在「目录存在且里面有 .git」时才跑（missing/file/plain 不必跑，省
+   一趟；file 目标里不可能有 .git，条件自然盖住）。git 的报错走 stderr 原样带回，
+   不 2>&1 混进值里。 */
+function wtMainProbeCommand(target, configured) {
+  const lines = [
+    'T=' + shq(target),
+    'if [ -d "$T" ]; then printf \'K:dir\\n\'',
+    'elif [ -f "$T" ]; then printf \'K:file\\n\'',
+    'else printf \'K:none\\n\'',
+    'fi',
+    'gt=\'\'',
+    'if [ -d "$T/.git" ]; then gt=\'dir\'; printf \'GT:dir\\n\'',
+    'elif [ -f "$T/.git" ]; then gt=\'file\'; printf \'GT:file\\n\'',
+    'else gt=\'none\'; printf \'GT:none\\n\'',
+    'fi',
+    'am=\'\'',
+    'if [ "$gt" = \'file\' ]; then',
+    '  gl=$(head -n 1 "$T/.git" 2>/dev/null)',
+    '  printf \'G:%s\\n\' "$gl"',
+    '  q=\'\'',
+    '  case "$gl" in',
+    '    \'gitdir: \'*) p=${gl#gitdir: }',
+    '      case "$p" in */*) q=${p%/*} ;; esac',
+    '    ;;',
+    '  esac',
+    '  case "$q" in */.git/worktrees) am=${q%/.git/worktrees} ;; esac',
+    'fi',
+    'printf \'AM:%s\\n\' "$am"',
+    'if [ -n "$am" ] && [ -e "$am/.git" ]; then printf \'AC:1\\n\'; else printf \'AC:0\\n\'; fi',
+  ]
+  /* 配置里的主目录是「读者亲自纠正过的答案」：它的存在性必须按它自己验，不能拿
+     gitlink 推出来的候选冒充 —— 两者完全可以不同（主仓库搬走后配置指向新家）。 */
+  if (isStr(configured) && configured.length > 0) {
+    lines.push('if [ -e ' + shq(configured) + '/.git ]; then printf \'MC:1\\n\'; else printf \'MC:0\\n\'; fi')
+  }
+  lines.push(
+    'if command -v ' + gitCmd() + ' >/dev/null 2>&1; then',
+    '  if [ "$gt" != \'none\' ]; then',
+    '    gd=$(' + gitCmd() + ' -C "$T" rev-parse --absolute-git-dir 2>/dev/null); grc=$?',
+    '    printf \'GD:%s\\n\' "$gd"',
+    '    printf \'GRC:%s\\n\' "$grc"',
+    '    cdp=$(' + gitCmd() + ' -C "$T" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)',
+    '    case "$cdp" in',
+    '      /*) ;;',
+    '      \'\')',
+    '        cdp=$(' + gitCmd() + ' -C "$T" rev-parse --git-common-dir 2>/dev/null)',
+    '        case "$cdp" in /*) ;; \'\') ;; *) cdp="$T/$cdp" ;; esac',
+    '      ;;',
+    '      *) cdp="$T/$cdp" ;;',
+    '    esac',
+    '    printf \'CD:%s\\n\' "$cdp"',
+    '    lm=\'\'',
+    '    case "$cdp" in */.git) lm=${cdp%/.git} ;; esac',
+    '    if [ -n "$lm" ] && [ -e "$lm/.git" ]; then printf \'LC:1\\n\'; else printf \'LC:0\\n\'; fi',
+    '    tl=$(' + gitCmd() + ' -C "$T" rev-parse --show-toplevel 2>/dev/null)',
+    '    printf \'TL:%s\\n\' "$tl"',
+    '    if [ "$grc" = \'0\' ]; then',
+    '      printf \'WT-BEGIN\\n\'',
+    '      ' + gitCmd() + ' -C "$T" -c core.quotePath=false worktree list --porcelain',
+    '      printf \'WT-END:%s\\n\' "$?"',
+    '    fi',
+    '  fi',
+    'else',
+    '  printf \'N:nogit\\n\'',
+    'fi',
+    'exit 0',
+  )
+  return lines.join('\n')
+}
+
+/* kind 判定与答复的拼装（wtMainProbeCommand 的 stdout → 答复）。固定口径：
+     · target 非目录 → 'missing'（是文件 → 'file'）——都到不了 git 那一段；
+     · .git 是目录 → 'main'（mainDir auto=target；不需要 git 认同）；
+     · .git 是文件且 git 读得动：commonDir === gitdir → 'main'（子模块就是这种，
+       主目录=它自己）；commonDir 以 /.git 结尾 → 'linked'（mainDir auto = 去掉
+       尾巴的那段）；否则 → 'bare'（mainDir auto=null）；
+     · .git 是文件但 git 读不动（命令不存在 / rev-parse 失败）→ 'broken-gitlink'
+       （mainDir auto = gitlink 文本配得上的第 1 组，配不上=null）；
+     · 目录在、里面没有 .git → 'plain'。
+   绝不向上找父目录；mainDir = 配置里的 ?? 自动找到的，mainSource 相应取
+   'config'/'auto'，两边都没有就 null。 */
+async function readWtMain(input, repo) {
+  const target = repo === undefined || repo === null ? sessionWorkdir(input) : repo
+  const empty = { kind: 'missing', gitlink: '', gitdir: '', commonDir: '', toplevel: '',
+    mainDir: null, mainSource: null, configured: null, mainOk: false, worktrees: [], gitMissing: false, stderr: '' }
+  if (!isStr(target) || target.length === 0) {
+    return Object.assign({ ok: false, error: 'no-path', repo: null }, empty)
+  }
+  const config = await readConfigFile()
+  const raw = config != null && config.worktreeMains != null ? config.worktreeMains[repoKeyOf(target)] : undefined
+  const configured = isStr(raw) && raw.trim().length > 0 ? raw.trim() : null
+  /* cwd 是会话自己的工作区，不是被探测的路径 —— 目标不存在时 spawn 本身会先死，
+     62-panel.js probeShell 的同一条规矩。 */
+  const probe = await probeShell(input, wtMainProbeCommand(target, configured))
+  if (probe.exitCode !== 0 && probe.stdout.length === 0) {
+    return Object.assign({ ok: false, error: 'probe-failed', repo: target }, empty,
+      { stderr: probe.stderr.slice(0, 400), sandboxDenied: probe.sandboxDenied === true })
+  }
+
+  let dirKind = 'none'
+  let gitType = 'none'
+  let gitlink = ''
+  let autoFromGitlink = ''
+  let autoFromGitlinkOk = false
+  let configuredOk = false
+  let gitdir = ''
+  let gitRc = -1
+  let commonDir = ''
+  let linkedOk = false
+  let toplevel = ''
+  let gitMissing = false
+  let porcelain = null
+  let porcelainOpen = false
+  let porcelainRc = -1
+  const rows = probe.stdout.split('\n')
+  for (let i = 0; i < rows.length; i += 1) {
+    const row = rows[i]
+    if (porcelainOpen) {
+      if (row.indexOf('WT-END:') === 0) { porcelainRc = parseInt(row.slice(7), 10) || 0; porcelainOpen = false }
+      else if (porcelain !== null) porcelain.push(row)
+      continue
+    }
+    if (row.indexOf('K:') === 0) dirKind = row.slice(2)
+    else if (row.indexOf('GT:') === 0) gitType = row.slice(3)
+    else if (row.indexOf('G:') === 0) gitlink = row.slice(2)
+    else if (row.indexOf('AM:') === 0) autoFromGitlink = row.slice(3)
+    else if (row === 'AC:1') autoFromGitlinkOk = true
+    else if (row === 'MC:1') configuredOk = true
+    else if (row.indexOf('GD:') === 0) gitdir = row.slice(3)
+    else if (row.indexOf('GRC:') === 0) gitRc = parseInt(row.slice(4), 10)
+    else if (row.indexOf('CD:') === 0) commonDir = row.slice(3)
+    else if (row === 'LC:1') linkedOk = true
+    else if (row.indexOf('TL:') === 0) toplevel = row.slice(3)
+    else if (row === 'N:nogit') gitMissing = true
+    else if (row === 'WT-BEGIN') { porcelain = []; porcelainOpen = true }
+  }
+
+  const gitReadable = gitMissing !== true && gitRc === 0 && gitdir.length > 0
+  let kind = 'plain'
+  let autoMain = null
+  let autoOk = false
+  if (dirKind === 'file') kind = 'file'
+  else if (dirKind !== 'dir') kind = 'missing'
+  else if (gitType === 'dir') { kind = 'main'; autoMain = target; autoOk = true }
+  else if (gitType === 'file') {
+    if (!gitReadable) {
+      kind = 'broken-gitlink'
+      if (autoFromGitlink.length > 0) { autoMain = autoFromGitlink; autoOk = autoFromGitlinkOk }
+    } else if (commonDir.length > 0 && commonDir === gitdir) {
+      /* 子模块：gitlink 指向的 modules 目录就是它唯一的版本库，commonDir 与
+         gitdir 重合 —— 它自己就是「主目录」。 */
+      kind = 'main'; autoMain = target; autoOk = true
+    } else {
+      const linked = commonDir.slice(-5) === '/.git' ? commonDir.slice(0, -5) : ''
+      if (linked.length > 0) { kind = 'linked'; autoMain = linked; autoOk = linkedOk }
+      else kind = 'bare'
+    }
+  }
+
+  let mainDir = null
+  let mainSource = null
+  let mainOk = false
+  if (configured !== null) { mainDir = configured; mainSource = 'config'; mainOk = configuredOk }
+  else if (autoMain !== null) { mainDir = autoMain; mainSource = 'auto'; mainOk = autoOk }
+
+  /* worktrees 只在 kind 为 linked/main 且 git 读得动时解析（broken-gitlink 恒空，
+     其余 kind 根本没跑 git）；main 按自动找到的主目录标（配置里改过的不参与 ——
+     这一列描述的是 git 自己认的账，配置是面板认的账，两本都如实带回）。reason 把
+     locked / prunable 的原因折成一句话（契约的行形状就这八个字段）。 */
+  const worktrees = []
+  if ((kind === 'linked' || kind === 'main') && gitReadable && porcelain !== null && porcelainRc === 0) {
+    const listed = parseWorktreeRows(porcelain.join('\n'))
+    for (let i = 0; i < listed.length; i += 1) {
+      const row = listed[i]
+      worktrees.push({
+        path: row.path, head: row.head, branch: row.branch,
+        detached: row.detached === true, bare: row.bare === true,
+        locked: row.locked === true,
+        reason: row.locked === true ? row.lockReason : (row.prunable === true ? row.pruneReason : ''),
+        main: row.path === autoMain,
+        current: row.path === target,
+      })
+    }
+  }
+
+  return Object.assign({ ok: true, repo: target }, empty, {
+    kind: kind, gitlink: gitlink, gitdir: gitdir, commonDir: commonDir, toplevel: toplevel,
+    mainDir: mainDir, mainSource: mainSource, configured: configured, mainOk: mainOk,
+    worktrees: worktrees, gitMissing: gitMissing, stderr: probe.stderr.slice(0, 400),
+  })
+}
+
+/* git/wt-main 的外壳：读缓存按仓库一格（tag 'wt-main'），寿命与 refs / worktrees
+   同一条 —— 任何一次整仓失效（panelMutate、⟳ 的 flush、watcher bump）都把它一起
+   作废；只有 saveWorktreeMain 自己会在写完配置后按 tag 精确作废这一格（它改的是
+   面板认的那本账，git 一根汗毛没动，整仓失效是浪费）。 */
+async function wtMainSnapshot(input) {
+  const repo = repoFrom(input, null)
+  if (repo === undefined) return await readWtMain(input, undefined)
+  return await cached(repo, 'wt-main', function () { return readWtMain(input, repo) })
+}
+
+/* git/wt-main-save：把「这个 worktree 的主目录在哪」写进插件配置（70-config.js 的
+   worktreeMains），答复是该 worktree 的最新 wtMainSnapshot —— 客户端一次往返就能
+   把整块读数换成新账。写法仿 61-repos.js 的 saveWorkspaceRepo：readConfigFile 拿
+   到的已是归一化过的整份配置，只动 worktreeMains 这一个键（add 设值 / remove 删键），
+   其余键原样带过去，谁也抹不掉谁。
+   校验：add 与 remove 二选一（都给/都不给都是错）；repo 缺省=会话工作区，add 与
+   repo 都必须绝对路径；add 用与手动登记同一判据 `[ -e add/.git ]` 现场验（目录或
+   gitlink 文件都算 —— 主仓库自己也可以是另一个 worktree 的主），不存在是 'missing'、
+   在了但不是仓库是 'not-a-repository'。同值不写盘：重复保存不该真碰一次磁盘。 */
+async function saveWorktreeMain(input) {
+  const add = input != null && isStr(input.add) ? input.add.trim() : ''
+  const remove = input != null && input.remove === true
+  if ((add.length > 0) === remove) {
+    return { ok: false, error: 'exactly one of add or remove is required' }
+  }
+  const repo = input != null && isStr(input.repo) && input.repo.trim().length > 0 ? input.repo.trim() : (sessionWorkdir(input) || '')
+  if (repo.length === 0) return { ok: false, error: 'no-path' }
+  if (repo.charAt(0) !== '/') return { ok: false, error: 'absolute path required', path: repo }
+  const key = repoKeyOf(repo)
+  const config = await readConfigFile()
+  const mains = Object.assign({}, config.worktreeMains)
+  if (add.length > 0) {
+    if (add.charAt(0) !== '/') return { ok: false, error: 'absolute path required', path: add }
+    if (mains[key] !== add) {
+      const check = await probeShell(input, 'if [ -e ' + shq(add) + '/.git ]; then echo repo; elif [ -d ' + shq(add) + ' ]; then echo norepo; else echo none; fi')
+      const kind = check.stdout.trim()
+      if (kind === 'none') return { ok: false, error: 'missing', path: add }
+      if (kind !== 'repo') return { ok: false, error: 'not-a-repository', path: add }
+      mains[key] = add
+      const written = await writeConfigFile(Object.assign({}, config, { worktreeMains: mains }), argsAt(input, null))
+      if (written.ok !== true) return written
+    }
+  } else {
+    if (mains[key] !== undefined) {
+      delete mains[key]
+      const written = await writeConfigFile(Object.assign({}, config, { worktreeMains: mains }), argsAt(input, null))
+      if (written.ok !== true) return written
+    }
+  }
+  /* 只作废这一格再读：git 那头没动，refs / worktrees / 图的缓存都还是新账。 */
+  invalidateRepo(repo, ['wt-main'])
+  return await wtMainSnapshot(Object.assign({}, input, { repo: repo }))
+}
+
+
 /* ─────────────── git 忽略项扫描（只读，多仓库 × 多 worktree）─────────────── */
 
 /* 配置页「仓库」组里「git 忽略项」分组的数据（80-panel.js GitIgnoredScanGroup）。
