@@ -3967,7 +3967,10 @@
         tool('push', '↑', 'push：推送当前分支（先弹确认框列出要推的提交）', function () {
           runSync('push', function () {
             if (currentName.length === 0) return runOp('git/push', null, 'push')
-            return openPushConfirm(currentName, '', null, '')
+            /* repo 必须带上生效仓库：留空会让确认框的推送回落到会话工作区 ——
+               工作区嵌套仓库时（外层 dsh 仓库无远端），refspec 天书就是这么来的
+               （读分支用的是嵌套真仓库、推送却跑去了外层）。 */
+            return openPushConfirm(currentName, appliedRepo, null, '')
           })
         },
           { disabled: !repoOk || syncRunningKey('push'), running: syncRunningKey('push'), badge: ahead }))
@@ -4281,9 +4284,11 @@
           title: 'git push -u ' + upstreamGuess + ' ' + currentName + '（先弹确认框，点「推送」才真推）',
           onClick: function () {
             /* 两段式：远端在这里挑好带进确认框，框里点「推送」才发（pushConfirmRun
-               发的命令与这行 title 一字不差）。横幅先留着 —— 确认成功关框时
-               setNeedsUpstream 还立着的话横幅还在，读者可以「忽略」掉它。 */
-            openPushConfirm(currentName, '', { remote: upstreamGuess, branch: currentName }, '')
+               发的命令与这行 title 一字不差）。repo 带生效仓库 —— 与顶栏 ↑ 同一条
+               规矩，空串会把推送落到会话工作区（外层无远端仓库）。横幅先留着 ——
+               确认成功关框时 setNeedsUpstream 还立着的话横幅还在，读者可以「忽略」
+               掉它。 */
+            openPushConfirm(currentName, appliedRepo, { remote: upstreamGuess, branch: currentName }, '')
           },
         }, '推送并设为上游（' + upstreamGuess + '）') : null,
         h('button', { key: 'n', type: 'button', className: 'dsh-git-btn', onClick: function () { setNeedsUpstream(false) } }, '忽略'))
