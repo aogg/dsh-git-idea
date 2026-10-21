@@ -674,6 +674,12 @@
       return h('div', { className: 'dsh-git-ign' }, rows)
     }
 
+    /* 配置页「worktree 主目录」组的模块级读数缓存：按仓库路径记 git/wt-main 的答复。
+        进入配置页或换编辑目标时查它，命中就不发请求（不发 ≠ 不刷新：保存成功会把
+        最新答复写回这一格）；面板级那面 wtMain 读数另有 React state，两份互不干扰
+        —— 这里的缓存只服务「别每帧发、别每次进页都发」这一件事。 */
+    const cfgWtMainCache = {}
+
     function GitConfigPane(props) {
       const sessionId = props.sessionId
       /* 两档作用域：项目（本仓库的 .git/config）与全局（插件与这台机器，79-globalconfig.js）。
@@ -753,6 +759,9 @@
         setRemoteSnap(null)
         setName(''); setEmail(''); setRName(''); setRUrl('')
         setEditRemote(null); setEditUrl(''); setArmRemote('')
+        /* 主目录组的草稿同样是对着上一个仓库打的字：目标一换就清（读数 effect 会按
+           新目标重新预填 configured ?? auto mainDir）。 */
+        setWtDraft(''); setWtNote(''); setWtProblem('')
         setNote(''); setProblem('')
       }
       const pickRepo = function (path) {
@@ -816,6 +825,40 @@
         readRemotes(function (snap) { if (alive === true) setRemoteSnap(snap) })
         return function () { alive = false }
       }, [sessionId, targetRepo])
+
+      /* ── worktree 主目录组的读数：进入配置页 / pick 变化时按 pick 路径问一次 ──
+
+         模块级缓存（cfgWtMainCache）命中就直接用，不命中才发 git/wt-main；答复按
+         仓库对上号才上屏（targetBox 同一个「目标切走了就别上屏」的道理）。读失败
+         折成 ok:false 的占位 —— 组只在 kind 对得上时渲染，读不出来整组消失，与
+         「这不是 worktree」同一种安静。 */
+      const [wtSnap, setWtSnap] = React.useState(null)
+      const [wtDraft, setWtDraft] = React.useState('')
+      const [wtBusy, setWtBusy] = React.useState(false)
+      const [wtNote, setWtNote] = React.useState('')
+      const [wtProblem, setWtProblem] = React.useState('')
+      React.useEffect(function () {
+        if (scope !== 'project' || targetRepo.length === 0) return undefined
+        let alive = true
+        const forRepo = targetRepo
+        const hit = cfgWtMainCache[forRepo]
+        if (hit !== undefined) {
+          setWtSnap(hit)
+          setWtDraft(function (previous) { return previous.length > 0 ? previous : (hit != null && hit.ok === true && text(hit.mainDir).length > 0 ? text(hit.mainDir) : '') })
+          return undefined
+        }
+        callHost('git/wt-main', request()).then(function (data) {
+          cfgWtMainCache[forRepo] = data
+          if (alive !== true) return
+          setWtSnap(data)
+          const prefill = data != null && data.ok === true && text(data.mainDir).length > 0 ? text(data.mainDir) : ''
+          setWtDraft(function (previous) { return previous.length > 0 ? previous : prefill })
+        }, function (failure) {
+          console.error('dsh-git-idea: could not read worktree main of ' + forRepo, failureText(failure))
+          if (alive === true) setWtSnap({ ok: false, repo: forRepo, error: 'unavailable' })
+        })
+        return function () { alive = false }
+      }, [sessionId, targetRepo, scope])
 
       /* 组头的 ⟳：只重发上面那次读。busy 期间禁用 —— 同一页可能正在写 .git/config，
          先让写动作把话（note/problem）说完。它自己也不碰那两条：note/problem 是写
@@ -1097,6 +1140,119 @@
                 ? '还没有配置任何远端 —— 添加一个之后，fetch / pull / push 与分支树的「远程」分组才有内容'
                 : 'fetch / pull / push 推向谁、分支树「远程」分组里有什么，都跟着这份清单走；名字之外每个远端还各有 push 地址'))))
 
+      /* 主目录组的保存与清除：git/wt-main-save 的答复就是最新一份 wt-main 读数 ——
+          照它重画本组（读回来而不是回显输入，与身份/远端两组同一条原则），写回
+          模块级缓存，再 props.onChanged() 让面板级那份 wtMain 读数重读（Host 侧
+          已按 tag 失效 'wt-main'，重读必是新账）。错误话术走 repoSaveProblem
+          （24-repos.js 同一份词）：把 ok:false 的答复折成它认得的 failure 形状。 */
+      const wtSaveProblemOf = function (result, path) {
+        const failure = new Error(commandDetail(result) || '保存失败')
+        failure.reply = result
+        return repoSaveProblem(failure, path)
+      }
+      const saveWtMain = function () {
+        const dir = wtDraft.trim()
+        if (dir.length === 0 || wtBusy === true) return
+        setWtBusy(true)
+        setWtNote('')
+        setWtProblem('')
+        const body = request()
+        body.add = dir
+        const forRepo = targetBox.repo
+        callHost('git/wt-main-save', body).then(function (result) {
+          setWtBusy(false)
+          if (targetBox.repo !== forRepo) return
+          if (result == null || result.ok !== true) {
+            setWtProblem(wtSaveProblemOf(result, dir))
+            return
+          }
+          cfgWtMainCache[forRepo] = result
+          setWtSnap(result)
+          setWtNote('已配置主目录（手动配置）：' + text(result.mainDir))
+          if (typeof props.onChanged === 'function') props.onChanged()
+        }, function (failure) {
+          setWtBusy(false)
+          setWtProblem(failureText(failure))
+        })
+      }
+      const clearWtMain = function () {
+        if (wtBusy === true) return
+        setWtBusy(true)
+        setWtNote('')
+        setWtProblem('')
+        const body = request()
+        body.remove = true
+        const forRepo = targetBox.repo
+        callHost('git/wt-main-save', body).then(function (result) {
+          setWtBusy(false)
+          if (targetBox.repo !== forRepo) return
+          if (result == null || result.ok !== true) {
+            setWtProblem(wtSaveProblemOf(result, forRepo))
+            return
+          }
+          cfgWtMainCache[forRepo] = result
+          setWtSnap(result)
+          setWtNote('已清除配置：主目录回到自动识别')
+          if (typeof props.onChanged === 'function') props.onChanged()
+        }, function (failure) {
+          setWtBusy(false)
+          setWtProblem(failureText(failure))
+        })
+      }
+
+      /* ── 「worktree 主目录」下级组：编辑目标是链接工作区时才出现 ──
+
+          与提交身份/远端/换行符同级（同在 scope-body），同样只作用于本页编辑目标。
+          答复必须对上当前的 pick 才画（adoptTarget 之后的一帧里 wtSnap 还是上一个
+          仓库的，比不得）；kind 是 linked / broken-gitlink 之外的（普通仓库、bare、
+          目录缺失……）整组安静 —— 普通 repo 没有主目录可配。 */
+      const wtSnapNow = wtSnap != null && wtSnap.ok === true && text(wtSnap.repo) === targetRepo ? wtSnap : null
+      const wtKind = wtSnapNow != null ? text(wtSnapNow.kind) : ''
+      const wtGroupOn = wtSnapNow != null && (wtKind === 'linked' || wtKind === 'broken-gitlink')
+      const wtGroupTitle = (targetShortName.length > 0 ? 'worktree 主目录（' + targetShortName + '）' : 'worktree 主目录')
+      const wtGroupHint = wtKind === 'linked'
+        ? '这个仓库是链接工作区（.git 是链接文件，worktree 或子模块）：它自己没有版本库，读写的都是主仓库那头。主目录多半已自动找到；主仓库被删/搬走时，把新位置填在下面告诉面板。'
+        : '这个仓库的 .git 是链接文件，但它指向的主仓库读不到（多半被删了或搬走了）—— 面板原来只能当它「不是仓库」。把主仓库的新位置填在下面，历史、变更、提交就都能照常用。'
+      const wtMainDir = wtSnapNow != null ? text(wtSnapNow.mainDir) : ''
+      const wtConfigured = wtSnapNow != null ? text(wtSnapNow.configured) : ''
+      const wtMainOk = wtSnapNow != null && wtSnapNow.mainOk === true
+      const wtGroupNode = wtGroupOn !== true ? null : h('div', { className: 'dsh-git-wtmain' },
+        h('div', { className: 'dsh-git-set-group' }, wtGroupTitle),
+        h('div', { className: 'dsh-git-set-hint' }, wtGroupHint),
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '主目录'),
+          wtMainDir.length > 0
+            ? h('span', { className: 'dsh-git-set-hint dsh-git-set-url', title: wtMainDir },
+              wtMainDir + '（' + (wtSnapNow.mainSource === 'config' ? '手动配置' : '自动找到') + (wtMainOk ? '' : ' · 目录不在了') + '）')
+            : h('span', { className: 'dsh-git-set-hint' }, '读不到：gitlink 配不上一个存在的目录（在下面配一个现存的目录即可）')),
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '配置主目录'),
+          h('input', {
+            className: 'dsh-git-input dsh-git-set-input',
+            placeholder: '主仓库目录的绝对路径',
+            value: wtDraft,
+            disabled: wtBusy === true,
+            title: '存进插件配置（worktreeMains），换浏览器/换机器打开同一工作区还在',
+            onChange: function (event) { setWtDraft(event.target.value); setWtNote('') },
+            onKeyDown: function (event) { if (event.key === 'Enter') saveWtMain() },
+          }),
+          h('button', {
+            type: 'button', className: 'dsh-git-btn dsh-git-primary',
+            disabled: wtBusy === true || wtDraft.trim().length === 0,
+            title: '把这个目录记成本页编辑目标的主仓库',
+            onClick: saveWtMain,
+          }, wtBusy === true ? '保存中…' : '保存'),
+          wtConfigured.length > 0
+            ? h('button', {
+              type: 'button', className: 'dsh-git-btn',
+              disabled: wtBusy === true,
+              title: '删掉这条配置，主目录回到自动识别（git 与 gitlink 文本）',
+              onClick: clearWtMain,
+            }, '清除配置')
+            : null,
+          wtNote.length > 0 ? h('span', { className: 'dsh-git-set-hint' }, wtNote) : null),
+        wtProblem.length > 0 ? h('div', { className: 'dsh-git-set-row dsh-git-error' }, wtProblem) : null)
+
       const rNameDraft = rName.trim()
       const rUrlDraft = rUrl.trim()
 
@@ -1152,7 +1308,7 @@
         h('div', { className: 'dsh-git-set-scope' },
           h('div', { className: 'dsh-git-set-group' }, '仓库（这一页在编辑哪个仓库）'),
           h('div', { className: 'dsh-git-set-hint' },
-            '收在本组内的提交身份、远端、换行符三个下级组，读写的都是这里选中的仓库，默认是当前生效仓库（带 ● 的行）。单击行只换本页的编辑目标 —— 面板的生效仓库（历史、提交、推送用的那个）不跟着换，要换生效仓库去「历史」或「变更」页的仓库列表。会话工作区本身不是仓库时这组照常可用：把仓库目录「＋ 添加目录」登记进来，就能直接配置它。最末的「git 忽略项」是只读扫描，不跟这里的单选走 —— 它扫的是整份清单里的全部仓库。'),
+            '收在本组内的提交身份、远端、换行符三个下级组（编辑目标是 worktree 链接工作区时，还会多出一个「worktree 主目录」组），读写的都是这里选中的仓库，默认是当前生效仓库（带 ● 的行）。单击行只换本页的编辑目标 —— 面板的生效仓库（历史、提交、推送用的那个）不跟着换，要换生效仓库去「历史」或「变更」页的仓库列表。会话工作区本身不是仓库时这组照常可用：把仓库目录「＋ 添加目录」登记进来，就能直接配置它。最末的「git 忽略项」是只读扫描，不跟这里的单选走 —— 它扫的是整份清单里的全部仓库。'),
           h(RepoSwitcher, {
             key: 'cfg-repos',
             sessionId: sessionId, pane: 'config', list: repoList, effective: effective,
@@ -1284,7 +1440,11 @@
             lineSelect('core.autocrlf', autocrlf, ['true', 'false', 'input'], '检出时把 LF 转 CRLF、提交时转回 LF（input 只在提交时转 LF，false 什么都不转）'),
             lineSelect('core.safecrlf', safecrlf, ['true', 'false', 'warn'], '换行转换不可逆（会丢字）时的把关开关：true 让 git 拒绝这次操作、warn 只警告照做、false 不把关'),
 
-            /* 「git 忽略项」：第四个下级组，只读、不跟本页编辑目标走 —— 扫的是
+            /* 「worktree 主目录」：又一个下级组，编辑目标是链接工作区（worktree /
+               子模块）时才出现 —— wtGroupNode 自己认 kind，普通仓库/bare 整组不画。 */
+            wtGroupNode,
+
+            /* 「git 忽略项」：只读的下级组、不跟本页编辑目标走 —— 扫的是
                整份 shown 清单（pickable）里全部仓库的每个工作树，仓库短名也用
                同一份标签账（cfgLabels），分组头与切换器里叫的是同一个名字。 */
             h(GitIgnoredScanGroup, { key: 'ignored-scan', sessionId: sessionId, repos: pickable, labels: cfgLabels }))),
@@ -2277,6 +2437,27 @@
         }).catch(function (failure) {
           console.error('dsh-git-idea: could not read worktrees', failureText(failure))
           if (alive) setWorktrees({ ok: false, repo: appliedRepo.length > 0 ? appliedRepo : null, error: 'unavailable', worktrees: [] })
+        })
+        return function () { alive = false }
+      }, [appliedRepo, repoOk, freshAt, props.ready])
+
+      /* ── worktree 主目录（git/wt-main）的读数：与上面 worktrees 同一组依赖 ──
+
+         生效仓库是链接工作区（worktree/子模块）时，worktree 块的「主目录」行、配置
+         页仓库组的「worktree 主目录」下级组吃的都是这一份。失败折成 ok:false 占位、
+         不上横幅 —— 与 worktrees 同一个格调（辅助读数，error 位一次只说一件事）。
+         git/wt-main-save 那边（配置页保存）在 Host 侧已按 tag 失效 'wt-main' 一格，
+         这里保存成功后 props.onChanged() → bump() 推 freshAt，effect 重读拿到的必是
+         新账。 */
+      const [wtMain, setWtMain] = React.useState(null)
+      React.useEffect(function () {
+        if (!repoOk || props.ready !== true) return undefined
+        let alive = true
+        callHost('git/wt-main', base(appliedRepo)).then(function (data) {
+          if (alive) setWtMain(data)
+        }).catch(function (failure) {
+          console.error('dsh-git-idea: could not read worktree main', failureText(failure))
+          if (alive) setWtMain({ ok: false, repo: appliedRepo.length > 0 ? appliedRepo : null, error: 'unavailable' })
         })
         return function () { alive = false }
       }, [appliedRepo, repoOk, freshAt, props.ready])
@@ -4318,6 +4499,17 @@
             data: worktrees,
             refs: refs,
             effective: effectiveRepo,
+            /* 主目录行（25-worktree.js v1.2）：wtMain 是面板级那份 git/wt-main 读数；
+               onOpenMain 与仓库行单击同一条 repoSingle 路（切生效仓库 + 变更列表重读）；
+               onConfigure 切到配置页并把本页编辑目标对到生效仓库 —— setRepoSelection
+               的 'config' 格就是配置页读的那个 pick（GitConfigPane 的 storedPick），
+               是现成入口，不必新造。 */
+            wtMain: wtMain,
+            onOpenMain: function (path) { repoSingle('changes', path) },
+            onConfigure: function () {
+              if (effectiveRepo.length > 0) setRepoSelection(sessionId, 'config', [effectiveRepo])
+              setTab('config')
+            },
             onPickWorktree: function (path) { repoSingle('changes', path) },
           },
           groups: changeGroups,
@@ -4491,6 +4683,14 @@
                 activeRef: shownRef,
                 repo: logSel.length > 0 ? effectiveRepo : '',
                 onPickBranch: pickBranch,
+                /* 主目录行（25-worktree.js v1.2）：与变更页同一组动作 —— 打开主目录
+                   走 repoSingle('log', …)（先收拢多选再切生效仓库），配置进配置页。 */
+                wtMain: wtMain,
+                onOpenMain: function (path) { repoSingle('log', path) },
+                onConfigure: function () {
+                  if (effectiveRepo.length > 0) setRepoSelection(sessionId, 'config', [effectiveRepo])
+                  setTab('config')
+                },
               },
               groups: logSel.length > 0 ? logSel.map(function (repo) {
                 return { repo: repo, refs: repoRefs[repo] === undefined ? null : repoRefs[repo] }

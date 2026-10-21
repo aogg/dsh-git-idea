@@ -27,7 +27,15 @@
        dsh-git-tmain/tname/tsub（分支树的两段式）、dsh-git-ab（↑↓ 徽章）。
 
        徽章数据不另读：按分支名从面板已经读好的那份 refs（分支树 metaOf 同源的那份）
-       免费查，查不到就不画 —— worktree 块的往返只有 git/worktrees 这一条。 */
+       免费查，查不到就不画 —— worktree 块的往返只有 git/worktrees 这一条。
+
+       v1.2 起块头行下面多一行「主目录」（props.wtMain，git/wt-main 的答复）：本目录
+       的 .git 是链接文件、git 又读不动主仓库那一头时（主仓库被删/搬走），worktree
+       清单必然是空的，面板原来只能给一行「无法读取」—— 这一行补上「这个目录其实
+       是谁的一份链接工作区」与两条出路（打开主目录、去配置）。它插在折叠判断**之前**
+       是有意的：broken 的那一刻恰恰是清单读不出来的时候，若跟着折叠/失败分支一起
+       消失，读者就只剩一句读不动的灰字。类名另起 dsh-git-wt-mainrow —— dsh-git-wt-row
+       的个数是测试按清单行认的（gp57/gp60），这一行是身份行，不进那个账。 */
     function WorktreeBox(props) {
       const data = props.data
       const refs = props.refs
@@ -87,6 +95,57 @@
         data == null
           ? h('span', { key: 's', className: 'dsh-git-repo-note' }, '正在读取…')
           : (data.ok !== true ? h('span', { key: 'f', className: 'dsh-git-repo-note' }, '读取失败') : null))]
+
+      /* ── 「主目录」行（v1.2）：本目录是链接工作区时，说清主仓库在哪、还能不能救 ──
+          只在 wtMain 的 kind 是 linked / broken-gitlink 时出现；mainDir 为空（bare
+          或 gitlink 配不上）时文字改说「读不到」，只留「配置…」一个动作。 */
+      const wtMainNow = props.wtMain != null && props.wtMain.ok === true ? props.wtMain : null
+      const wtMainKind = wtMainNow != null ? text(wtMainNow.kind) : ''
+      if (wtMainNow != null && (wtMainKind === 'linked' || wtMainKind === 'broken-gitlink')) {
+        const mainDir = text(wtMainNow.mainDir)
+        const hasMain = mainDir.length > 0
+        const fromConfig = wtMainNow.mainSource === 'config'
+        const mainOk = wtMainNow.mainOk === true
+        const gitlink = text(wtMainNow.gitlink)
+        /* kind 含义的一句话（说明页 WorktreeMainSetup 同一文案的短版）。 */
+        const kindSaid = wtMainKind === 'linked'
+          ? '本目录是链接工作区：.git 是一个链接文件（' + (gitlink.length > 0 ? gitlink : 'gitlink') + '），读写的都是主仓库那头的版本库'
+          : '主仓库那头读不到（多半被删了或搬走了）：.git 还指着老地方'
+        const tip = [
+          hasMain ? '主目录：' + mainDir + (fromConfig ? '（手动配置）' : '（自动找到）') : '主目录读不到：gitlink 配不上一个存在的目录',
+          kindSaid,
+        ]
+        if (hasMain && mainOk !== true) tip.push('这个主目录现在不存在（或里面没有 .git）—— 用「配置…」把正确路径告诉面板')
+        if (hasMain) tip.push('单击「打开主目录」= 把生效仓库切到主目录（与仓库行单击同一手势）')
+        rows.push(h('div', {
+          key: 'wt-main',
+          className: 'dsh-git-wt-mainrow' + (hasMain && mainOk ? '' : ' dsh-git-wt-gone'),
+          title: tip.join('\n'),
+        },
+          h('span', { key: 'm', className: 'dsh-git-repo-mark' }),
+          h('span', { key: 'g', className: 'dsh-git-repo-glyph' }, h(Icon, { name: 'repo', size: 12 })),
+          h('span', { key: 'n', className: 'dsh-git-tmain' },
+            h('span', { className: 'dsh-git-tname' }, hasMain ? repoBaseName(mainDir) : '主目录读不到'),
+            h('span', { className: 'dsh-git-tsub' + (hasMain ? '' : ' dsh-git-tsub-none') },
+              hasMain
+                ? (fromConfig ? '手动配置' : '自动找到') + (mainOk ? '' : ' · 目录不在了')
+                : (wtMainKind === 'broken-gitlink' ? '主目录读不到' : 'bare：没有工作区可言'))),
+          h('span', { key: 'r', className: 'dsh-git-wt-right' },
+            hasMain && typeof props.onOpenMain === 'function'
+              ? h('button', {
+                key: 'open', type: 'button', className: 'dsh-git-wt-main-act',
+                title: '把生效仓库切到主目录 ' + mainDir + '（不 checkout、不切分支、不动任何工作区）',
+                onClick: function () { props.onOpenMain(mainDir) },
+              }, '打开主目录')
+              : null,
+            typeof props.onConfigure === 'function'
+              ? h('button', {
+                key: 'cfg', type: 'button', className: 'dsh-git-wt-main-act',
+                title: '配置这个 worktree 的主目录（告诉面板主仓库现在在哪）',
+                onClick: function () { props.onConfigure() },
+              }, '配置…')
+              : null)))
+      }
 
       if (folded) return h('div', { className: 'dsh-git-wt-box' }, rows)
 

@@ -43,6 +43,132 @@
       return found
     }
 
+    /* ── 说明页里的「worktree 主目录」块（v1.2）──
+
+       会话工作区是一个 worktree、而主仓库那头读不动（被删/搬走）时，说明页的 reason
+       是 'not-a-repo'，那一页 editable:false —— 但这个目录恰恰**有**要配置的东西：
+       把主目录的新位置告诉面板。这块不受 editable / init 开关管（用户点名的要求），
+       挂载时对 initial 发一次 git/wt-main（Host 答身份与主目录候选），kind 是
+       linked / broken-gitlink 才渲染；找到的主目录可以直接「打开这个目录」（与
+       RepoSetup 的 onOpen 同一条路），主目录不合适就手填一个存进插件配置
+       （git/wt-main-save），错误话术沿用 24-repos.js 的 repoSaveProblem。 */
+    function WorktreeMainSetup(props) {
+      const sessionId = props.sessionId
+      const target = text(props.initial)
+      const [snap, setSnap] = React.useState(null)
+      const [draft, setDraft] = React.useState('')
+      const [busy, setBusy] = React.useState(false)
+      const [note, setNote] = React.useState('')
+      const [problem, setProblem] = React.useState('')
+      /* 挂载（或 initial 变了）发一次读。失败静默 null：说明页的主流程是「认路、
+          开目录」，这块是补充身份说明，它自己读不出来不该变成一条新错误。 */
+      React.useEffect(function () {
+        if (target.length === 0) return undefined
+        let alive = true
+        const request = target.length > 0 ? { repo: target } : {}
+        if (sessionId.length > 0) request.sessionId = sessionId
+        callHost('git/wt-main', request).then(function (data) {
+          if (alive !== true) return
+          setSnap(data)
+          /* 草稿预填 configured ?? auto mainDir：读者多数时候只需要改一两个字。 */
+          const prefill = data != null && data.ok === true && text(data.mainDir).length > 0 ? text(data.mainDir) : ''
+          setDraft(function (previous) { return previous.length > 0 ? previous : prefill })
+        }, function () {
+          if (alive === true) setSnap(null)
+        })
+        return function () { alive = false }
+      }, [target, sessionId])
+
+      const saveMain = function () {
+        const dir = draft.trim()
+        if (dir.length === 0 || busy === true) return
+        setBusy(true)
+        setNote('')
+        setProblem('')
+        const request = { repo: target, add: dir }
+        if (sessionId.length > 0) request.sessionId = sessionId
+        rpc('git/wt-main-save', request, '保存失败').then(function (reply) {
+          setBusy(false)
+          setSnap(reply)
+          setNote('已配置主目录（手动配置）：' + text(reply.mainDir))
+        }, function (failure) {
+          setBusy(false)
+          setProblem(repoSaveProblem(failure, dir))
+        })
+      }
+
+      const clearMain = function () {
+        if (busy === true) return
+        setBusy(true)
+        setNote('')
+        setProblem('')
+        const request = { repo: target, remove: true }
+        if (sessionId.length > 0) request.sessionId = sessionId
+        rpc('git/wt-main-save', request, '清除失败').then(function (reply) {
+          setBusy(false)
+          setSnap(reply)
+          setNote('已清除配置：主目录回到自动识别' + (text(reply.mainDir).length > 0 ? '（' + text(reply.mainDir) + '）' : '（暂无）'))
+        }, function (failure) {
+          setBusy(false)
+          setProblem(repoSaveProblem(failure, target))
+        })
+      }
+
+      if (target.length === 0) return null
+      const kind = snap != null && snap.ok === true ? text(snap.kind) : ''
+      if (kind !== 'linked' && kind !== 'broken-gitlink') return null
+      const mainDir = text(snap.mainDir)
+      const configured = text(snap.configured)
+      const gitlink = text(snap.gitlink)
+      const broken = kind === 'broken-gitlink'
+      return h('div', { className: 'dsh-git-setup-sub' },
+        h('div', { className: 'dsh-git-setup-h' }, '这是一个 worktree（链接工作区）'),
+        h('div', { className: 'dsh-git-hint' },
+          broken
+            ? '这个目录的 .git 是一个链接文件' + (gitlink.length > 0 ? '（' + gitlink + '）' : '')
+              + '，它指向的主仓库读不到 —— 多半被删了或搬走了。下面的主目录配置告诉面板这个工作区属于谁；'
+              + '配置之后历史、变更、提交都照常可用，读的是配置里那个主仓库的版本库。'
+            : '这个目录的 .git 是一个链接文件' + (gitlink.length > 0 ? '（' + gitlink + '）' : '')
+              + '，它自己不是独立仓库 —— 读写的都是下面这个主仓库的版本库。'),
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, broken ? '找到的主目录' : '主目录'),
+          mainDir.length > 0
+            ? h('span', { className: 'dsh-git-setup-path dsh-git-wtmain-path', title: mainDir }, mainDir)
+            : h('span', { className: 'dsh-git-hint' }, '读不到：gitlink 配不上一个存在的目录（配置一个现存的目录即可）'),
+          mainDir.length > 0 && typeof props.onOpen === 'function'
+            ? h('button', {
+              type: 'button', className: 'dsh-git-btn',
+              title: '把生效仓库切到主目录 ' + mainDir + '（与仓库行单击同一手势）',
+              onClick: function () { props.onOpen(mainDir) },
+            }, '打开这个目录')
+            : null),
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '配置主目录'),
+          clearable('wtmain', h('input', {
+            className: 'dsh-git-input dsh-git-set-input',
+            placeholder: '主仓库目录的绝对路径',
+            value: draft,
+            onChange: function (event) { setDraft(event.target.value); setNote('') },
+            onKeyDown: function (event) { if (event.key === 'Enter') saveMain() },
+          }), draft.length > 0, function () { setDraft('') }),
+          h('button', {
+            type: 'button', className: 'dsh-git-btn dsh-git-primary',
+            disabled: busy === true || draft.trim().length === 0,
+            title: '把这个目录记成 ' + target + ' 的主仓库（存进插件配置，换浏览器/换机器都在）',
+            onClick: saveMain,
+          }, busy === true ? '保存中…' : '保存'),
+          configured.length > 0
+            ? h('button', {
+              type: 'button', className: 'dsh-git-btn',
+              disabled: busy === true,
+              title: '删掉这条配置，主目录回到自动识别（git 与 gitlink 文本）',
+              onClick: clearMain,
+            }, '清除配置')
+            : null,
+          note.length > 0 ? h('span', { className: 'dsh-git-hint' }, note) : null),
+        problem.length > 0 ? h('div', { className: 'dsh-git-hint dsh-git-error' }, problem) : null)
+    }
+
     function RepoSetup(props) {
       const plugin = usePluginConfig()
       const [draft, setDraft] = React.useState(props.initial)
@@ -118,6 +244,10 @@
           }, '取消') : null),
         armed ? h('div', { className: 'dsh-git-hint dsh-git-danger' },
           '将在 ' + target + ' 下执行 git init' + (plugin.initBranch.length > 0 ? ' -b ' + plugin.initBranch : '') + ' —— 这会创建一个 .git 目录并写入文件，无法通过界面撤销。') : null,
-        problem !== null ? h('div', { className: 'dsh-git-hint dsh-git-error' }, problem) : null)
+        problem !== null ? h('div', { className: 'dsh-git-hint dsh-git-error' }, problem) : null,
+        /* worktree 主目录块（上面的 WorktreeMainSetup）：不受 editable / init 开关
+           管 —— 「not-a-repo」那一页正是 worktree 主仓库读不动时落的那一页，这里
+           恰恰是唯一能配置它的地方。它自己认 kind，不是 worktree 就什么都不画。 */
+        h(WorktreeMainSetup, { key: 'wtmain', sessionId: props.sessionId, initial: props.initial, onOpen: props.onOpen }))
     }
 

@@ -25,7 +25,7 @@
     const useRepoList = repoListSignal.use
 
     function repoListEmpty() {
-      return { repos: [], manual: [], missing: [], phase: 'idle', note: '' }
+      return { repos: [], manual: [], missing: [], links: [], phase: 'idle', note: '' }
     }
 
     function repoListFor(workspace) {
@@ -62,6 +62,9 @@
           repos: Array.isArray(data.repos) ? data.repos.map(text) : [],
           manual: Array.isArray(data.manual) ? data.manual.map(text) : [],
           missing: Array.isArray(data.missing) ? data.missing.map(text) : [],
+          /* links：.git 是文件的仓库根（worktree / 子模块）。Host 旧版没有这一格
+             （答复缺字段），缺省空数组 —— 行上不画小标，一切照旧。 */
+          links: Array.isArray(data.links) ? data.links.map(text) : [],
           phase: 'ready',
           note: data.truncated === true ? '仓库太多，只显示前 ' + String(Array.isArray(data.repos) ? data.repos.length : 0) + ' 个' : '',
         }
@@ -403,12 +406,17 @@
         const isCur = path === effective
         const picked = selection.indexOf(path) >= 0
         const manual = list.manual.indexOf(path) >= 0
+        /* .git 是文件的仓库（worktree / 子模块）：名字旁一枚暗色「wt」小标 —— 它
+            不是独立仓库，配置它的提交身份/远端会改到链接那头的版本库，扫一眼分得清。
+            missing 行（目录已不在）不加：那一行说的已经是另一件事。 */
+        const linked = list.links.indexOf(path) >= 0
         rows.push(h('div', {
           key: 'repo:' + path,
           className: 'dsh-git-repo-row'
             + (isCur ? ' dsh-git-repo-cur' : '')
             + (picked ? ' dsh-git-repo-sel' : ''),
           title: path + (isCur ? '\n当前生效仓库：历史、提交、推送都作用在这里' : '')
+            + (linked ? '\n.git 是链接文件（git worktree 或子模块）' : '')
             + (picking
               ? '\n单击 = 选中为本页正在编辑的仓库（提交身份、远端、换行符都改它；不改生效仓库）'
               : '\n单击 = 切换为生效仓库；Ctrl+单击 = 加入/移出多选'),
@@ -424,6 +432,10 @@
           h('span', { key: 'm', className: 'dsh-git-repo-mark' }, isCur ? '●' : ''),
           h('span', { key: 'g', className: 'dsh-git-repo-glyph' }, h(Icon, { name: 'repo', size: 12 })),
           h('span', { key: 'n', className: 'dsh-git-repo-name' }, repoShortName(labels, path)),
+          linked ? h('span', {
+            key: 'wt', className: 'dsh-git-repo-wt',
+            title: '.git 是链接文件（git worktree 或子模块）',
+          }, 'wt') : null,
           manual ? h('button', {
             key: 'x', type: 'button', className: 'dsh-git-repo-x',
             title: '从列表移除（手动登记的仓库才能移除）',

@@ -106,6 +106,12 @@
          把它丢了的话，读者在配置页改一次 git 路径，各仓库写到一半的提交信息就全
          没了。原样搬运、不做清洗 —— 清洗是 Host 那边 normalizeDrafts 的职责。 */
       drafts: {},
+      /* worktree → 主目录（host 65-worktree.js 的 git/wt-main-save 写、wtMainSnapshot
+         读）。与 repos 同一条先例：配置页保存的是**整份**配置，客户端的归一化把它
+         丢了的话，读者在配置页改一次 git 路径，手工纠正过的 worktree 主目录就全
+         没了 —— 那正是主仓库被删/搬走后读者唯一亲手给对的答案。原样搬运、不做
+         清洗 —— 清洗是 Host 那边 normalizeWorktreeMains 的职责。 */
+      worktreeMains: {},
     }
     let pluginConfig = Object.assign({}, PLUGIN_CONFIG_DEFAULTS)
     let pluginConfigPath = ''
@@ -139,6 +145,8 @@
       /* drafts 同 repos 一条先例：原样搬运，Host 那边负责清洗（见 PLUGIN_CONFIG_DEFAULTS
          里那一格的说明）。 */
       out.drafts = raw.drafts != null && typeof raw.drafts === 'object' && !Array.isArray(raw.drafts) ? raw.drafts : {}
+      /* worktreeMains 同 repos/drafts 一条先例：原样搬运，Host 那边负责清洗。 */
+      out.worktreeMains = raw.worktreeMains != null && typeof raw.worktreeMains === 'object' && !Array.isArray(raw.worktreeMains) ? raw.worktreeMains : {}
       return out
     }
 

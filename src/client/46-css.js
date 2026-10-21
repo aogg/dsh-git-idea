@@ -235,6 +235,13 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-setup-h{font-size:14px;font-weight:600}
 .dsh-git-setup-path{font-family:ui-monospace,monospace;font-size:12px;word-break:break-all;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l1);border-radius:6px;padding:6px 8px}
 .dsh-git-setup-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+/* 说明页里的「worktree 主目录」块（56-setup.js WorktreeMainSetup）：说明页本体是
+   一个 gap:10 的纵列，这块作为它的最后一格，顶上一道分隔线把自己和上面的
+   初始化/打开目录动作隔开；内部自成一个 gap:8 的小纵列，行内布局全部借用
+   .dsh-git-set-row / .dsh-git-set-label（配置页同一套），不再另写一套行样式。 */
+.dsh-git-setup-sub{display:flex;flex-direction:column;gap:8px;margin-top:6px;padding-top:12px;border-top:1px solid var(--dsw-alias-border-l1)}
+.dsh-git-setup-sub .dsh-git-setup-h{font-size:12px}
+.dsh-git-wtmain-path{flex:0 1 auto;min-width:0;max-width:100%;overflow:auto;white-space:nowrap}
 .dsh-git-hint{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary)}
 .dsh-git-danger{color:var(--dsw-alias-state-error-primary)}
 .dsh-git-tools{position:relative;flex:none;display:flex;align-items:center;gap:3px;flex-wrap:nowrap;padding:5px 52px 5px 7px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2)}
@@ -333,6 +340,12 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-set-scope-body{display:flex;flex-direction:column;gap:14px;margin-top:2px;padding-left:12px;border-left:2px solid var(--dsw-alias-border-l2)}
 .dsh-git-set-scope > .dsh-git-set-group:first-child,
 .dsh-git-set-scope-body > .dsh-git-set-group:first-child{margin-top:0;padding-top:0;border-top:0}
+/* 配置页「worktree 主目录」下级组（80-panel.js wtGroupNode）：整组条件渲染，画出来
+   时是 scope-body 里与提交身份/远端/换行符同级的一格 —— 外面再包一层自己的纵列
+   （scope-body 的 gap 对包装层是一个整体），内部节奏与同级组一致（组头 → 说明 →
+   两行）。首组让双线的 :first-child 规则同样适用于这层包装。 */
+.dsh-git-wtmain{display:flex;flex-direction:column;gap:8px}
+.dsh-git-set-scope-body > .dsh-git-wtmain > .dsh-git-set-group:first-child{margin-top:0;padding-top:0;border-top:0}
 /* ── 配置页「仓库」组内「git 忽略项」分组（80-panel.js GitIgnoredScanGroup）──
     仓库 → 工作树 → 条目 三层的只读清单。类名另起 dsh-git-ign- 前缀，不混仓库块 /
     工作树块的 dsh-git-repo-box/-row、dsh-git-wt-box/-row —— 那两批是测试按个数认的
@@ -557,6 +570,10 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-repo-gone{opacity:.55}
 .dsh-git-repo-x{flex:none;border:0;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:1;padding:0 2px;border-radius:3px;cursor:pointer}
 .dsh-git-repo-x:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+/* 仓库行的「wt」小标（24-repos.js，.git 是文件的仓库根）：描边空签、压暗一档 ——
+   与 git 忽略项扫描的「链接」徽标（.dsh-git-ign-tag-link）同一读法，字号再小一号，
+   它只是个提醒，不能和行名抢眼。 */
+.dsh-git-repo-wt{flex:none;padding:0 3px;border-radius:3px;border:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-secondary);font-size:9px;line-height:13px;cursor:default}
 .dsh-git-repo-add{display:flex;align-items:center;gap:5px;margin-top:2px;min-height:20px;padding:1px 5px;border-radius:5px;font-size:11px;cursor:pointer;white-space:nowrap}
 .dsh-git-repo-add:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dsh-git-repo-addrow{display:flex;gap:4px;padding:2px 5px}
@@ -597,6 +614,13 @@ textarea.dsh-git-input{resize:vertical}
 /* ⚠（目录已丢失）与 🔒（已锁定）这两个行尾小记号：本版没有 prune / 解锁的动作，
     它们只是「这条有状况」的眼标，详情全在行 tooltip 里，所以压一点透明度。 */
 .dsh-git-wt-mark{flex:none;font-size:9px;line-height:1;opacity:.85}
+/* worktree 块的「主目录」行（25-worktree.js v1.2）：块头正下方的一行身份说明。
+   刻意不叫 dsh-git-wt-row —— 那个类名是测试按清单行认的（gp57/gp60 数个数），
+   这一行说的是目录身份不是清单行；左缩进对齐行名的 18px，读起来是头行的从属。 */
+.dsh-git-wt-mainrow{display:flex;align-items:center;gap:5px;min-height:20px;padding:1px 5px 1px 18px;font-size:11px;white-space:nowrap;-webkit-user-select:none;user-select:none}
+.dsh-git-wt-mainrow .dsh-git-tsub{flex:none}
+.dsh-git-wt-main-act{flex:none;border:1px solid var(--dsw-alias-border-l1);border-radius:4px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:10px;line-height:14px;padding:0 5px;cursor:pointer}
+.dsh-git-wt-main-act:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 
 /* ── 差异页右列：这批修改的来源文件列表 ──
    补丁区 flex:1、右列固定 240px。右列的行复用树行那套类名（dsh-git-trow），
