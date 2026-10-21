@@ -188,10 +188,13 @@ async function saveWorkspaceRepo(input) {
    写回悄悄抹掉，draftSave 同一条理由（70-config.js 那一段写全了）。这里与
    saveWorkspaceRepo 一样只动自己那一格，其余键原样带过去，谁也抹不掉谁。 */
 
-/* 读当前工作区记的生效仓库。repo 非空时顺手探测一次它还在不在 —— 记的账是
-   持久化的，目录会被删/搬走；已经不在就答空串（不套用），但**不删账**：也许只是
-   暂时挂不上，读者下一次单击自然会覆写它。stale: true 把「账上有、盘上无」这件事
-   说破，客户端据此安静维持现状。 */
+/* 读当前工作区记的生效仓库。repo 非空时顺手探测一次它还在不在、git 还读不读得
+   动 —— 记的账是持久化的，目录会被删/搬走；**.git 是文件（worktree/子模块）时
+   里面那条 gitdir 还可能指向别处**（Windows 上建的 worktree 整棵拷来 Linux，
+   gitdir 写的是 D:/ 盘符路径），文件在、git 却读不动。两种坏都答空串（不套用），
+   但**不删账**：也许只是暂时挂不上，读者下一次单击自然会覆写它。stale: true 把
+   「账上有、盘上读不了」这件事说破，客户端据此安静维持现状 —— 不做这一步，账
+   就会每次打开面板把读者自动带进「这个目录不是 Git 仓库」的说明页。 */
 async function appliedRepoSnapshot(input) {
   const workspace = sessionWorkdir(input)
   if (workspace === undefined) {
@@ -204,8 +207,13 @@ async function appliedRepoSnapshot(input) {
   if (repo.length > 0) {
     /* probeShell 的 workdir 是会话自己的目录 —— 正合「检查别处路径」的教条：
        要检查的这个仓库多半不在会话目录里，拿它当 workdir 只会在 spawn 那一步
-       就失败。一次 `[ -e ]` 就够，这是账本的自检，不是仓库读数，不进读缓存。 */
-    const check = await probeShell(input, 'if [ -e ' + shq(repo) + '/.git ]; then echo repo; else echo gone; fi')
+       就失败。`[ -e ]` 加一道 `rev-parse --absolute-git-dir`：前者只证明 .git
+       这个文件/目录在，后者才是「git 认这是不是一个仓库」—— worktree 的
+       gitlink 指向不存在的 gitdir 时前者真、后者假。与面板打开时对每个仓库的
+       身份读数（64-history.js readPanelIdentity）同一道判据，账本与面板才不会
+       各说各话。一次 spawn，是账本的自检，不是仓库读数，不进读缓存。 */
+    const check = await probeShell(input, 'if [ -e ' + shq(repo) + '/.git ] && '
+      + gitCmd() + ' -C ' + shq(repo) + ' rev-parse --absolute-git-dir >/dev/null 2>&1; then echo repo; else echo gone; fi')
     if (check.stdout.trim() !== 'repo') {
       return { ok: true, workspace: workspace, repo: '', stale: true }
     }
