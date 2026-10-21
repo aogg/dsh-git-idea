@@ -318,7 +318,10 @@ async function previousBranch(input) {
    剥好（去掉远端前缀的那一段）。不用裸的 `git switch <remote>/<branch>` 是因为
    DWIM 在「本地同名分支已存在」时的行为不明确（git switch 直接拒绝、git checkout
    却悄悄切到已有的本地分支），显式 -c 让两边都是同一句看得懂的错。stash 兜底对
-   这条路同样成立 —— 签出前工作区是脏的照样先收再切。 */
+   这条路同样成立 —— 签出前工作区是脏的照样先收再切。裸路（普通 switch，不带
+   create）现在也在进这里前先做过一遍同样的显式解析（80-rpc.js 的
+   resolveCheckoutTarget）：目标认得是远端分支而本地不存在时，一样以 create 形状
+   进来 —— git 的 --guess 在任何一条路上都不再是被依赖的那个。 */
 async function switchBranch(input, name, desc, create) {
   const args = argsFor(input)
   const requested = repoFrom(input, null)
