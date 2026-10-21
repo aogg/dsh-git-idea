@@ -447,7 +447,47 @@ onRpc('git/fetch', async function (input) {
 
 onRpc('git/pull', async function (input) {
   const config = await netConfig()
-  const argv = config.pullRebase === true ? ['pull', '--rebase'] : ['pull']
+  /* 「rebase 更新」的语义（顶部 ↷、分支行右键「变基」的当前分支那条）：更新即变基
+     —— input.rebase === true 时无条件 ['pull','--rebase']，把 pullRebase 配置盖过去
+     （配置只回答「普通 ↓ 默认哪种形状」，不该能反过来压住按钮明说的要求）。
+     setUpstream 的绑定流程与这个开关无关 —— 先绑后拉的顺序照旧。 */
+  const argv = (input != null && input.rebase === true) || config.pullRebase === true ? ['pull', '--rebase'] : ['pull']
+  /* 分支行右键「拉取」落在别的分支上（input.branch 给了、又不等于当前分支）：
+     普通 pull 只作用于当前分支，HEAD 不许动 —— 「把那个分支拉一下」要的是把它
+     快进(fast-forward)到它的上游，形状是 `git fetch <远端> <远端分支>:<分支>`：
+     不带 + 前缀，非快进的更新 git 自己就拒绝，快进语义不用这里再造。上游先问
+     <分支>@{u}：没有上游直说（绑一个的出路写在话里），不猜要跟谁。上游没有斜杠
+     = 它不是「远端/分支」形状，是本地分支当上游 —— 从「.」（本仓库自己）fetch
+     同一条 refspec，语义不变。这个 fetch 是网络动作（net 的理由与 git/fetch 同
+     一条），desc 跟普通 pull 共用「拉取」—— 命令页里读者认动作，不认 argv。
+     detached 时 HEAD 答不上来、current 是空串，同样走这条 —— 反正也不是「站在
+     某个分支上拉它自己的上游」。 */
+  const branch = input != null && isStr(input.branch) && input.branch.trim().length > 0 ? input.branch.trim() : ''
+  if (branch.length > 0) {
+    const asked = cleanRefHalf(branch)
+    if (asked === null || asked.length === 0) {
+      return { ok: false, error: 'bad-value', stderr: '拉取需要一个合法的分支名：不能为空、不能以 - 开头、不能含控制字符' }
+    }
+    const args = argsFor(input)
+    const head = await git(args, ['symbolic-ref', '--quiet', '--short', 'HEAD'], null, {})
+    const current = head.exitCode === 0 ? head.stdout.trim() : ''
+    if (current !== asked) {
+      const upstream = await git(args, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', asked + '@{u}'], null, {})
+      if (upstream.exitCode !== 0) {
+        return {
+          ok: false, error: 'no-upstream', repo: upstream.cwd,
+          stderr: '「' + asked + '」还没有上游 —— 拉取不知道要跟谁比。先用分支行右键「修改跟踪分支…」绑一个。',
+        }
+      }
+      const up = upstream.stdout.trim()
+      /* 远端分支名可能含斜杠（origin/feat/x）：远端名是第一段，剩下的整段是远端
+         分支名 —— 与 checkout 的 asNewLocal 拆 origin/feat/x 是同一把刀。 */
+      const slash = up.indexOf('/')
+      return panelMutate(input, slash > 0
+        ? ['fetch', up.slice(0, slash), up.slice(slash + 1) + ':' + asked]
+        : ['fetch', '.', up + ':' + asked], { net: true, spawn: NET_SPAWN, desc: '拉取' })
+    }
+  }
   const setup = input != null && input.setUpstream != null && typeof input.setUpstream === 'object' && !Array.isArray(input.setUpstream) ? input.setUpstream : null
   if (setup == null) {
     /* A pull that merges writes a commit, so the identity can be what failed. */
@@ -461,12 +501,15 @@ onRpc('git/pull', async function (input) {
      「命令」页（desc 区分「绑定上游」与「拉取」），答复带 upstreamSet / pulled 与
      每步自己的 exitCode / stderr。 */
   const remote = cleanRefHalf(setup.remote)
-  const branch = cleanRefHalf(setup.branch)
-  if (remote === null || branch === null || remote.length === 0 || branch.length === 0) {
+  /* 叫 upBranch 而不是 branch：函数前半已经用 branch 这个名字装「右键拉取的目标
+     分支」了（同一个函数体，两个 const branch 撞名）—— 这里绑的是上游的远端分支
+     名，名字跟着语义走。 */
+  const upBranch = cleanRefHalf(setup.branch)
+  if (remote === null || upBranch === null || remote.length === 0 || upBranch.length === 0) {
     return { ok: false, error: 'bad-value', upstreamSet: false, pulled: false, stderr: '绑定上游需要合法的远端名与远端分支名：不能为空、不能以 - 开头、不能含控制字符' }
   }
-  const bound = await panelMutate(input, ['branch', '--set-upstream-to=' + remote + '/' + branch], { desc: '绑定上游' })
-  const upstream = { remote: remote, branch: branch, exitCode: bound.exitCode, stderr: bound.stderr }
+  const bound = await panelMutate(input, ['branch', '--set-upstream-to=' + remote + '/' + upBranch], { desc: '绑定上游' })
+  const upstream = { remote: remote, branch: upBranch, exitCode: bound.exitCode, stderr: bound.stderr }
   if (bound.ok !== true) {
     return Object.assign(bound, { error: 'set-upstream-failed', upstreamSet: false, pulled: false, setUpstream: upstream })
   }
@@ -509,10 +552,10 @@ onRpc('git/push', async function (input) {
   return panelMutate(input, ['push'], { net: true, spawn: NET_SPAWN, desc: '推送' })
 })
 
-/* cherry-pick, revert and merge share one entry point because they also share
-   the way they stop half-done: continue, skip or abort has to be reachable or a
-   conflicted panel would trap the user with no way back. */
-const SEQUENCER_OPS = ['cherry-pick', 'revert', 'merge']
+/* cherry-pick, revert, merge and rebase share one entry point because they also
+   share the way they stop half-done: continue, skip or abort has to be reachable
+   or a conflicted panel would trap the user with no way back. */
+const SEQUENCER_OPS = ['cherry-pick', 'revert', 'merge', 'rebase']
 
 /* 右键菜单「作用于整个选区」（PhpStorm 同款）的目标集：客户端把选区按要应用的
    顺序（最旧→最新）放进 targets 数组，这里逐项清洗。目标不限于 hash —— revert /
@@ -541,19 +584,46 @@ onRpc('git/sequence', function (input) {
   const op = input != null && isStr(input.op) ? input.op : ''
   const action = input != null && isStr(input.action) ? input.action : ''
   if (SEQUENCER_OPS.indexOf(op) < 0) return { ok: false, error: 'unknown operation ' + op }
-  /* 拣选 / 还原 / 合并三件事共用一个入口，命令页里也共用一个名字 —— 读者在那一页
-     认操作，不认 argv 的拼写。 */
-  const said = '拣选·还原·合并'
+  /* 拣选 / 还原 / 合并 / 变基四件事共用一个入口，命令页里也各用各的名字 —— 读者在
+     那一页认操作，不认 argv 的拼写；变基单给「变基」二字，与它右键菜单/横幅上的
+     按钮用词一致。 */
+  const said = op === 'rebase' ? '变基' : '拣选·还原·合并'
 
   if (op === 'merge') {
     if (action === 'start') {
       const targets = sequenceTargets(input)
       if (targets.length === 0) return { ok: false, error: 'a branch or commit is required to merge' }
-      return commitMutation(input, ['merge', '--no-edit'].concat(targets), { desc: said })
+      /* noFf（分支行右键「合并到当前分支（--no-ff）」）：能快进也造一个合并提交
+         —— 分叉的历史在图上一眼看得出来处，代价是多一条提交，决定权在按钮。 */
+      return commitMutation(input, (input != null && input.noFf === true
+        ? ['merge', '--no-ff', '--no-edit']
+        : ['merge', '--no-edit']).concat(targets), { desc: said })
     }
     if (action === 'continue') return commitMutation(input, ['commit', '--no-edit'], { desc: said })
     if (action === 'abort') return panelMutate(input, ['merge', '--abort'], { desc: said })
     return { ok: false, error: 'merge supports start, continue and abort' }
+  }
+
+  /* 变基（分支行右键「变基」落在非当前分支上）：`git rebase <分支>` —— 把当前
+     分支的提交摘下来重放到 <分支> 之后。与 merge start 一样会写提交（重放的每一
+     条都是新对象），所以走 commitMutation，身份缺失那次失败照样说得清。start 只
+     收一个目标：git rebase 本来就吃一个 <upstream>，多目标没有意义，宁可拒绝。
+     --continue 之后的提交可能要过编辑器：消息编辑器是 core.editor 那层（与
+     cherry-pick / revert 的 continue 同一个压法），todo 编辑器是 sequence.editor
+     这层（78-actions.js 的 rebase -i 用它插 exec 行 —— 同一个配置键的两副面孔），
+     两层都压成 `true`（true 这个「编辑器」原样退出 0），面板里没有终端给它弹。 */
+  if (op === 'rebase') {
+    if (action === 'start') {
+      const targets = sequenceTargets(input)
+      if (targets.length !== 1) {
+        return { ok: false, error: 'rebase needs exactly one branch', stderr: '变基恰好需要一个分支：git rebase <分支>，把当前分支的提交重放到它之后' }
+      }
+      return commitMutation(input, ['rebase', targets[0]], { desc: said })
+    }
+    if (action === 'continue') return commitMutation(input, ['-c', 'core.editor=true', '-c', 'sequence.editor=true', 'rebase', '--continue'], { desc: said })
+    if (action === 'skip') return panelMutate(input, ['rebase', '--skip'], { desc: said })
+    if (action === 'abort') return panelMutate(input, ['rebase', '--abort'], { desc: said })
+    return { ok: false, error: 'rebase supports start, continue, skip and abort' }
   }
 
   if (action === 'start') {

@@ -1555,8 +1555,8 @@
 
          busy 是面板级的：一抬起来四个键一起 40% 透明、提交框/右键菜单/快捷命令全部
          锁死。同步组的一次点击只有那一个键在干活，不该连坐整个面板 —— 所以各记各的
-         （函数式更新，一次只翻一个键），按钮的禁用与转圈都从这份算；fetch/pull/push
-         另外彼此串行（panelBox.syncs 那条链），⟳ 等它自己触发的全树读落地。 */
+         （函数式更新，一次只翻一个键），按钮的禁用与转圈都从这份算；fetch/pull/
+         ↷/push 另外彼此串行（panelBox.syncs 那条链），⟳ 等它自己触发的全树读落地。 */
       const [syncRunning, setSyncRunning] = React.useState({})
       const setSyncKey = function (key, on) {
         setSyncRunning(function (previous) {
@@ -2188,7 +2188,7 @@
         reloadChanges()
       }
 
-      /* ── 同步组的运行中包装器（⇣↓↑，⟳ 纯读不进链）──
+      /* ── 同步组的运行中包装器（⇣↓↷↑，⟳ 纯读不进链）──
 
          先立标记再发起：动作排在链里等前一个跑完时，按钮已经在转了 —— 点下去的那
          一帧就得到「收到了」的反馈，而不是等前一个结束才亮。防抖在这里：转着的键
@@ -3923,9 +3923,9 @@
          beside the branch it acts on — not in the commit graph's own toolbar,
          which is about the selected commit. The middle toolbar keeps only what
          the selection scopes. */
-      /* 四个键的禁用只看「自己是不是在跑」，不再看面板级 busy：一个键转圈时，其余
-         三个照常可点（点了进 panelBox.syncs 排队），提交框、右键菜单、快捷命令也
-         全程照常 —— busy 不再为这四个动作抬起来。 */
+      /* 五个键的禁用只看「自己是不是在跑」，不再看面板级 busy：一个键转圈时，其余
+         四个照常可点（点了进 panelBox.syncs 排队），提交框、右键菜单、快捷命令也
+         全程照常 —— busy 不再为这五个动作抬起来。 */
       const syncRunningKey = function (key) { return syncRunning[key] === true }
       const syncGroup = h('div', { className: 'dsh-git-sync' },
         tool('refresh', '⟳', '重新读取仓库（忽略缓存）', function () { runSync('refresh', refresh) },
@@ -3934,6 +3934,16 @@
           { disabled: !repoOk || syncRunningKey('fetch'), running: syncRunningKey('fetch') }),
         tool('pull', '↓', 'pull：拉取并合入当前分支', function () { runSync('pull', function () { return runOp('git/pull', null, 'pull') }) },
           { disabled: !repoOk || syncRunningKey('pull'), running: syncRunningKey('pull'), badge: behind }),
+        /* 「rebase 更新」：↓ 的变基款。更新即变基 —— `git pull --rebase`（Host 无视
+            pull.rebase 配置：按钮明说的要求，配置压不住），先 fetch 再把当前分支的
+            本地提交摘下来重放到上游之后，历史保持一条直线、不造合并提交。走 runOp
+            的 git/pull 同一条路（syncKey 沿用 'pull' 的先例：不抬面板级 busy，只是
+            「这个动作自己在跑」的过路标记），所以没有上游时与 ↓ 一样进上游选择层，
+            而不是甩一句 git 的天书。badge 不加 —— 领先/落后的数字是 ↓↑ 的事，这个
+            键的语义说在 title 里。 */
+        tool('rebase', '↷', 'rebase 更新：先 fetch 再把当前分支变基到上游（git pull --rebase，无视 pull.rebase 配置）',
+          function () { runSync('rebase', function () { return runOp('git/pull', { rebase: true }, 'pull') }) },
+          { disabled: !repoOk || syncRunningKey('rebase'), running: syncRunningKey('rebase') }),
         /* 两段式：↑ 先开推送确认框（openPushConfirm 的 promise 在弹窗收起时才落定，
             runSync 链因此把 ↑ 的转圈与再点保护跨满整个弹窗生命期）。detached 时
             没有分支名可确认，预览也无从谈起 —— 照旧直接推，git 自己的原话
@@ -5025,7 +5035,8 @@
       ] : [
         /* ── 分支行右键菜单（PhpStorm 的分栏顺序：动作在上，元信息居中，破坏性在下）──
 
-           本地（含 HEAD 组的行）：签出 → 新建分支… → 推送 → 重命名分支… → 分隔线 →
+           本地（含 HEAD 组的行）：签出 → 新建分支… → 拉取 → 变基 → 推送 →
+           合并到当前分支 → 合并到当前分支（--no-ff）→ 重命名分支… → 分隔线 →
            复制分支名称 → 修改跟踪分支… → 分隔线 → 删除分支。远程行只有签出与复制 ——
            远程分支没有「跟踪谁 / 重命名」这些本地才有的事；它的「签出」是 DWIM 的
            显式形（git/checkout 的 asNewLocal）：建同名本地分支并建立跟踪。签出的
@@ -5065,6 +5076,39 @@
             setPrompt({ kind: 'branch-at', value: '', at: ctxMenu.name, repo: ctxMenu.repo })
           },
         }, '新建分支…'),
+        /* 拉取（本地行）：当前分支 = 跟自己的上游拉取并合并（普通 pull，与 ↓ 同义）；
+            别的分支 = 把它快进(fast-forward)到它的上游 —— HEAD 不动、工作区不切，
+            Host 走 `git fetch <上游>:<分支>`（不带 +，非快进 git 自己拒绝）。 */
+        ctxMenu.remote === true ? null : h('button', {
+          key: 'pull', type: 'button', className: 'dsh-git-menu-item',
+          title: ctxMenu.head === true
+            ? 'git pull：当前分支跟自己的上游拉取并合并'
+            : 'git fetch <上游> ' + ctxMenu.name + '：把它快进(fast-forward)到上游'
+              + ' —— 不切换工作区，HEAD 停在原地',
+          disabled: busy === true,
+          onClick: function (event) {
+            stopEvent(event)
+            setCtxMenu(null)
+            if (ctxMenu.head === true) ctxRun('git/pull', {}, ctxMenu.repo, '拉取失败')
+            else ctxRun('git/pull', { branch: ctxMenu.name }, ctxMenu.repo, '拉取失败')
+          },
+        }, '拉取'),
+        /* 变基（本地行）：当前分支 = 更新即变基（git pull --rebase，与顶部 ↷ 同义）；
+            别的分支 = git rebase <这个分支> —— 把当前分支的提交摘下来，重放到它
+            之后（写提交，走 git/sequence，冲突横幅那排 继续/跳过/中止 直接可用）。 */
+        ctxMenu.remote === true ? null : h('button', {
+          key: 'rebase', type: 'button', className: 'dsh-git-menu-item',
+          title: ctxMenu.head === true
+            ? 'git pull --rebase：先 fetch 再把当前分支变基到上游（与顶部 ↷ 同义）'
+            : 'git rebase ' + ctxMenu.name + '：把当前分支的提交摘下来，重放到这个分支之后',
+          disabled: busy === true,
+          onClick: function (event) {
+            stopEvent(event)
+            setCtxMenu(null)
+            if (ctxMenu.head === true) ctxRun('git/pull', { rebase: true }, ctxMenu.repo, '变基更新失败')
+            else ctxRun('git/sequence', { op: 'rebase', action: 'start', targets: [ctxMenu.name] }, ctxMenu.repo, '变基失败')
+          },
+        }, '变基'),
         ctxMenu.remote === true ? null : h('button', {
           key: 'push', type: 'button', className: 'dsh-git-menu-item',
           title: 'git push -u <远端> ' + ctxMenu.name
@@ -5077,6 +5121,36 @@
             ctxPush(ctxMenu.name, ctxMenu.repo)
           },
         }, '推送'),
+        /* 合并到当前分支（本地行）：把右键的这个分支合入当前分支。快进与否由 git
+            按默认规矩定；--no-ff 款总是造一条合并提交 —— 分叉在图上一眼看得出来
+            处，代价是多一条提交，两个决定都摆出来让读者挑。已站在这个分支上时
+            两款一起禁用 —— 合并自己是空操作，不是「成功」。 */
+        ctxMenu.remote === true ? null : h('button', {
+          key: 'merge', type: 'button', className: 'dsh-git-menu-item',
+          title: ctxMenu.head === true
+            ? '已经在这个分支上'
+            : 'git merge ' + ctxMenu.name + '：把 ' + ctxMenu.name + ' 合入当前分支'
+              + '（能快进就快进，否则造合并提交；冲突时横幅接管）',
+          disabled: ctxMenu.head === true || busy === true,
+          onClick: function (event) {
+            stopEvent(event)
+            setCtxMenu(null)
+            ctxRun('git/sequence', { op: 'merge', action: 'start', targets: [ctxMenu.name] }, ctxMenu.repo, '合并失败')
+          },
+        }, '合并到当前分支'),
+        ctxMenu.remote === true ? null : h('button', {
+          key: 'mergenoff', type: 'button', className: 'dsh-git-menu-item',
+          title: ctxMenu.head === true
+            ? '已经在这个分支上'
+            : 'git merge --no-ff ' + ctxMenu.name + '：把 ' + ctxMenu.name + ' 合入当前分支，'
+              + '生成合并提交（即使能快进也造一个 merge commit）',
+          disabled: ctxMenu.head === true || busy === true,
+          onClick: function (event) {
+            stopEvent(event)
+            setCtxMenu(null)
+            ctxRun('git/sequence', { op: 'merge', action: 'start', noFf: true, targets: [ctxMenu.name] }, ctxMenu.repo, '合并失败')
+          },
+        }, '合并到当前分支（--no-ff）'),
         ctxMenu.remote === true ? null : h('button', {
           key: 'rename', type: 'button', className: 'dsh-git-menu-item',
           title: 'git branch -m ' + ctxMenu.name + ' <新名字>'
