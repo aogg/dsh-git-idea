@@ -13,7 +13,7 @@
 
     /* host→client 的实时通道（真包的 client-pre.js 提供 liveBus）：插件活着连接就活着，
        插件卸载连接断开。bridge 版没有 liveBus（也没有 WS 路由可连），typeof 守卫让它
-       安静跳过 —— 面板的一切照旧走轮询。 */
+       安静跳过 —— 没有连接就没有推送，读数的新旧由手动刷新与回可见核对兜住。 */
     ctx.effect(function () {
       if (typeof liveBus !== 'undefined' && liveBus != null && typeof liveBus.open === 'function') liveBus.open()
       return function () {
@@ -25,8 +25,8 @@
 
        完成刷新与仓库变化的「发现」已搬进宿主进程：无论浏览器停在哪个会话视图、
        chip 挂没挂着，这里的订阅都在（它挂在插件生命周期上，不随会话切换卸载）。
-       bridge 版没有 liveBus，typeof 守卫安静跳过 —— 面板照旧走轮询和 chip 自己的
-       会话监听。三种消息：
+       bridge 版没有 liveBus，typeof 守卫安静跳过 —— 三种推送都收不到，chip 自己的
+       会话监听照旧，其余靠手动刷新与回可见核对。三种消息：
 
        · repo-changed：宿主已经失效过自己的读缓存并广播，这里把本地那份读数标成
          「不再证明完整」（markTreePartial）、敲整树重读的铃、bump —— 面板开着就走
