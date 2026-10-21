@@ -498,19 +498,33 @@
     const repoAppliedSignal = createSignal(function () { return repoApplied })
     const useRepoApplied = repoAppliedSignal.use
 
-    /* ── 生效仓库的浏览器级持久化层 ──
+    /* ── 生效仓库的持久化：两层 ──
 
-       内存里的 sharedRepos 只活一页：DSH 换会话时整个 session 子树重挂，模块级的它
-       还在；但页面刷新、断线重连之后就没了 —— chip 只好退回工作区默认仓库，读者上次
-       单击选定的仓库等于被静默改掉。所以再垫一层 localStorage：一个 JSON 键存
-       { [sessionId]: 仓库绝对路径 }。这是视图态（这台浏览器里、这个读者怎么看这个
-       会话），按面板尺寸 PANEL_SIZE_KEY 的先例进 localStorage：不进 Host 部署配置、
-       不加 RPC，换浏览器、换机器不跟 —— 跨机器那是配置层（drafts / repos）的职责。
+       权威一层在后端：插件配置（dsh-git-idea.json）的 appliedRepos，按**工作区**
+       一格（键 = 工作区绝对路径，Host repoKeyOf 的口径）。读者在这个工作区里单击
+       选定的仓库是这个项目的事实，不是某台浏览器怎么看它 —— 换浏览器、换机器、
+       开新会话都还是它。读是 git/repo-applied（每个会话只问一次，ensureAppliedRepo），
+       写是 git/repo-applied-save（每次单击 fire-and-forget 地回写）；清洗都在 Host
+       （70-config.js 的 normalizeAppliedRepos）。这一层管「跟谁走」。
 
-       读取懒一次：第一次用到时才碰 localStorage，之后以内存这份账为准（页面上问
-       sessionRepo 的频率不低，没必要反复解析同一份 JSON）。store 还拿不到时不算
-       「读过」、下次再试 —— 刷新后的第一帧往往还没有人把 document 交进来，若把那
-       一空读当成「确实没选过」缓存住，等 doc 到了也救不回来。 */
+       快速通道一层在浏览器：localStorage 一个 JSON 键存 { [sessionId]: 仓库绝对
+       路径 }。后端账落地之前，第一帧先按它画，免得闪一帧工作区默认仓库；后端账
+       落地以后端为准 —— 本页亲手单击选过的除外（liveRepos，本页的赢）。它是视图
+       态，按面板尺寸 PANEL_SIZE_KEY 的先例进 localStorage，上限 50、按最近使用
+       淘汰，不设过期。
+
+       内存里的 sharedRepos 仍然是运行期的唯一真账，两层都是它的垫底。localStorage
+       这份的读取懒一次：第一次用到时才碰 localStorage，之后以内存这份账为准（页面
+       上问 sessionRepo 的频率不低，没必要反复解析同一份 JSON）。store 还拿不到时
+       不算「读过」、下次再试 —— 刷新后的第一帧往往还没有人把 document 交进来，
+       若把那一空读当成「确实没选过」缓存住，等 doc 到了也救不回来。 */
+    /* 后端账的两份页内簿记（不持久，只活这一页）：
+       liveRepos —— 本页亲手单击选过的会话：后端账不许覆盖它（adoptHostRepo 见了
+       就退）。另一台浏览器记下的是昨天的事实，本页读者刚刚点的是现在的事实。
+       appliedAsked —— 后端账问过一次的会话：不再问第二遍（chip 与面板谁先挂载
+       都只发出一问）。 */
+    const liveRepos = {}
+    const appliedAsked = {}
     const APPLIED_REPOS_KEY = 'dsh.git-idea.applied-repos'
     /* 上限 50 个会话：一页同时开不了几个会话，但这个键跟着浏览器走一辈子，不设上限
        的话经年攒下的旧会话 id 就永远躺在里面。超出按最近使用淘汰 —— rememberRepo
@@ -568,35 +582,106 @@
       const value = stored !== null ? stored[sessionId] : undefined
       return typeof value === 'string' ? value : ''
     }
+    /* 快速通道那份账的写入，提炼成一个小函数：rememberRepo（单击）与
+       adoptHostRepo（后端账落地）都要它，LRU 的语义只写一遍。 */
+    function storedAppliedPut(sessionId, next) {
+      const stored = appliedReposMap()
+      if (stored === null) return
+      if (next.length > 0) {
+        /* 先删再插：普通对象的键序就是这份账的「最近使用」序，重插即挪到队尾，
+           淘汰从队首开始 —— 最久没人碰的会话先让位。 */
+        delete stored[sessionId]
+        stored[sessionId] = next
+        const keys = Object.keys(stored)
+        for (let i = 0; i < keys.length - APPLIED_REPOS_MAX; i += 1) delete stored[keys[i]]
+      } else {
+        /* 空串是删除语义：与内存格同一条路，盘上也不留这一格。 */
+        delete stored[sessionId]
+      }
+      writeStoredJSON(APPLIED_REPOS_KEY, stored)
+    }
+
+    /* 后端那份权威账的回写：fire-and-forget，失败只进控制台，绝不影响主流程 ——
+       单击已经生效，存不进配置不能把它变成一次操作失败（saveDraft 同一条规矩）。
+       两条路共用：真选择（正常路径），与第一次亲手点到同一个值的重申。 */
+    function saveAppliedToHost(sessionId, next) {
+      callHost('git/repo-applied-save', { sessionId: sessionId, repo: next }).then(function (result) {
+        if (result == null || result.ok !== true) {
+          console.warn('dsh-git-idea: 生效仓库存进后端配置失败:', result != null && result.error != null ? String(result.error) : 'unknown')
+        }
+      }, function (failure) {
+        console.warn('dsh-git-idea: 生效仓库存进后端配置失败:', failureText(failure))
+      })
+    }
+
     function rememberRepo(sessionId, next) {
       if (sessionId === undefined || sessionId === null) return
       const previous = sessionRepo(sessionId)
+      const firstLive = !(String(sessionId) in liveRepos)
       /* 同值早退：不重复通知，也不写盘 —— 盘上的字节是「读者做过一次真选择」的
-         账，一个没变成别的值的重申不配留痕。 */
-      if (previous === next) return
+         账，一个没变成别的值的重申不配留痕。唯一的例外是第一次亲手点到同一个值：
+         内存里一致不代表后端账也一致 —— 那可能正是另一台浏览器改过的旧值，等刷新
+         后被 adoptHostRepo 盖回来，就成了「切了多次老是变回去」的另一种形态。所以
+         这一次要把 liveRepos 立起来、同值也往后端递一次（重申式单击要让后端也认
+         它），屏幕上没有任何变化，不通知。 */
+      if (previous === next) {
+        if (next.length > 0 && firstLive === true) {
+          liveRepos[String(sessionId)] = true
+          saveAppliedToHost(sessionId, next)
+        }
+        return
+      }
       if (next.length > 0) sharedRepos[sessionId] = next
       else delete sharedRepos[sessionId]
-      /* 盘上的账与内存同进退。store 不在（还没人交 doc、或 localStorage 被私隐模式
-         拒了）就只记内存 —— 与这个层出现之前的行为完全一致，writeStored 自己那层
-         try/catch 语义也是这么承诺的；store 在，则这次单击换来的选择立刻落盘，
-         刷新、重连、切走再切回来都还是它。 */
-      const stored = appliedReposMap()
-      if (stored !== null) {
-        if (next.length > 0) {
-          /* 先删再插：普通对象的键序就是这份账的「最近使用」序，重插即挪到队尾，
-             淘汰从队首开始 —— 最久没人碰的会话先让位。 */
-          delete stored[sessionId]
-          stored[sessionId] = next
-          const keys = Object.keys(stored)
-          for (let i = 0; i < keys.length - APPLIED_REPOS_MAX; i += 1) delete stored[keys[i]]
-        } else {
-          /* 空串是删除语义：与内存格同一条路，盘上也不留这一格。 */
-          delete stored[sessionId]
-        }
-        writeStoredJSON(APPLIED_REPOS_KEY, stored)
-      }
+      /* 本页亲手点过的记号：立一次就够，之后后端账不许再覆盖这个会话。 */
+      liveRepos[String(sessionId)] = true
+      /* 盘上的账（快速通道）与内存同进退：store 不在（还没人交 doc、或 localStorage
+         被私隐模式拒了）就只记内存 —— 与持久化层出现之前的行为完全一致；store 在，
+         这次单击换来的选择立刻落盘，刷新、重连、切走再切回来都还是它。 */
+      storedAppliedPut(sessionId, next)
       repoApplied += 1
       repoAppliedSignal.notify()
+      saveAppliedToHost(sessionId, next)
+    }
+
+    /* 后端账落地，接回本页（收养）：ensureAppliedRepo 问到的那份账里记着读者上次
+       在这个工作区选定的仓库，把它写进 sharedRepos、快速通道跟着对齐，applied
+       信号一响，chip 与面板都换过去 —— 等价于「带着上次的选择打开这一页」。两条
+       刻意的「不」：不标 liveRepos（这不是本页的单击，只是把别处记下的事实搬
+       过来）；不回写后端（账本来就从后端来，回写会让两页互相追着写，死循环）。 */
+    function adoptHostRepo(sessionId, repo) {
+      const value = text(repo)
+      /* 后端没记过（空串）= 维持现状：回落到工作区默认仓库，与没有这一层时一字不差。 */
+      if (value.length === 0) return
+      /* 本页亲手选过，本页的赢。 */
+      if (liveRepos[String(sessionId)] === true) return
+      /* 账已一致：一个字节不动、不通知。 */
+      if (sessionRepo(sessionId) === value) return
+      sharedRepos[sessionId] = value
+      storedAppliedPut(sessionId, value)
+      repoApplied += 1
+      repoAppliedSignal.notify()
+    }
+
+    /* 问一次后端账（每个会话只问一次，appliedAsked 去重）。 */
+    function ensureAppliedRepo(sessionId) {
+      if (sessionId === undefined || sessionId === null) return
+      const key = String(sessionId)
+      if (appliedAsked[key] === true) return
+      appliedAsked[key] = true
+      callHost('git/repo-applied', { sessionId: sessionId }).then(function (data) {
+        if (data == null || data.ok !== true) return
+        if (data.stale === true) return
+        adoptHostRepo(sessionId, text(data.repo))
+      }, function () {
+        /* 后端账读不到（旧版 Host 还没有这个方法、运输层断着）就安静维持现状 ——
+           与没有这一层时一字不差。 */
+      })
+    }
+
+    /* 这个会话本页有没有亲手选过仓库（面板收养 effect 的让路条件）。 */
+    function liveRepoChosen(sessionId) {
+      return sessionId == null ? false : liveRepos[String(sessionId)] === true
     }
 
     /* The same answer for the one surface that has no session of its own: the

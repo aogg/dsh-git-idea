@@ -94,6 +94,12 @@
          没了 —— 那正是主仓库被删/搬走后读者唯一亲手给对的答案。原样搬运、不做
          清洗 —— 清洗是 Host 那边 normalizeWorktreeMains 的职责。 */
       worktreeMains: {},
+      /* 生效仓库的跨浏览器记忆（按工作区分键，host 61-repos.js 的 appliedRepoSnapshot
+         读、saveAppliedRepo 写）。与 repos 同一条先例：配置页保存的是**整份**配置，
+         客户端的归一化把它丢了的话，读者在配置页改一次 git 路径，各工作区记住的
+         生效仓库就全没了。原样搬运、不做清洗 —— 清洗是 Host 那边 normalizeAppliedRepos
+         的职责。 */
+      appliedRepos: {},
     }
     let pluginConfig = Object.assign({}, PLUGIN_CONFIG_DEFAULTS)
     let pluginConfigPath = ''
@@ -129,6 +135,8 @@
       out.drafts = raw.drafts != null && typeof raw.drafts === 'object' && !Array.isArray(raw.drafts) ? raw.drafts : {}
       /* worktreeMains 同 repos/drafts 一条先例：原样搬运，Host 那边负责清洗。 */
       out.worktreeMains = raw.worktreeMains != null && typeof raw.worktreeMains === 'object' && !Array.isArray(raw.worktreeMains) ? raw.worktreeMains : {}
+      /* appliedRepos 同 repos/drafts/worktreeMains 一条先例：原样搬运，Host 那边负责清洗。 */
+      out.appliedRepos = raw.appliedRepos != null && typeof raw.appliedRepos === 'object' && !Array.isArray(raw.appliedRepos) ? raw.appliedRepos : {}
       return out
     }
 

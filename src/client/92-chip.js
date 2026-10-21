@@ -202,6 +202,13 @@
          放在 effect 里而不是渲染里：渲染期间通知订阅者就是渲染期间改别人的 state。 */
       React.useEffect(function () { rememberSession(sessionId) }, [sessionId])
 
+      /* 生效仓库的后端账（跨浏览器那份）：chip 每个会话必挂、又比面板早，由它发这一问
+         （ensureAppliedRepo 每会话只问一次）。后端记了哪个仓库，就把它接回本页 ——
+         新会话、换浏览器、刷新页面都还是读者上次选定的那个，不再回落到工作区默认仓库。 */
+      React.useEffect(function () {
+        ensureAppliedRepo(sessionId)
+      }, [sessionId])
+
       /* ── 会话状态（有则用之，bridge 版这些 props 不存在）──
 
          hook props 是 DSH 注入的固定席位，同一个挂载上在不在是定死的，所以按存在

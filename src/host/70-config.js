@@ -54,6 +54,13 @@ function normalizeConfig(raw) {
        项目走，而不是跟着某台浏览器；客户端 20-prefs.js 同样照 repos 的先例原样
        搬运，配置页一次整份保存不至于把手工配置的主目录抹掉。 */
     worktreeMains: {},
+    /* 生效仓库的跨浏览器记忆：{ "<工作区绝对路径>": "<仓库绝对路径>" }。
+       读者在这个工作区里单击选定的仓库是这个项目的事实，不是某台浏览器怎么看它 ——
+       按工作区（不是按会话）存进这份配置，换浏览器、换机器、开新会话都还是它。
+       浏览器 localStorage 那层（客户端 10-state.js 的 APPLIED_REPOS_KEY）降级为
+       首帧快速通道：后端答复落地前后端为准。客户端 20-prefs.js 照 repos 的先例
+       原样搬运，设置页一次整份保存不至于把这份记忆抹掉。 */
+    appliedRepos: {},
   }
   if (raw == null || typeof raw !== 'object') return out
   if (isStr(raw.initBranch)) out.initBranch = raw.initBranch.trim().slice(0, 120)
@@ -68,6 +75,7 @@ function normalizeConfig(raw) {
   out.quickCommands = normalizeQuickCommands(raw.quickCommands)
   out.drafts = normalizeDrafts(raw.drafts)
   out.worktreeMains = normalizeWorktreeMains(raw.worktreeMains)
+  out.appliedRepos = normalizeAppliedRepos(raw.appliedRepos)
   return out
 }
 
@@ -140,6 +148,34 @@ function normalizeWorktreeMains(raw) {
     if (worktree.charAt(0) !== '/' || worktree.length > WT_MAIN_PATH_MAX) continue
     if (main.charAt(0) !== '/' || main.length > WT_MAIN_PATH_MAX) continue
     out[worktree] = main
+    kept += 1
+  }
+  return out
+}
+
+/* 工作区 → 生效仓库（61-repos.js 的 saveAppliedRepo 写、appliedRepoSnapshot 读）。
+   键是工作区的绝对路径（repoKeyOf 的口径 —— 去掉尾部斜杠后的样子），值是读者在
+   这个工作区里单击选定的仓库根绝对路径。清洗口径与 normalizeWorktreeMains 完全
+   一致：键与值都必须是「非空、以 / 开头、≤4096 字符」的字符串（去首尾空白 ——
+   同一个目录两种写法得是同一个键），4096 与 REPO_MAP / WT_MAIN 同款，是磁盘路径
+   的边界而不是 git 的；条数封顶 64（WT_MAIN_MAP_MAX / DRAFT_REPOS_MAX 同一个数，
+   读者点不出更多「工作区 × 仓库」的组合）。清洗后条目不足不报错、为空就存空
+   映射：一个读不出来的条目比一个被悄悄改写过的条目诚实。 */
+const APPLIED_MAP_MAX = 64
+const APPLIED_PATH_MAX = 4096
+
+function normalizeAppliedRepos(raw) {
+  const out = {}
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return out
+  let kept = 0
+  for (const key in raw) {
+    if (!Object.prototype.hasOwnProperty.call(raw, key)) continue
+    if (kept >= APPLIED_MAP_MAX) break
+    const workspace = key.trim()
+    const repo = isStr(raw[key]) ? raw[key].trim() : ''
+    if (workspace.charAt(0) !== '/' || workspace.length > APPLIED_PATH_MAX) continue
+    if (repo.charAt(0) !== '/' || repo.length > APPLIED_PATH_MAX) continue
+    out[workspace] = repo
     kept += 1
   }
   return out

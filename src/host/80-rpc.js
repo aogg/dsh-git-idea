@@ -140,6 +140,15 @@ onRpc('git/repos', function (input) { return readWorkspaceRepos(input) })
 
 onRpc('git/repos-save', function (input) { return saveWorkspaceRepo(input) })
 
+/* 生效仓库的后端账（61-repos.js 末尾那两条）：按工作区一区一格存进插件配置 ——
+    生效仓库跟的是这个工作区，不是某一次会话。读（git/repo-applied）对记下却已
+    不在的仓库答 stale 自愈（不套用、也不删账，等读者下次单击自然覆写）；写
+    （git/repo-applied-save）同值不落盘 —— 重申式单击常来同值，一个字节都不该碰
+    配置文件。两条的读改写都在 Host，理由与 drafts 一致（见 70-config.js）。 */
+onRpc('git/repo-applied', function (input) { return appliedRepoSnapshot(input) })
+
+onRpc('git/repo-applied-save', function (input) { return saveAppliedRepo(input) })
+
 /* 面板「命令」页：这个工作区里执行过的所有 git 命令，数据源是 DSH 的会话记录
    而不是仓库（76-cmdlog.js）。和上面两个 repos 读一样按工作区走，不进读缓存 ——
    它要的就是「刚刚又跑了什么」，每次都重读一遍会话文件。 */

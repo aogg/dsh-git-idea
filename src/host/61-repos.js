@@ -173,3 +173,74 @@ async function saveWorkspaceRepo(input) {
   /* 答复带的是合并后的新清单：客户端一次往返就能把整份列表换成新的。 */
   return await readWorkspaceRepos(input)
 }
+
+/* ── 生效仓库的后端账（按工作区一格）──
+
+   单击选定的生效仓库过去只记在浏览器的 localStorage 里，而且键是「会话 id」：
+   会话 id 一换（开新对话）、浏览器一换、缓存一清，账就没了，面板于是回落到
+   工作区默认仓库 —— 读者切了几次的仓库「过一会老是变回第一个」，正是这个 bug。
+   生效仓库跟着的应该是这个工作区，不是某一次对话：所以它按工作区分键存进插件
+   配置（normalizeConfig 的 appliedRepos），换浏览器、换机器、开新会话都还是它。
+
+   为什么读改写都放在 Host、客户端只递「这个会话、哪个仓库」：config-save 是
+   「整份换掉」的写法 —— 客户端先读整份、改一个键、再整体写回，读与写之间别人
+   落盘的键（另一台浏览器刚存的草稿、全局档正在改的 git 路径）会被这一次整体
+   写回悄悄抹掉，draftSave 同一条理由（70-config.js 那一段写全了）。这里与
+   saveWorkspaceRepo 一样只动自己那一格，其余键原样带过去，谁也抹不掉谁。 */
+
+/* 读当前工作区记的生效仓库。repo 非空时顺手探测一次它还在不在 —— 记的账是
+   持久化的，目录会被删/搬走；已经不在就答空串（不套用），但**不删账**：也许只是
+   暂时挂不上，读者下一次单击自然会覆写它。stale: true 把「账上有、盘上无」这件事
+   说破，客户端据此安静维持现状。 */
+async function appliedRepoSnapshot(input) {
+  const workspace = sessionWorkdir(input)
+  if (workspace === undefined) {
+    return { ok: false, error: 'no-path', workspace: null, repo: '' }
+  }
+  const config = await readConfigFile()
+  const key = repoKeyOf(workspace)
+  const found = config.appliedRepos[key]
+  let repo = isStr(found) ? found : ''
+  if (repo.length > 0) {
+    /* probeShell 的 workdir 是会话自己的目录 —— 正合「检查别处路径」的教条：
+       要检查的这个仓库多半不在会话目录里，拿它当 workdir 只会在 spawn 那一步
+       就失败。一次 `[ -e ]` 就够，这是账本的自检，不是仓库读数，不进读缓存。 */
+    const check = await probeShell(input, 'if [ -e ' + shq(repo) + '/.git ]; then echo repo; else echo gone; fi')
+    if (check.stdout.trim() !== 'repo') {
+      return { ok: true, workspace: workspace, repo: '', stale: true }
+    }
+  }
+  return { ok: true, workspace: workspace, repo: repo }
+}
+
+/* 存/清当前工作区的生效仓库。repo 空串 = 删除语义（这个工作区回到默认回落），
+   非空必须是 / 开头、不超过 APPLIED_PATH_MAX 的绝对路径。**不做存在性探测**：
+   客户端只会把扫描清单里的路径送来，而读的那条（appliedRepoSnapshot）已经对
+   死路径自愈 —— 存进一个此刻还在、明天被删的路径，不是这次保存该拦的事。
+
+   同值早退：重申式单击常来同值 —— 与账上完全一致的那一次连盘都不该碰
+   （draftSave 同一条纪律），别的键也少冒一次被并发写回抹掉的风险。 */
+async function saveAppliedRepo(input) {
+  const workspace = sessionWorkdir(input)
+  if (workspace === undefined) {
+    return { ok: false, error: 'no-path', workspace: null }
+  }
+  const repo = input != null && isStr(input.repo) ? input.repo.trim() : ''
+  if (repo.length > 0 && (repo.charAt(0) !== '/' || repo.length > APPLIED_PATH_MAX)) {
+    return { ok: false, error: 'absolute path required', repo: repo }
+  }
+  const config = await readConfigFile()
+  const map = Object.assign({}, config.appliedRepos)
+  const key = repoKeyOf(workspace)
+  if (repo.length === 0) delete map[key]
+  else map[key] = repo
+  /* 改完的副本与原账逐键一致（含「删一条本来就没有的」）= 一个字节不用写。 */
+  if (map[key] === config.appliedRepos[key]) {
+    return { ok: true, workspace: workspace, repo: repo, unchanged: true }
+  }
+  /* 写这份文件要这个会话的沙箱策略 —— 它在任何工作区之外（writeConfigFile 的
+     那段说明），argsAt 把 sessionId 带上，理由与 saveWorkspaceRepo 相同。 */
+  const written = await writeConfigFile(Object.assign({}, config, { appliedRepos: map }), argsAt(input, null))
+  if (written.ok !== true) return written
+  return { ok: true, workspace: workspace, repo: repo }
+}

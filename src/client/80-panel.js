@@ -1937,6 +1937,18 @@
         setUntrackedFiles({})
       }
 
+      /* 生效仓库的后端账落地（10-state.js 的 adoptHostRepo 发的 applied 信号）：
+         本页还没亲手点过仓库时，面板跟着换到后端记的那个 —— 等价于「带着上次的选择
+         打开面板」，所以走 applyRepo 整套重置，与单击同一套路径。本页亲手点过
+         （liveRepoChosen）或已一致时一个字节不动。 */
+      const appliedVersion = useRepoApplied()
+      React.useEffect(function () {
+        const next = sessionRepo(sessionId)
+        if (next.length === 0 || next === appliedRepo) return
+        if (appliedRepo.length > 0 && liveRepoChosen(sessionId) === true) return
+        applyRepo(next)
+      }, [appliedVersion, sessionId, appliedRepo])
+
       const bump = bumpData
 
       /* ── 多仓库（24-repos.js）：这个工作区里的仓库清单，和两块侧栏各自的选择 ──
@@ -2764,6 +2776,9 @@
            （单测直接挂面板、或未来的挂载顺序变化），账也赶在下次询问前就位。 */
         loadAppliedRepos(doc)
         loadPluginConfig()
+        /* 面板先于 chip 到场时的兜底：后端账这一问也在这里发（appliedAsked 去重，
+           与 chip 谁先到都只问一次）。 */
+        ensureAppliedRepo(sessionId)
         if (panelSize.w > 0 || panelSize.h > 0) setSize({ w: panelSize.w, h: panelSize.h })
       }, [])
 
