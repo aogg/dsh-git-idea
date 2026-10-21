@@ -189,11 +189,12 @@
         setInfo(chipLabelFor(sessionId))
       }, [sessionId])
 
-      /* Slow lane: the chip is always on screen but it is not what the user is
-         working in, so it may lag the panel. */
+      /* The chip's own listener: with the panel closed it is the only one
+         watching this workspace, so the branch label and change count stay
+         current off the Host's pushes. */
       React.useEffect(function () {
         if (gitSettings.watchChip !== true) return undefined
-        return watchRepo(watched, sessionId, bumpData, false)
+        return watchRepo(watched, sessionId, bumpData)
       }, [watched, repoVersion, sessionId, isOpen])
 
       /* 这个页面在哪个会话里 —— chip 一直挂在输入框旁边，所以它是把这件事记下来的

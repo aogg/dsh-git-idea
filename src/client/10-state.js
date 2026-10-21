@@ -38,9 +38,9 @@
        fiber 上，插件卸载即拆）；真包所在的前端组合则未必 —— 部署实测
        （dsh-web-frontend 的组合只 mixin 了 reflect / fiber / registry / events），
        ctx.get('timer') 在那里永远答 undefined。而没有时钟的代价不是少几个优化：
-       watcherSchedule 拿不到 timer 一档都不排，轮询整个不存在，签名变化永远无人
-       flush —— Host 那份从不过期的读缓存（60-reads.js）就把 ↑ 的待推送数冻结在
-       最后一次 flush 上。真机上 agent 连提十来个提交、面板一个数都不动的现场就是它。
+       变化的发现已由宿主 WS 推送驱动（30-watch.js 不再排任何定时器），但浏览器这边
+       剩下的时钟用户都还在 —— hostWait 的宿主等待重试、hover / fly 这类瞬时动效、
+       变更页整树重读的间隔 —— 拿不到 timer 这些一样都排不出来。
 
        所以这里兜底：真包是普通脚本，window 自己的 setTimeout / setInterval 就够。
        返回的拆销函数与 timer 服务同形，所有调用点本来就只存拆销、只在 effect 清理里

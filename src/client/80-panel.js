@@ -2695,14 +2695,14 @@
       }, [changeSelKey, tab, props.ready, freshAt, sessionId])
 
       /* 多选时只 watch 选中的那几个仓库（不是清单里的全部 —— watcher 是真的在跑
-         git 的，多一个仓库就多一份轮询）。深度那半和单仓库一样只在变更页正在被看
-         时开，问的路径也是那个仓库自己的脏路径。 */
+         git 的，多一个仓库就多一份签名核对请求）。深度那半和单仓库一样只在变更页
+         正在被看时开，问的路径也是那个仓库自己的脏路径。 */
       React.useEffect(function () {
         if (props.ready !== true || props.active !== true || tab !== 'changes' || changeSelKey.length === 0) return undefined
         const repos = changeSelKey.split('\u0000')
         const stops = []
         for (let i = 0; i < repos.length; i += 1) {
-          stops.push(watchRepo(repos[i], sessionId, bump, true, true))
+          stops.push(watchRepo(repos[i], sessionId, bump, true))
           setWatchPaths(repos[i], sessionId, treeReadPaths(repos[i]))
         }
         return function () { for (let i = 0; i < stops.length; i += 1) stops[i]() }
@@ -2841,15 +2841,16 @@
         return function () { view.cancelAnimationFrame(raf) }
       }, [props.active])
 
-      /* The panel watches fast only while it is the thing on screen; closed, it
-         falls back to the chip's slow lane and shares that poller. */
+      /* The panel keeps one listener on its repository for as long as it is
+         ready — freshness arrives as Host pushes either way, so opening or
+         closing the panel changes nothing about the registration. */
       React.useEffect(function () {
         if (!repoOk || props.ready !== true) return undefined
         /* The deep signature is the one that notices edits inside files, and it
            is the expensive one; it is worth paying only while the changes tab is
            the thing being looked at. */
-        return watchRepo(appliedRepo, sessionId, bump, props.active === true, tab === 'changes')
-      }, [appliedRepo, repoOk, sessionId, props.active, props.ready, tab])
+        return watchRepo(appliedRepo, sessionId, bump, tab === 'changes')
+      }, [appliedRepo, repoOk, sessionId, props.ready, tab])
 
       /* The watcher's deep tick asks about the paths on screen, so it has to be
          told which ones they are. Nothing else drives this: a snapshot that

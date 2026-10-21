@@ -337,11 +337,6 @@
         next[key] = value
         apply(next)
       }
-      const num = function (key, value, min, max) {
-        const n = parseInt(value, 10)
-        set(key, isNaN(n) ? min : n)
-      }
-      const watchOff = draft.watchEnabled !== true
 
       return h('div', {
         className: 'dsh-git-global',
@@ -435,35 +430,7 @@
         h('div', { className: 'dsh-git-set-row' },
           h('label', { className: 'dsh-git-set-check' },
             h('input', {
-              type: 'checkbox', checked: draft.watchEnabled === true,
-              onChange: function (event) { set('watchEnabled', event.target.checked) },
-            }),
-            h('span', null, '后台监测仓库变化，发现变化就自动刷新'))),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('span', { className: 'dsh-git-set-label' }, '面板打开时每'),
-          h('input', {
-            className: 'dsh-git-input dsh-git-set-num', type: 'number', min: 1, max: 120,
-            disabled: watchOff,
-            value: String(draft.watchFastSec),
-            onChange: function (event) { num('watchFastSec', event.target.value, 1, 120) },
-          }),
-          h('span', { className: 'dsh-git-set-hint' }, '秒检查一次')),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('span', { className: 'dsh-git-set-label' }, '只有按钮时每'),
-          h('input', {
-            className: 'dsh-git-input dsh-git-set-num', type: 'number', min: 2, max: 600,
-            disabled: watchOff,
-            value: String(draft.watchSlowSec),
-            onChange: function (event) { num('watchSlowSec', event.target.value, 2, 600) },
-          }),
-          h('span', { className: 'dsh-git-set-hint' }, '秒检查一次')),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('label', { className: 'dsh-git-set-check' },
-            h('input', {
-              type: 'checkbox', checked: draft.watchChip === true, disabled: watchOff,
+              type: 'checkbox', checked: draft.watchChip === true,
               onChange: function (event) { set('watchChip', event.target.checked) },
             }),
             h('span', null, '面板关着时也监测，让按钮上的分支名和改动数保持实时'))),

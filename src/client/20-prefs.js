@@ -10,12 +10,7 @@
 
     const SETTINGS_KEY = 'dsh.git-idea.settings'
     const SETTINGS_DEFAULTS = {
-      watchEnabled: true,
       watchChip: true,
-      watchFastSec: 3,
-      /* 面板关着时 chip 那条慢 lane。它现在只发一次便宜签名（真机上 0.12s），所以可以
-         问得比过去勤：15s 的话，终端里提交完要过十几秒 chip 才改口。 */
-      watchSlowSec: 5,
       hoverSwitch: true,
       /* Which of the two changes views the panel opens in: the directory tree
          (IDEA's default) or the flat list of paths. A preference of this browser
@@ -35,26 +30,14 @@
     const settingsSignal = createSignal(function () { return gitSettings })
     const useGitSettings = settingsSignal.use
 
-    function clampInt(value, min, max, fallback) {
-      const n = typeof value === 'number' && isFinite(value) ? Math.round(value) : NaN
-      if (isNaN(n)) return fallback
-      if (n < min) return min
-      if (n > max) return max
-      return n
-    }
-
     function normalizeSettings(raw) {
       const out = Object.assign({}, SETTINGS_DEFAULTS)
       if (raw == null || typeof raw !== 'object') return out
-      out.watchEnabled = raw.watchEnabled !== false
       out.watchChip = raw.watchChip !== false
-      out.watchFastSec = clampInt(raw.watchFastSec, 1, 120, SETTINGS_DEFAULTS.watchFastSec)
-      out.watchSlowSec = clampInt(raw.watchSlowSec, 2, 600, SETTINGS_DEFAULTS.watchSlowSec)
       out.hoverSwitch = raw.hoverSwitch !== false
       out.changesView = raw.changesView === 'flat' ? 'flat' : 'tree'
       out.configScope = raw.configScope === 'global' ? 'global' : 'project'
       out.diffShowCr = raw.diffShowCr === true
-      if (out.watchSlowSec < out.watchFastSec) out.watchSlowSec = out.watchFastSec
       return out
     }
 
@@ -71,7 +54,6 @@
       gitSettings = normalizeSettings(next)
       writeStoredJSON(SETTINGS_KEY, gitSettings)
       settingsSignal.notify()
-      rescheduleWatchers()
     }
 
     /* ── preferences, layer two: the plugin ──
