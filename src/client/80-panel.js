@@ -119,9 +119,8 @@
          只写该仓库 .git/config 的提交身份、git 自己管换行符的两个键
          （core.autocrlf / core.safecrlf）、远端表（长在 .git/config 里，走
          git remote 自己的三条子命令，74-identity.js）。最末一组「git 忽略项」
-         （GitIgnoredScanGroup）是例外：只读、不跟本页编辑目标走 —— 一口扫描
-         shown 清单里的全部仓库、每个仓库再逐个 worktree 工作树（主/链接都标），
-         列出被 git 忽略的文件与目录。
+         （GitIgnoredScanGroup）同样跟本页编辑目标走：只读扫描这一个仓库、每个
+         worktree 工作树（主/链接都标），列出被 git 忽略的文件与目录。
        · 全局配置 —— 跟着插件与这台机器走（79-globalconfig.js 的 GitGlobalConfigPane，
          原先是 DSH 设置面板里的「dsh-git-idea配置」页，2026-10 起搬到这里）：初始化
          分支、远程同步实参、快捷命令、git 位置、提交身份（--global）、换行符
@@ -499,24 +498,32 @@
 
     /* ── 「git 忽略项」分组（配置页「仓库」组的第四个下级组）──
 
-       与收在它前面的三个下级组（提交身份 / 远端 / 换行符）不是一类账：那三组读写
-       「本页正在编辑的那个仓库」的 .git/config，这一组是**只读扫描**，吃的是页首
-       仓库清单里的**全部**可选仓库（shown 清单：工作区扫到 + 手动登记，missing
-       不在列）—— 被忽略的文件是每个工作树各一份的，所以每个仓库还要逐个 worktree
-       工作树（主工作区 + git worktree add 出来的链接工作区）列一遍，行上标主/链接
-       与分支。数据来自 Host 的 git/ignored-scan（65-worktree.js 下半，不进读缓存
-       —— 要的就是「现在点、现在看」），点按钮才发，结果只住 React state：不持久化、
-       不自动刷新，换会话面板重挂即清零。
+       与收在它前面的三个下级组（提交身份 / 远端 / 换行符）如今是一类账了：都吃
+       「本页正在编辑的那个仓库」（页首受控单选的 targetRepo，默认当前生效仓库）。
+       过去这一组自扫一份清单 —— 页首仓库清单里的**全部**可选仓库，扫完按仓库
+       分组展示，等于在配置页里又长出一个仓库选择来；而「看哪个仓库的忽略项」
+       页首那行单选本来就在回答，两份选择只会打架（在 A 上配置、扫到的却是
+       B 的忽略项）。所以收敛成一份：单选指向谁就只扫谁，扫完自然也只有它的
+       结果，仓库那一层选择就地消失。
+
+       被忽略的文件是每个工作树各一份的，所以这一个仓库仍要逐个 worktree
+       工作树（主工作区 + git worktree add 出来的链接工作区）列一遍，行上标
+       主/链接与分支。数据来自 Host 的 git/ignored-scan（65-worktree.js 下半，
+       不进读缓存 —— 要的就是「现在点、现在看」），点按钮才发，结果只住 React
+       state：不持久化、不自动刷新，换会话面板重挂即清零；换编辑目标则整份作废
+       —— 留着上一个仓库的忽略项，读者会当成眼前这个仓库的。
 
        纯只读也写在明面上：扫描不写 .git/config、不动文件系统、更不删任何被忽略的
        项，分组说明与按钮 tooltip 都这么说。
 
        交互防重入：扫描在飞时按钮禁用（再点无效），单飞不排队 —— 结果回来整份替换
-       上一次的。展示按 仓库 → 工作树 → 条目 三层折叠：仓库组头可收起（折叠惯例与
-       RepoSwitcher / WorktreeBox 同一家：标题行即折叠开关、跟着组件挂载走）；工作树
-       行默认收起、单击展开条目（2000 条的清单不该开门就糊一脸）。类名另起
-       dsh-git-ign- 前缀，不混 dsh-git-repo-* / -wt-* —— 那两批是测试按个数认的
-       控件（46-css.js 的说明），折叠三角这类没人按个数认的小记号才借。 */
+       上一次的。「作废」不用多记一笔账：答复里的仓库路径就是扫描时的目标，渲染时
+       对不上眼前的编辑目标就当没扫过（scanLive）。展示按 仓库 → 工作树 → 条目
+       三层折叠：仓库组头可收起（折叠惯例与 RepoSwitcher / WorktreeBox 同一家：
+       标题行即折叠开关、跟着组件挂载走）；工作树行默认收起、单击展开条目（2000 条
+       的清单不该开门就糊一脸）。类名另起 dsh-git-ign- 前缀，不混 dsh-git-repo-* /
+       -wt-* —— 那两批是测试按个数认的控件（46-css.js 的说明），折叠三角这类没人
+       按个数认的小记号才借。 */
     function GitIgnoredScanGroup(props) {
       const sessionId = props.sessionId
       const repos = Array.isArray(props.repos) ? props.repos : []
@@ -561,25 +568,27 @@
       }
 
       const rows = []
-      /* 组头行：标题吃剩余宽度，主视觉扫描按钮贴行尾 —— 与「远端」组头挂 ⟳ 同一个
-         group-row 画法，按钮用这一页的主按钮长相（这一页不新造按钮长相）。 */
+      /* 本组吃的是「本页正在编辑的那个仓库」（挂载点只递一个元素进来）：组头与
+         三个写配置的组头一样点名它的短名 —— 扫的是谁，看一眼组头就知道。目标
+         还没就位（面板还没读到生效仓库）时退回泛称。 */
+      const ignTarget = repos.length > 0 ? text(repos[0]) : ''
       rows.push(h('div', { key: 'head', className: 'dsh-git-set-group dsh-git-set-group-row' },
-        h('span', null, 'git 忽略项（只读）'),
+        h('span', null, 'git 忽略项（只读' + (ignTarget.length > 0 ? ' ' + repoShortName(labels, ignTarget) : '') + '）'),
         h('button', {
           type: 'button', className: 'dsh-git-btn dsh-git-primary',
           disabled: scanning === true || repos.length === 0,
           title: repos.length === 0
-            ? '上面还没有可选的仓库 —— 先把仓库加进清单再来扫描'
-            : '列出清单里全部仓库（含每个 worktree 工作树）被 git 忽略的文件与目录。只读：不写 .git、不动文件、不删任何被忽略的项',
+            ? '上面还没有选中的仓库 —— 先在「仓库」清单里点一行，再来扫描'
+            : '只扫上面选中的这个仓库（含每个 worktree 工作树）被 git 忽略的文件与目录。只读：不写 .git、不动文件、不删任何被忽略的项',
           onClick: function () { runScan() },
         }, scanning === true ? '扫描中…' : '扫描忽略项')))
 
       rows.push(h('div', { key: 'hint', className: 'dsh-git-set-hint' },
-        '扫的是上面仓库清单里的全部仓库（不只是本页正在编辑的那个），每个仓库再逐个 worktree 工作树列：忽略规则按 .gitignore、.git/info/exclude 与全局排除一起算，整个被忽略的目录折成一行带尾斜杠。结果不保存、不自动刷新，每次都是点了按钮现扫；扫描只读，不会改任何文件。'))
+        '只扫上面选中的这一个仓库（本页编辑目标，默认当前生效仓库），它的每个 worktree 工作树各列一遍：忽略规则按 .gitignore、.git/info/exclude 与全局排除一起算，整个被忽略的目录折成一行带尾斜杠。结果不保存、不自动刷新，每次都是点了按钮现扫；扫描只读，不会改任何文件。'))
 
       if (repos.length === 0) {
         rows.push(h('div', { key: 'norepos', className: 'dsh-git-set-hint' },
-          '这个工作区还没有可选的仓库 —— 先在上面把仓库加进清单，再来扫忽略项。'))
+          '上面还没有选中的仓库 —— 先在「仓库」清单里点一行，再来扫忽略项。'))
         return h('div', { className: 'dsh-git-ign' }, rows)
       }
 
@@ -590,7 +599,11 @@
             : '扫描失败：' + problem))
       }
 
-      if (scan == null) {
+      /* 眼前这份扫描还是不是这个仓库的：答复自报仓库路径，对不上编辑目标就当
+         没扫过（换目标不作废会被读者当成眼前仓库的忽略项）。 */
+      const scanLive = scan != null && Array.isArray(scan.repos) && scan.repos.length === 1
+        && text(scan.repos[0].path) === ignTarget
+      if (scan == null || scanLive !== true) {
         if (problem.length === 0) {
           rows.push(h('div', { key: 'unscanned', className: 'dsh-git-set-hint' },
             scanning === true ? '正在扫描…' : '还没扫描过 —— 点右上角的「扫描忽略项」开始。'))
@@ -606,12 +619,12 @@
       }
       if (scan.timedOut === true) {
         rows.push(h('div', { key: 'timedout', className: 'dsh-git-set-hint dsh-git-warn' },
-          '扫描总时长到了上限（约 30 秒）：标着「没有扫」的仓库与工作树是到点后停下来的，再点一次扫描可以重试。'))
+          '扫描总时长到了上限（约 30 秒）：标着「没有扫」的工作树是到点后停下来的，再点一次扫描可以重试。'))
       }
 
       const reports = Array.isArray(scan.repos) ? scan.repos : []
       if (reports.length === 0) {
-        rows.push(h('div', { key: 'empty', className: 'dsh-git-set-hint' }, '清单里没有可扫描的仓库。'))
+        rows.push(h('div', { key: 'empty', className: 'dsh-git-set-hint' }, '这个仓库没有扫出来。'))
         return h('div', { className: 'dsh-git-ign' }, rows)
       }
 
@@ -1344,7 +1357,7 @@
         h('div', { className: 'dsh-git-set-scope' },
           h('div', { className: 'dsh-git-set-group' }, '仓库（这一页在编辑哪个仓库）'),
           h('div', { className: 'dsh-git-set-hint' },
-            '收在本组内的提交身份、远端、换行符三个下级组（编辑目标是 worktree 链接工作区时，还会多出一个「worktree 主目录」组），读写的都是这里选中的仓库，默认是当前生效仓库（带 ● 的行）。单击行只换本页的编辑目标 —— 面板的生效仓库（历史、提交、推送用的那个）不跟着换，要换生效仓库去「历史」或「变更」页的仓库列表。会话工作区本身不是仓库时这组照常可用：把仓库目录「＋ 添加目录」登记进来，就能直接配置它。最末的「git 忽略项」是只读扫描，不跟这里的单选走 —— 它扫的是整份清单里的全部仓库。'),
+            '收在本组内的提交身份、远端、换行符三个下级组（编辑目标是 worktree 链接工作区时，还会多出一个「worktree 主目录」组），读写的都是这里选中的仓库，默认是当前生效仓库（带 ● 的行）。单击行只换本页的编辑目标 —— 面板的生效仓库（历史、提交、推送用的那个）不跟着换，要换生效仓库去「历史」或「变更」页的仓库列表。会话工作区本身不是仓库时这组照常可用：把仓库目录「＋ 添加目录」登记进来，就能直接配置它。最末的「git 忽略项」是只读扫描，跟这里的单选走 —— 只扫选中仓库的每个工作树。'),
           h(RepoSwitcher, {
             key: 'cfg-repos',
             sessionId: sessionId, pane: 'config', list: repoList, effective: effective,
@@ -1480,10 +1493,13 @@
                子模块）时才出现 —— wtGroupNode 自己认 kind，普通仓库/bare 整组不画。 */
             wtGroupNode,
 
-            /* 「git 忽略项」：只读的下级组、不跟本页编辑目标走 —— 扫的是
-               整份 shown 清单（pickable）里全部仓库的每个工作树，仓库短名也用
-               同一份标签账（cfgLabels），分组头与切换器里叫的是同一个名字。 */
-            h(GitIgnoredScanGroup, { key: 'ignored-scan', sessionId: sessionId, repos: pickable, labels: cfgLabels }))),
+            /* 「git 忽略项」：只读的下级组、跟本页编辑目标走 —— 只扫 targetRepo
+               这一个仓库（单选行）：扫完也只有它的结果，仓库那一层选择就地消失。
+               短名标签与切换器同源（cfgLabels），目标还没就位时递空清单、组内
+               自己说「还没有选中的仓库」。 */
+            h(GitIgnoredScanGroup, {
+              key: 'ignored-scan', sessionId: sessionId,
+              repos: targetRepo.length > 0 ? [targetRepo] : [], labels: cfgLabels }))),
 
         note.length > 0 ? h('div', { className: 'dsh-git-set-row dsh-git-set-hint' }, note) : null,
         problem.length > 0 ? h('div', { className: 'dsh-git-set-row dsh-git-error' }, problem) : null)
