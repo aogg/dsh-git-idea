@@ -2348,7 +2348,10 @@ async function previousBranch(input) {
    剥好（去掉远端前缀的那一段）。不用裸的 `git switch <remote>/<branch>` 是因为
    DWIM 在「本地同名分支已存在」时的行为不明确（git switch 直接拒绝、git checkout
    却悄悄切到已有的本地分支），显式 -c 让两边都是同一句看得懂的错。stash 兜底对
-   这条路同样成立 —— 签出前工作区是脏的照样先收再切。 */
+   这条路同样成立 —— 签出前工作区是脏的照样先收再切。裸路（普通 switch，不带
+   create）现在也在进这里前先做过一遍同样的显式解析（80-rpc.js 的
+   resolveCheckoutTarget）：目标认得是远端分支而本地不存在时，一样以 create 形状
+   进来 —— git 的 --guess 在任何一条路上都不再是被依赖的那个。 */
 async function switchBranch(input, name, desc, create) {
   const args = argsFor(input)
   const requested = repoFrom(input, null)
@@ -5957,8 +5960,106 @@ onRpc('git/checkout', async function (input) {
     target = await previousBranch(input)
     if (target.length === 0) return { ok: false, error: 'there is no previous branch to switch back to' }
   }
-  return await switchBranch(input, target, '切换分支')
+  /* 裸路在动手前先过 resolveCheckoutTarget（见下面那段注释）：目标认得是一条
+     远端分支、本地又还没有这个分支时，换成 create 形状把跟踪绑定做实。解析不
+     接管收尾 —— 返回 null 就是「按今天的裸 switch 走」，行为一字不变。 */
+  const resolved = await resolveCheckoutTarget(input, target)
+  if (resolved === null) return await switchBranch(input, target, '切换分支')
+  if (resolved.fail === true) return resolved.reply
+  return await switchBranch(input, resolved.name, resolved.desc, resolved.create)
 })
+
+/* 裸路（resetLocal / asNewLocal 都没带、最终落到 `git switch <target>`）的目标
+   解析。需求：checkout 选的是远端分支、而本地还没有这个分支时，自动建本地分支
+   并绑定跟踪。今天这条裸路有两个洞：
+   · target 是完整的远端引用（origin/feat/x）→ git 直接拒绝（fatal: a branch is
+     expected, got remote branch），既没检出也没绑定；
+   · target 是只有远端才有的短名（feat/x）→ 靠 git 自己的 --guess DWIM 建分支，
+     而 DWIM 受 branch.autoSetupMerge 等配置与版本差异左右（66-refs.js 说过不信
+     它），绑不绑得上不作数。
+   所以在 host 端显式解析：本地不存在、目标认得出是远端分支时，一律换成
+   switchBranch 的 create 形状 —— `git switch -c <本地名> --track <远端全名>`，
+   与客户端两条显式路走的是同一句命令，绑定不再靠运气。
+
+   三次探针全是读，直接用 git()，不经 cmdrecGit —— 读不进「命令」页，页里只留
+   真正动分支的那一次 switch。探针只在退出码 0（有）/ 1（没有）时给出结论，之外
+   （git 缺失、不是仓库、ref 名非法）等于没答上来：不替读者猜，返回 null 落回裸
+   switchBranch —— git 的原话就是事实，解析是加餐，不能变成新的门槛。
+
+   「本地同名分支已存在」也不静默切：客户端在远程分支行上有二选一确认层（直切
+   本地 / 用远端覆盖），直切保留读者手头未推的提交、覆盖会把它们丢掉，两个决定
+   都只有读者本人做得了，host 挑哪个都是越权 —— 把两扇门的名字指给他。 */
+async function resolveCheckoutTarget(input, target) {
+  const args = argsFor(input)
+  const requested = repoFrom(input, null)
+  const repo = requested === undefined ? null : requested
+  /* 「存在」只认精确匹配：show-ref --verify 比对的是整条 ref，不做模式展开 ——
+     for-each-ref 的 refs/heads/<pattern> 会 glob（refs/heads/feat/* 撞上 feat/x
+     那类），拿模式判存在会误伤。 */
+  const localProbe = await git(args, ['show-ref', '--verify', '--quiet', 'refs/heads/' + target], null, {})
+  if (localProbe.exitCode === 0) return { name: target, desc: '切换分支', create: undefined }
+  if (localProbe.exitCode !== 1) return null
+
+  /* target 带 '/'：可能是「远端名/分支名」的完整远端引用（origin/feat/x），按
+     第一个 '/' 拆（与 asNewLocal 现有写法同一把刀），本地名是去掉第一段后剩下的
+     整段（feat/x 这样本就可能含 '/'）。refs/remotes/<target> 同样按精确匹配核对；
+     以 /HEAD 结尾的不算 —— origin/HEAD 是 fetch 落下的指针不是分支，-c --track
+     绑它会被 git 当场拒掉。 */
+  const slash = target.indexOf('/')
+  if (slash > 0 && target.slice(target.length - 5) !== '/HEAD') {
+    const remoteProbe = await git(args, ['show-ref', '--verify', '--quiet', 'refs/remotes/' + target], null, {})
+    if (remoteProbe.exitCode === 0) {
+      const local = target.slice(slash + 1)
+      const existing = await git(args, ['show-ref', '--verify', '--quiet', 'refs/heads/' + local], null, {})
+      if (existing.exitCode === 0) {
+        return {
+          fail: true,
+          reply: {
+            ok: false, repo: repo, error: 'local-exists',
+            stderr: '本地已有同名分支 ' + local + ' —— 「本地」组里的那一行就是它；要把它重置成远端那份，用「用远端覆盖」。',
+          },
+        }
+      }
+      if (existing.exitCode !== 1) return null
+      return { name: local, desc: '签出远程分支', create: target }
+    }
+    if (remoteProbe.exitCode !== 1) return null
+  }
+
+  /* 短名（不含 '/'，本地又没有）：到远端里找同名分支。refname 按「段」比 ——
+     远端名是 refs/remotes/ 下的第一段，剩下的合起来才是分支名；整串字符串
+     includes 会把 feat/x 撞上 feat/xy，refs/remotes/<远端>/HEAD 同样跳过。
+     恰好一条才动手（这条的答案才没有歧义）；几条同名就把候选列全让读者挑
+     （git 对这种形状的原话是 "'x' is ambiguous"，这里把候选一起说破）；一条
+     都没有就落回裸路，git 自己的报错就是事实。 */
+  if (slash < 0) {
+    const listed = await git(args, ['for-each-ref', '--format=%(refname)', 'refs/remotes'], null, {})
+    if (listed.exitCode === 0) {
+      const rows = listed.stdout.split('\n')
+      const candidates = []
+      for (let i = 0; i < rows.length; i += 1) {
+        const refname = rows[i]
+        if (refname.indexOf('refs/remotes/') !== 0) continue
+        const cut = refname.indexOf('/', 'refs/remotes/'.length)
+        if (cut < 0) continue
+        const branch = refname.slice(cut + 1)
+        if (branch === 'HEAD' || branch !== target) continue
+        candidates.push(refname.slice('refs/remotes/'.length))
+      }
+      if (candidates.length === 1) return { name: target, desc: '签出远程分支', create: candidates[0] }
+      if (candidates.length > 1) {
+        return {
+          fail: true,
+          reply: {
+            ok: false, repo: repo, error: 'ambiguous',
+            stderr: '分支 ' + target + ' 在 ' + candidates.length + ' 个远端都有，不猜：用完整的远端分支名再签出（如 ' + candidates[0] + '）。候选：' + candidates.join('、'),
+          },
+        }
+      }
+    }
+  }
+  return null
+}
 
 /* 「用远端覆盖」的两步：先 `git switch <local>` 切到本地分支，再
    `git reset --hard <remote>/<branch>` 把它重置到远端。分两步而不是一步，是因为
