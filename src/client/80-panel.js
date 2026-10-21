@@ -212,12 +212,15 @@
        props.state 是面板那份 pushConfirm（branch/repo/setUpstream/preview/
        loading/running/error），预览的读在面板自己的 effect 里 —— 组件只管画与手势。
 
-       几种形状：读取中一行灰字；预览失败把原话说在框内；上游已知列出提交行
-       （ahead 为 0 时没有可推的，按钮换成「关闭」）；没有上游翻成「设置上游并
-       推送」的说明态 —— 远端已在打开前挑好的（右键推送 / 横幅那两条，setUpstream
-       带着）直接说将执行什么；顶栏 ↑ 这条要到预览答复才知道，远端由面板按
-       guessPushRemote 同一套规矩猜好传进来（props.guess），猜不出时按钮不出、
-       props.guessNote 把出路（「修改跟踪分支…」）说出来。
+       几种形状：读取中一行灰字；本地不存在（localExists === false）把出路说在
+       红字里、不出「推送」按钮 —— 这是推送事故（对着本地不存在的分支跑 push，
+       git 报 src refspec 天书）在弹窗里的提前半步；预览失败把原话说在框内；上游
+       已知列出提交行（ahead 为 0 时没有可推的，按钮换成「关闭」）；没有上游翻成
+       「设置上游并推送」的说明态 —— 远端已在打开前挑好的（右键推送 / 横幅那两条，
+       setUpstream 带着）直接说将执行什么；顶栏 ↑ 这条要到预览答复才知道，远端由
+       面板按 guessPushRemote 同一套规矩猜好传进来（props.guess），猜不出时按钮
+       不出、props.guessNote 把出路（「修改跟踪分支…」）说出来。标题下常显一行
+       「仓库 · 分支」小字 —— 仓库选错在推送前就能看出来。
 
        推送中（running）按钮全禁、Esc 与点遮罩一起失效 —— 推到一半的推送没有
        「取消」可言。useOutsideDismiss 的 onClose 闭包停在 open 翻真的那一帧
@@ -233,13 +236,30 @@
       const ahead = preview != null && typeof preview.ahead === 'number' ? preview.ahead : commits.length
       const behind = preview != null && typeof preview.behind === 'number' ? preview.behind : 0
       const noUpstream = preview != null && preview.ok === true && preview.upstream == null
+      /* 本地不存在（2026-10-15 推送事故的提前半步）：预览带回来的 localExists ===
+         false = 这个仓库里根本没有这个分支 —— 这件事在读者点「推送」之前就该说破
+         （Host git/push 的 branch-missing 是点了之后的最后一道闸，这里是提前的那
+         道）。它蕴含 noUpstream（本地分支都不在，@{u} 必然问不出来），所以一切
+         判断都排在 noUpstream 前面；命令强制空串 —— 「推送」按钮自然就不出。 */
+      const localMissing = preview != null && preview.ok === true && preview.localExists === false
       const guess = text(props.guess)
       /* 这次推送最终会以什么命令形状执行（按钮 title 与「将执行」那行都从这来）。
          带 -u 的两个来处：打开前就定好的（setUpstream），与顶栏 ↑ 读完预览才发现
-         没有上游、按老规矩现猜的（guess）。 */
-      const command = state.setUpstream != null
-        ? 'git push -u ' + state.setUpstream.remote + ' ' + state.setUpstream.branch
-        : (noUpstream === true && guess.length > 0 ? 'git push -u ' + guess + ' ' + text(state.branch) : (noUpstream === true ? '' : 'git push'))
+         没有上游、按老规矩现猜的（guess）。本地不存在时永远空串 —— 推送无从谈起。 */
+      const command = localMissing === true
+        ? ''
+        : (state.setUpstream != null
+          ? 'git push -u ' + state.setUpstream.remote + ' ' + state.setUpstream.branch
+          : (noUpstream === true && guess.length > 0 ? 'git push -u ' + guess + ' ' + text(state.branch) : (noUpstream === true ? '' : 'git push')))
+      /* 常显小字用的两个名字：分支取预览答复的（detached 是 null → 退回请求里的
+         state.branch，再退回 HEAD），仓库取预览答复的实际仓库路径（顶栏 ↑ 这条在
+         预览回来前只有生效仓库可说）。短名用 24-repos.js 的 repoBaseName（路径最后
+         一段）—— 推送弹窗只是认一下仓库，不需要同名消歧的完整短名算法。 */
+      const branchLabel = preview != null && text(preview.branch).length > 0
+        ? text(preview.branch)
+        : (text(state.branch).length > 0 ? text(state.branch) : 'HEAD')
+      const repoShown = preview != null && text(preview.repo).length > 0 ? text(preview.repo) : text(state.repo)
+      const repoShort = repoShown.length > 0 ? repoBaseName(repoShown) : '当前生效仓库'
       const upName = preview != null && text(preview.upstream).length > 0
         ? text(preview.upstream)
         : (state.setUpstream != null ? state.setUpstream.remote + '/' + state.setUpstream.branch : '')
@@ -265,19 +285,30 @@
           h('span', { key: 'd', className: 'dsh-git-pwhen' }, relativeDate(one.date))))
       }
 
-      /* 标题与正文按读到的形状说：读取中、读失败、没有上游、没有可推的、正常列表。 */
+      /* 标题与正文按读到的形状说：读取中、本地不存在、读失败、没有上游、没有可推
+         的、正常列表。本地不存在排在没有上游前面 —— 后者是前者的必然推论，先说
+         更要紧的那句。 */
       const head = loading === true && preview == null
         ? '推送：正在读取要推的提交…'
-        : (noUpstream === true
-            ? '「' + (text(state.branch).length > 0 ? text(state.branch) : 'HEAD') + '」还没有上游 —— 先设置上游并推送'
-            : (preview != null && preview.ok !== true
-                ? '推送：读不到要推的提交'
-                : (ahead === 0
-                    ? '推送 ' + (upName.length > 0 ? upName : '上游')
-                    : '推送 ' + String(ahead) + ' 个提交到 ' + (upName.length > 0 ? upName : '上游'))))
+        : (localMissing === true
+            ? '「' + branchLabel + '」在本地不存在 —— 这个仓库里没有这个分支'
+            : (noUpstream === true
+                ? '「' + (text(state.branch).length > 0 ? text(state.branch) : 'HEAD') + '」还没有上游 —— 先设置上游并推送'
+                : (preview != null && preview.ok !== true
+                    ? '推送：读不到要推的提交'
+                    : (ahead === 0
+                        ? '推送 ' + (upName.length > 0 ? upName : '上游')
+                        : '推送 ' + String(ahead) + ' 个提交到 ' + (upName.length > 0 ? upName : '上游')))))
       const body = []
       if (loading === true && preview == null) {
         body.push(h('div', { key: 'wait', className: 'dsh-git-hint' }, '正在读取要推送的提交…'))
+      } else if (localMissing === true) {
+        /* 红字（dsh-git-error，与预览失败同款）把出路说全：仓库路径照实给 ——
+           读者拿它对一眼「这是不是我项目的那个仓库」，两条出路各接一种搞错的形状。 */
+        body.push(h('div', { key: 'nolocal', className: 'dsh-git-error', style: { whiteSpace: 'pre-wrap', fontSize: '11px', lineHeight: '16px' } },
+          '仓库 ' + repoShown + ' 里没有分支 ' + branchLabel + ' —— 它可能已被删除、或只在远端存在。两条出路：'
+            + '在左栏分支列表里右键它选「签出」，建出本地分支后再推；'
+            + '或者先确认顶部分支芯片当前打开的是项目所在仓库（现在是 ' + repoShort + '），再推。'))
       } else if (preview != null && preview.ok !== true) {
         const said = text(preview.stderr)
         body.push(h('div', { key: 'bad', className: 'dsh-git-error', style: { whiteSpace: 'pre-wrap', fontSize: '11px', lineHeight: '16px' } },
@@ -313,10 +344,15 @@
       }
 
       /* head / 正文各行 / 按钮排都是 qc-box 的直接孩子 —— 那块盒子是 flex 列、
-         gap:8px，中间不再垫一层（垫了就把行距全挤没了）。 */
+         gap:8px，中间不再垫一层（垫了就把行距全挤没了）。标题下常显一行小字：
+         「仓库 · 分支」。事故的另一半根因是仓库张冠李戴（外层 dsh 工作区仓库 ≠
+         嵌在里面的项目仓库）—— 把「这次推的是哪个仓库的哪个分支」常驻在标题下，
+         选错了仓库在推送前就能看出来，不用等 git 的天书。 */
       const kids = [h('div', { key: 'h', className: 'dsh-git-qc-head' },
         running === true ? h('span', { key: 'spin', className: 'dsh-git-spin' }, '↑') : null,
-        head)].concat(body)
+        head),
+        h('div', { key: 'meta', className: 'dsh-git-hint' },
+          '仓库 ' + repoShort + ' · 分支 ' + branchLabel)].concat(body)
       kids.push(h('div', { key: 'a', className: 'dsh-git-qc-actions' },
         canPush === true
           ? h('button', {

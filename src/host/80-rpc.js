@@ -479,12 +479,31 @@ onRpc('git/pull', async function (input) {
     —— 读不进「命令」页，与 stage 那条注释说的是同一句。 */
 onRpc('git/push-preview', function (input) { return pushPreviewSnapshot(input) })
 
-onRpc('git/push', function (input) {
+onRpc('git/push', async function (input) {
   if (input != null && input.setUpstream === true) {
     const remote = input != null && isStr(input.remote) && input.remote.trim().length > 0 ? input.remote.trim() : ''
     const branch = input != null && isStr(input.branch) ? input.branch.trim() : ''
     if (remote.length === 0) return { ok: false, error: 'no remote is configured to push to' }
     if (branch.length === 0) return { ok: false, error: 'a branch is required to set an upstream' }
+    /* 推送前先问一句「本地真有这个分支吗」：show-ref --verify 精确比对整条 ref，
+       与 resolveCheckoutTarget 的 localProbe 同一把刀（不 glob、不替读者猜）。
+       2026-10-15 的事故：dsh 工作区本身是个没有远端的 git 仓库、项目仓库嵌在它
+       里面一层，插件对着一个本地不存在的分支跑了 `git push -u origin <分支>`，
+       git 报 `error: src refspec ... does not match any` —— 这句天书翻译过来就是
+       「本地没有这个分支」，但读者得先懂 refspec 才看得懂；而且无远端的仓库里
+       它也先报这一条，把「分支不存在」引向「远端有问题」的错误方向。探针答得出
+       来的失败就该在动手前用人数的话说出来：只认退出码 1（show-ref 对「没有这个
+       ref」的既定答案）；其余退出码（git 缺失、不是仓库、ref 名非法）不替读者下
+       结论，落回原样推 —— git 的原话就是事实，预检是加餐，不能变成新的门槛。
+       不带 setUpstream 的普通推送不预检：它推的是当前分支，HEAD 站在哪、有没有
+       上游，git 自己的原话说得一样清。 */
+    const probe = await git(argsFor(input), ['show-ref', '--verify', '--quiet', 'refs/heads/' + branch], null, {})
+    if (probe.exitCode === 1) {
+      return {
+        ok: false, error: 'branch-missing', repo: probe.cwd,
+        stderr: '本地没有分支 ' + branch + ' —— 它可能已被删除、或只在远端存在，也可能当前打开的不是项目所在仓库。请在分支列表右键它选「签出」建本地分支后再推。',
+      }
+    }
     return panelMutate(input, ['push', '-u', remote, branch], { net: true, spawn: NET_SPAWN, desc: '推送' })
   }
   return panelMutate(input, ['push'], { net: true, spawn: NET_SPAWN, desc: '推送' })

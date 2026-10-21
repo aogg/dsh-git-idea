@@ -233,7 +233,14 @@ async function branchesSnapshot(input) {
    （作者、相对时间），不再另造一个解析器。上限 200 条：预览是给人过目的，不是
    完整变更集，顶满就带 hasMore 说一声。进读缓存（tag push-preview，按分支各一
    份），寿命与 refs 相同 —— 真推送、提交、fetch 都会整仓失效，弹窗开着期间上游
-   被人动了，下一次打开读到的就是新账。 */
+   被人动了，下一次打开读到的就是新账。
+
+   localExists（2026-10-15 推送事故的另一半）：这个分支在**本地**存不存在，一次
+   `git show-ref --verify --quiet refs/heads/<名字>` 就有答案 —— 弹窗在读者点
+   「推送」之前就该把「本地没有这个分支」说破（git/push 那边的 branch-missing 是
+   最后一道闸，这里是提前的那道）；detached 那条 branch:null 也带 localExists:
+   false —— 没有名字就是没有本地分支。它跟着这份预览一起进读缓存，失效寿命与
+   refs 相同，不需要单独作废。 */
 const PUSH_PREVIEW_MAX = 200
 
 async function readPushPreview(input, repo) {
@@ -245,20 +252,25 @@ async function readPushPreview(input, repo) {
   if (name.length === 0) {
     const sym = await git(args, ['symbolic-ref', '--quiet', '--short', 'HEAD'], null, {})
     if (sym.exitCode !== 0) {
-      return { ok: true, repo: sym.cwd, branch: null, upstream: null, ahead: 0, behind: 0, hasMore: false, maxCount: PUSH_PREVIEW_MAX, commits: [] }
+      return { ok: true, repo: sym.cwd, branch: null, localExists: false, upstream: null, ahead: 0, behind: 0, hasMore: false, maxCount: PUSH_PREVIEW_MAX, commits: [] }
     }
     name = sym.stdout.trim()
   }
+  /* 本地分支在不在：只认退出码 0/1 之外不猜（与 git/push 的预检、resolveCheckoutTarget
+     的 localProbe 同一条规矩）—— 答不上来就当「不在」，弹窗宁可多说一句，不放过
+     一次对着不存在的分支推送的机会。 */
+  const localProbe = await git(args, ['show-ref', '--verify', '--quiet', 'refs/heads/' + name], null, {})
+  const localExists = localProbe.exitCode === 0
   const upstream = await git(args, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', name + '@{u}'], null, {})
   if (upstream.exitCode !== 0) {
-    return { ok: true, repo: upstream.cwd, branch: name, upstream: null, ahead: 0, behind: 0, hasMore: false, maxCount: PUSH_PREVIEW_MAX, commits: [] }
+    return { ok: true, repo: upstream.cwd, branch: name, localExists: localExists, upstream: null, ahead: 0, behind: 0, hasMore: false, maxCount: PUSH_PREVIEW_MAX, commits: [] }
   }
   const up = upstream.stdout.trim()
   const range = up + '..' + name
   const listed = await git(args, ['-c', 'core.quotePath=false', 'log', '--max-count=' + String(PUSH_PREVIEW_MAX + 1), '--date-order',
     '--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s%x1f%D%x1f%P%x1e', range], null, {})
   if (listed.exitCode !== 0) {
-    return { ok: false, repo: listed.cwd, branch: name, upstream: up, error: 'not-a-repository', stderr: listed.stderr, noGit: gitMissing(listed), commits: [] }
+    return { ok: false, repo: listed.cwd, branch: name, localExists: localExists, upstream: up, error: 'not-a-repository', stderr: listed.stderr, noGit: gitMissing(listed), commits: [] }
   }
   const parsed = parseCommitRecords(listed.stdout)
   const hasMore = parsed.length > PUSH_PREVIEW_MAX
@@ -277,7 +289,7 @@ async function readPushPreview(input, repo) {
     }
   }
   return {
-    ok: true, repo: listed.cwd, branch: name, upstream: up,
+    ok: true, repo: listed.cwd, branch: name, localExists: localExists, upstream: up,
     ahead: ahead, behind: behind, hasMore: hasMore, maxCount: PUSH_PREVIEW_MAX,
     commits: commits,
   }

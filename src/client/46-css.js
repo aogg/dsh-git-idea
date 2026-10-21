@@ -698,8 +698,13 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-oknote{flex:none;box-sizing:border-box;max-height:120px;overflow:auto;color:var(--dsw-alias-state-success-primary);background:var(--dsw-alias-bg-layer-2);border-bottom:1px solid var(--dsw-alias-border-l1);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
 
 /* ── 快捷命令的确认框与编辑器 ──
-    面板里是覆盖层（盖住正文、居中一张卡片）；配置页的全局组里同一张卡片直接排在管理组下面。 */
-.dsh-git-qc-overlay{position:absolute;inset:0;z-index:50;display:flex;padding:14px;background:var(--dsw-alias-bg-layer-1);overflow:auto}
+    面板里是覆盖层（盖住正文、居中一张卡片）；配置页的全局组里同一张卡片直接排在管理组下面。
+    底板是半透明暗遮罩（rgba(0,0,0,.32)），不再是实色背景 —— 整块面板被盖成一张
+    白纸（推送确认弹窗打开时连「现在推的是哪个仓库」都看不见，更别提拿身后的分支
+    列表核对）就是实色底板干的。遮罩之下隐约看得见面板，弹窗本体 qc-box 保持实色
+    —— 卡片与底板的层次由 box-shadow 与这道暗化一起撑。这一层是签出二选一、推送
+    确认、reword 等多个框共用的同一块板，一并受益，属预期。 */
+.dsh-git-qc-overlay{position:absolute;inset:0;z-index:50;display:flex;padding:14px;background:rgba(0,0,0,.32);overflow:auto}
 .dsh-git-qc-box{margin:auto;width:min(620px,100%);max-height:100%;box-sizing:border-box;display:flex;flex-direction:column;gap:8px;padding:12px 14px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1);box-shadow:var(--dsw-elevation-soft)}
 .dsh-git-qc-head{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600}
 .dsh-git-qc-x{display:inline-flex;align-items:center;justify-content:center;flex:none;margin-left:auto;width:18px;height:18px;padding:0;border:0;border-radius:4px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:13px;line-height:1;cursor:pointer}
