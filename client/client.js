@@ -249,9 +249,9 @@ return {
        fiber 上，插件卸载即拆）；真包所在的前端组合则未必 —— 部署实测
        （dsh-web-frontend 的组合只 mixin 了 reflect / fiber / registry / events），
        ctx.get('timer') 在那里永远答 undefined。而没有时钟的代价不是少几个优化：
-       watcherSchedule 拿不到 timer 一档都不排，轮询整个不存在，签名变化永远无人
-       flush —— Host 那份从不过期的读缓存（60-reads.js）就把 ↑ 的待推送数冻结在
-       最后一次 flush 上。真机上 agent 连提十来个提交、面板一个数都不动的现场就是它。
+       变化的发现已由宿主 WS 推送驱动（30-watch.js 不再排任何定时器），但浏览器这边
+       剩下的时钟用户都还在 —— hostWait 的宿主等待重试、hover / fly 这类瞬时动效、
+       变更页整树重读的间隔 —— 拿不到 timer 这些一样都排不出来。
 
        所以这里兜底：真包是普通脚本，window 自己的 setTimeout / setInterval 就够。
        返回的拆销函数与 timer 服务同形，所有调用点本来就只存拆销、只在 effect 清理里
@@ -1051,12 +1051,7 @@ return {
 
     const SETTINGS_KEY = 'dsh.git-idea.settings'
     const SETTINGS_DEFAULTS = {
-      watchEnabled: true,
       watchChip: true,
-      watchFastSec: 3,
-      /* 面板关着时 chip 那条慢 lane。它现在只发一次便宜签名（真机上 0.12s），所以可以
-         问得比过去勤：15s 的话，终端里提交完要过十几秒 chip 才改口。 */
-      watchSlowSec: 5,
       hoverSwitch: true,
       /* Which of the two changes views the panel opens in: the directory tree
          (IDEA's default) or the flat list of paths. A preference of this browser
@@ -1076,26 +1071,14 @@ return {
     const settingsSignal = createSignal(function () { return gitSettings })
     const useGitSettings = settingsSignal.use
 
-    function clampInt(value, min, max, fallback) {
-      const n = typeof value === 'number' && isFinite(value) ? Math.round(value) : NaN
-      if (isNaN(n)) return fallback
-      if (n < min) return min
-      if (n > max) return max
-      return n
-    }
-
     function normalizeSettings(raw) {
       const out = Object.assign({}, SETTINGS_DEFAULTS)
       if (raw == null || typeof raw !== 'object') return out
-      out.watchEnabled = raw.watchEnabled !== false
       out.watchChip = raw.watchChip !== false
-      out.watchFastSec = clampInt(raw.watchFastSec, 1, 120, SETTINGS_DEFAULTS.watchFastSec)
-      out.watchSlowSec = clampInt(raw.watchSlowSec, 2, 600, SETTINGS_DEFAULTS.watchSlowSec)
       out.hoverSwitch = raw.hoverSwitch !== false
       out.changesView = raw.changesView === 'flat' ? 'flat' : 'tree'
       out.configScope = raw.configScope === 'global' ? 'global' : 'project'
       out.diffShowCr = raw.diffShowCr === true
-      if (out.watchSlowSec < out.watchFastSec) out.watchSlowSec = out.watchFastSec
       return out
     }
 
@@ -1112,7 +1095,6 @@ return {
       gitSettings = normalizeSettings(next)
       writeStoredJSON(SETTINGS_KEY, gitSettings)
       settingsSignal.notify()
-      rescheduleWatchers()
     }
 
     /* ── preferences, layer two: the plugin ──
@@ -1147,6 +1129,12 @@ return {
          把它丢了的话，读者在配置页改一次 git 路径，各仓库写到一半的提交信息就全
          没了。原样搬运、不做清洗 —— 清洗是 Host 那边 normalizeDrafts 的职责。 */
       drafts: {},
+      /* worktree → 主目录（host 65-worktree.js 的 git/wt-main-save 写、wtMainSnapshot
+         读）。与 repos 同一条先例：配置页保存的是**整份**配置，客户端的归一化把它
+         丢了的话，读者在配置页改一次 git 路径，手工纠正过的 worktree 主目录就全
+         没了 —— 那正是主仓库被删/搬走后读者唯一亲手给对的答案。原样搬运、不做
+         清洗 —— 清洗是 Host 那边 normalizeWorktreeMains 的职责。 */
+      worktreeMains: {},
     }
     let pluginConfig = Object.assign({}, PLUGIN_CONFIG_DEFAULTS)
     let pluginConfigPath = ''
@@ -1180,6 +1168,8 @@ return {
       /* drafts 同 repos 一条先例：原样搬运，Host 那边负责清洗（见 PLUGIN_CONFIG_DEFAULTS
          里那一格的说明）。 */
       out.drafts = raw.drafts != null && typeof raw.drafts === 'object' && !Array.isArray(raw.drafts) ? raw.drafts : {}
+      /* worktreeMains 同 repos/drafts 一条先例：原样搬运，Host 那边负责清洗。 */
+      out.worktreeMains = raw.worktreeMains != null && typeof raw.worktreeMains === 'object' && !Array.isArray(raw.worktreeMains) ? raw.worktreeMains : {}
       return out
     }
 
@@ -1289,7 +1279,7 @@ return {
     const useRepoList = repoListSignal.use
 
     function repoListEmpty() {
-      return { repos: [], manual: [], missing: [], phase: 'idle', note: '' }
+      return { repos: [], manual: [], missing: [], links: [], phase: 'idle', note: '' }
     }
 
     function repoListFor(workspace) {
@@ -1326,6 +1316,9 @@ return {
           repos: Array.isArray(data.repos) ? data.repos.map(text) : [],
           manual: Array.isArray(data.manual) ? data.manual.map(text) : [],
           missing: Array.isArray(data.missing) ? data.missing.map(text) : [],
+          /* links：.git 是文件的仓库根（worktree / 子模块）。Host 旧版没有这一格
+             （答复缺字段），缺省空数组 —— 行上不画小标，一切照旧。 */
+          links: Array.isArray(data.links) ? data.links.map(text) : [],
           phase: 'ready',
           note: data.truncated === true ? '仓库太多，只显示前 ' + String(Array.isArray(data.repos) ? data.repos.length : 0) + ' 个' : '',
         }
@@ -1667,12 +1660,17 @@ return {
         const isCur = path === effective
         const picked = selection.indexOf(path) >= 0
         const manual = list.manual.indexOf(path) >= 0
+        /* .git 是文件的仓库（worktree / 子模块）：名字旁一枚暗色「wt」小标 —— 它
+            不是独立仓库，配置它的提交身份/远端会改到链接那头的版本库，扫一眼分得清。
+            missing 行（目录已不在）不加：那一行说的已经是另一件事。 */
+        const linked = list.links.indexOf(path) >= 0
         rows.push(h('div', {
           key: 'repo:' + path,
           className: 'dsh-git-repo-row'
             + (isCur ? ' dsh-git-repo-cur' : '')
             + (picked ? ' dsh-git-repo-sel' : ''),
           title: path + (isCur ? '\n当前生效仓库：历史、提交、推送都作用在这里' : '')
+            + (linked ? '\n.git 是链接文件（git worktree 或子模块）' : '')
             + (picking
               ? '\n单击 = 选中为本页正在编辑的仓库（提交身份、远端、换行符都改它；不改生效仓库）'
               : '\n单击 = 切换为生效仓库；Ctrl+单击 = 加入/移出多选'),
@@ -1688,6 +1686,10 @@ return {
           h('span', { key: 'm', className: 'dsh-git-repo-mark' }, isCur ? '●' : ''),
           h('span', { key: 'g', className: 'dsh-git-repo-glyph' }, h(Icon, { name: 'repo', size: 12 })),
           h('span', { key: 'n', className: 'dsh-git-repo-name' }, repoShortName(labels, path)),
+          linked ? h('span', {
+            key: 'wt', className: 'dsh-git-repo-wt',
+            title: '.git 是链接文件（git worktree 或子模块）',
+          }, 'wt') : null,
           manual ? h('button', {
             key: 'x', type: 'button', className: 'dsh-git-repo-x',
             title: '从列表移除（手动登记的仓库才能移除）',
@@ -1773,7 +1775,15 @@ return {
        dsh-git-tmain/tname/tsub（分支树的两段式）、dsh-git-ab（↑↓ 徽章）。
 
        徽章数据不另读：按分支名从面板已经读好的那份 refs（分支树 metaOf 同源的那份）
-       免费查，查不到就不画 —— worktree 块的往返只有 git/worktrees 这一条。 */
+       免费查，查不到就不画 —— worktree 块的往返只有 git/worktrees 这一条。
+
+       v1.2 起块头行下面多一行「主目录」（props.wtMain，git/wt-main 的答复）：本目录
+       的 .git 是链接文件、git 又读不动主仓库那一头时（主仓库被删/搬走），worktree
+       清单必然是空的，面板原来只能给一行「无法读取」—— 这一行补上「这个目录其实
+       是谁的一份链接工作区」与两条出路（打开主目录、去配置）。它插在折叠判断**之前**
+       是有意的：broken 的那一刻恰恰是清单读不出来的时候，若跟着折叠/失败分支一起
+       消失，读者就只剩一句读不动的灰字。类名另起 dsh-git-wt-mainrow —— dsh-git-wt-row
+       的个数是测试按清单行认的（gp57/gp60），这一行是身份行，不进那个账。 */
     function WorktreeBox(props) {
       const data = props.data
       const refs = props.refs
@@ -1833,6 +1843,57 @@ return {
         data == null
           ? h('span', { key: 's', className: 'dsh-git-repo-note' }, '正在读取…')
           : (data.ok !== true ? h('span', { key: 'f', className: 'dsh-git-repo-note' }, '读取失败') : null))]
+
+      /* ── 「主目录」行（v1.2）：本目录是链接工作区时，说清主仓库在哪、还能不能救 ──
+          只在 wtMain 的 kind 是 linked / broken-gitlink 时出现；mainDir 为空（bare
+          或 gitlink 配不上）时文字改说「读不到」，只留「配置…」一个动作。 */
+      const wtMainNow = props.wtMain != null && props.wtMain.ok === true ? props.wtMain : null
+      const wtMainKind = wtMainNow != null ? text(wtMainNow.kind) : ''
+      if (wtMainNow != null && (wtMainKind === 'linked' || wtMainKind === 'broken-gitlink')) {
+        const mainDir = text(wtMainNow.mainDir)
+        const hasMain = mainDir.length > 0
+        const fromConfig = wtMainNow.mainSource === 'config'
+        const mainOk = wtMainNow.mainOk === true
+        const gitlink = text(wtMainNow.gitlink)
+        /* kind 含义的一句话（说明页 WorktreeMainSetup 同一文案的短版）。 */
+        const kindSaid = wtMainKind === 'linked'
+          ? '本目录是链接工作区：.git 是一个链接文件（' + (gitlink.length > 0 ? gitlink : 'gitlink') + '），读写的都是主仓库那头的版本库'
+          : '主仓库那头读不到（多半被删了或搬走了）：.git 还指着老地方'
+        const tip = [
+          hasMain ? '主目录：' + mainDir + (fromConfig ? '（手动配置）' : '（自动找到）') : '主目录读不到：gitlink 配不上一个存在的目录',
+          kindSaid,
+        ]
+        if (hasMain && mainOk !== true) tip.push('这个主目录现在不存在（或里面没有 .git）—— 用「配置…」把正确路径告诉面板')
+        if (hasMain) tip.push('单击「打开主目录」= 把生效仓库切到主目录（与仓库行单击同一手势）')
+        rows.push(h('div', {
+          key: 'wt-main',
+          className: 'dsh-git-wt-mainrow' + (hasMain && mainOk ? '' : ' dsh-git-wt-gone'),
+          title: tip.join('\n'),
+        },
+          h('span', { key: 'm', className: 'dsh-git-repo-mark' }),
+          h('span', { key: 'g', className: 'dsh-git-repo-glyph' }, h(Icon, { name: 'repo', size: 12 })),
+          h('span', { key: 'n', className: 'dsh-git-tmain' },
+            h('span', { className: 'dsh-git-tname' }, hasMain ? repoBaseName(mainDir) : '主目录读不到'),
+            h('span', { className: 'dsh-git-tsub' + (hasMain ? '' : ' dsh-git-tsub-none') },
+              hasMain
+                ? (fromConfig ? '手动配置' : '自动找到') + (mainOk ? '' : ' · 目录不在了')
+                : (wtMainKind === 'broken-gitlink' ? '主目录读不到' : 'bare：没有工作区可言'))),
+          h('span', { key: 'r', className: 'dsh-git-wt-right' },
+            hasMain && typeof props.onOpenMain === 'function'
+              ? h('button', {
+                key: 'open', type: 'button', className: 'dsh-git-wt-main-act',
+                title: '把生效仓库切到主目录 ' + mainDir + '（不 checkout、不切分支、不动任何工作区）',
+                onClick: function () { props.onOpenMain(mainDir) },
+              }, '打开主目录')
+              : null,
+            typeof props.onConfigure === 'function'
+              ? h('button', {
+                key: 'cfg', type: 'button', className: 'dsh-git-wt-main-act',
+                title: '配置这个 worktree 的主目录（告诉面板主仓库现在在哪）',
+                onClick: function () { props.onConfigure() },
+              }, '配置…')
+              : null)))
+      }
 
       if (folded) return h('div', { className: 'dsh-git-wt-box' }, rows)
 
@@ -1930,23 +1991,29 @@ return {
     }
     /* ── change monitoring ──
 
-       Reads do not age out on the Host, so freshness comes from noticing that
-       the repository itself moved. One poller per repository, shared: the panel
-       registers fast while it is open (it is what is on screen), the composer
-       chip slow. A tick is skipped while the page is hidden, and the first tick
-       only records the starting signature so opening a panel never triggers a
-       gratuitous reload. */
+        Freshness is pushed, not polled: the Host watches the repositories and
+        announces every change over the live WS channel (src/host/79-live-watch.js
+        → the subscription in 98-register.js: repo-changed, session-complete,
+        cmdlog-start/exit, live-open). This file only keeps the registry of who
+        is listening, plus the one-shot reconciliation tick: watcherTick asks the
+        Host for the current signature once and, on a change, flushes the read
+        cache and calls the listeners. Ticks fire only from events — a live-open
+        (re)connect and the page becoming visible again — never from a timer.
+        There is deliberately no interval anywhere and no polling fallback while
+        the WS is down (by design): while disconnected the surfaces simply do
+        not update by themselves, and the manual refresh keeps working. */
 
     const repoWatchers = {}
     let watchPageDoc = null
 
     /* One watcher per *workspace*, and an empty path means "this session's own
-       workspace" — the state every panel and chip starts in. Keyed by the path
-       alone, that state was a single shared entry: two sessions in one page both
-       wrote their id into it, the last one won, and the other session then polled
-       a stranger's workspace — never noticing its own changes and reloading on
-       someone else's. The key says which workspace an entry is, and the entry
-       carries what a tick has to ask about, so no tick needs to be told. */
+        workspace" — the state every panel and chip starts in. Keyed by the path
+        alone, that state was a single shared entry: two sessions in one page both
+        wrote their id into it, the last one won, and the other session then
+        reconciled a stranger's workspace — never noticing its own changes and
+        reloading on someone else's. The key says which workspace an entry is,
+        and the entry carries what a tick has to ask about, so no tick needs to
+        be told. */
     function watcherKey(repo, sessionId) {
       return repo.length > 0 ? repo : 'session:' + text(sessionId)
     }
@@ -1959,37 +2026,25 @@ return {
           /* Keyed by a token per registration, never by the listener: the chip and
              the panel both want `bumpData` called, and keyed by the function the
              two registrations collapsed into one — so whichever surface was torn
-             down first deleted the other's notification AND, once the count
-             reached zero, stopped the poller the other one was still on. */
-          listeners: new Map(), fast: 0, deep: 0, stop: null, sig: null, busy: false, paths: null,
+             down first deleted the other's notification too. */
+          listeners: new Map(), deep: 0, sig: null, busy: false, paths: null,
         }
       }
       return repoWatchers[key]
     }
 
     /* What a deep tick asks about. The surface that shows the working tree says
-       which paths it is showing (`pathsOfInterest`), and the tick turns that into
-       a pathspec: measured on the reader's repository, a whole-tree `git status`
-       is 7.4s and the same command over the 36 paths the changes tree was showing
-       is 0.5s. A tick longer than the interval between ticks never lets the mount
-       rest, and everything beside it — the branch list, the log — waits.
-       A watcher that has not been told stays out of the working tree until the
-       reader's own full read has something to watch. */
+        which paths it is showing (`pathsOfInterest`), and the tick turns that into
+        a pathspec: measured on the reader's repository, a whole-tree `git status`
+        is 7.4s and the same command over the 36 paths the changes tree was showing
+        is 0.5s — the difference between a reconciliation that rests the mount and
+        one that pins it for seconds. A watcher that has not been told stays out
+        of the working tree until the reader's own full read has something to
+        watch. */
     function setWatchPaths(repo, sessionId, paths) {
       const entry = repoWatchers[watcherKey(repo, sessionId)]
       if (entry === undefined) return
       entry.paths = paths != null && paths.length > 0 ? paths.slice() : null
-    }
-
-    function watcherInterval(entry) {
-      const sec = entry.fast > 0 ? gitSettings.watchFastSec : gitSettings.watchSlowSec
-      return (sec > 0 ? sec : 3) * 1000
-    }
-
-    function watcherSchedule(entry) {
-      if (entry.stop != null) { entry.stop(); entry.stop = null }
-      if (gitSettings.watchEnabled !== true || entry.listeners.size === 0) return
-      entry.stop = timerOf().interval(function () { watcherTick(entry) }, watcherInterval(entry))
     }
 
     function watcherTick(entry) {
@@ -2001,9 +2056,10 @@ return {
       /* Only while something is showing the working tree, and only about the
          paths it is showing: the deep signature is the one that notices edits
          inside files, and asked for the whole tree it is seconds on a slow
-         mount, every tick. With nothing to watch the deep half stays out of it
-         — the panel reads the whole tree on its own, slower clock — and the
-         cheap signature above still carries commits, switches and the index. */
+         mount, every time a tick fires. With nothing to watch the deep half
+         stays out of it — the panel reads the whole tree on its own, slower
+         clock — and the cheap signature above still carries commits, switches
+         and the index. */
       if (entry.deep > 0 && entry.paths != null) {
         request.deep = true
         request.paths = entry.paths
@@ -2020,13 +2076,13 @@ return {
       }).catch(function () { entry.busy = false })
     }
 
-    /* Every repository that has someone watching it, right now. Used when the
-       page comes back into view: the ticks it missed while hidden are exactly the
-       ones that would have noticed a branch switched in another window, so
-       without this the chip can name the branch you left for a whole slow-lane
-       interval after you are looking straight at it. The forced tick still asks
-       the signature first, so a page that was hidden over lunch reads nothing
-       unless the repository actually moved. */
+    /* Every repository that has someone watching it, right now. Fired only from
+        events — the page coming back into view, the live connection (re)opening
+        (98-register.js) — to reconcile each watcher against the Host's signature
+        once, in case something moved while the tab was hidden or the connection
+        was down. The forced tick still asks the signature first, so a page that
+        was hidden over lunch reads nothing unless the repository actually
+        moved. */
     function watcherTickAll() {
       Object.keys(repoWatchers).forEach(function (key) {
         const entry = repoWatchers[key]
@@ -2034,19 +2090,15 @@ return {
       })
     }
 
-    function rescheduleWatchers() {
-      Object.keys(repoWatchers).forEach(function (key) { watcherSchedule(repoWatchers[key]) })
-    }
-
     /* ── 「会话完成的那一刷」欠着的账（92-chip.js 记，这里在回可见时补）──
 
-       页面藏着时完成的那一刷过去是直接丢掉，理由是「回可见时靠 watcherTickAll 补读
-       兜底」。但那条兜底路自己会断：它走 watcherTick 的签名比对，而第一次 tick 只记
-       基线不做任何事 —— 一个页面若在整个 agent 干活期间都藏着（真机常态：读者在编辑
-       器里，浏览器缩在后台），回可见的那一次 tick 记下的就是提交之后的基线，之前
-       丢了什么永远追不回来；真机上 Host 缓存里 ahead 停在十个提交之前的现场，就有
-       这一条的份。所以藏起来的那一刷在这里记成欠账（记着是哪个会话完成的），回可见
-       先补账、再对签名。 */
+        页面藏着时完成的那一刷过去是直接丢掉，理由是「回可见时靠 watcherTickAll 补读
+        兜底」。但那条兜底路自己会断：它走 watcherTick 的签名比对，而第一次 tick 只记
+        基线不做任何事 —— 一个页面若在整个 agent 干活期间都藏着（真机常态：读者在编辑
+        器里，浏览器缩在后台），回可见的那一次 tick 记下的就是提交之后的基线，之前
+        丢了什么永远追不回来；真机上 Host 缓存里 ahead 停在十个提交之前的现场，就有
+        这一条的份。所以藏起来的那一刷在这里记成欠账（记着是哪个会话完成的），回可见
+        先补账、再对签名。 */
     let completeRefreshOwedFor = null
     function oweCompleteRefresh(forSession) {
       completeRefreshOwedFor = forSession
@@ -2059,18 +2111,17 @@ return {
     }
 
     /* 页面此刻藏没藏。watchPageDoc 要等第一个 watcher 挂上才有（watchRepo 记下的
-       ownerDocument），在那之前是「不知道」—— 按可见算：宁多刷一遍，不丢一刷。
-       宿主推来的 session-complete（98-register.js）在判断页面藏不藏时用的就是它。 */
+        ownerDocument），在那之前是「不知道」—— 按可见算：宁多刷一遍，不丢一刷。
+        宿主推来的 session-complete（98-register.js）在判断页面藏不藏时用的就是它。 */
     function livePageHidden() {
       const doc = watchPageDoc != null ? watchPageDoc : (typeof document !== 'undefined' && document != null ? document : null)
       return doc != null && doc.hidden === true
     }
 
-    function watchRepo(repo, sessionId, listener, fast, deep) {
+    function watchRepo(repo, sessionId, listener, deep) {
       const entry = watcherFor(repo, sessionId)
       const token = {}
       entry.listeners.set(token, listener)
-      if (fast === true) entry.fast += 1
       if (deep === true) entry.deep += 1
       if (watchPageDoc == null) {
         const node = chipNode != null ? chipNode : panelNode
@@ -2092,19 +2143,15 @@ return {
           }
         }
       }
-      watcherSchedule(entry)
       return function () {
         entry.listeners.delete(token)
-        if (fast === true && entry.fast > 0) entry.fast -= 1
         if (deep === true && entry.deep > 0) entry.deep -= 1
         /* Nobody watches this workspace any more: the entry goes with the last
            listener, so a page that walks through many worktrees (the setup page
            tries one path after another) does not keep every one of them. */
-        if (entry.listeners.size === 0 && entry.stop == null) delete repoWatchers[entry.key]
-        else watcherSchedule(entry)
+        if (entry.listeners.size === 0) delete repoWatchers[entry.key]
       }
     }
-
     const LANE_COLORS = ['#4a86e8', '#22a06b', '#d98e04', '#9b59b6', '#d64545', '#0e9aa7', '#b8860b', '#c2478f']
     const ROW_H = 26
     /* One page of history. Big enough that nobody scrolls to the end of it by
@@ -2639,6 +2686,13 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-setup-h{font-size:14px;font-weight:600}
 .dsh-git-setup-path{font-family:ui-monospace,monospace;font-size:12px;word-break:break-all;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l1);border-radius:6px;padding:6px 8px}
 .dsh-git-setup-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+/* 说明页里的「worktree 主目录」块（56-setup.js WorktreeMainSetup）：说明页本体是
+   一个 gap:10 的纵列，这块作为它的最后一格，顶上一道分隔线把自己和上面的
+   初始化/打开目录动作隔开；内部自成一个 gap:8 的小纵列，行内布局全部借用
+   .dsh-git-set-row / .dsh-git-set-label（配置页同一套），不再另写一套行样式。 */
+.dsh-git-setup-sub{display:flex;flex-direction:column;gap:8px;margin-top:6px;padding-top:12px;border-top:1px solid var(--dsw-alias-border-l1)}
+.dsh-git-setup-sub .dsh-git-setup-h{font-size:12px}
+.dsh-git-wtmain-path{flex:0 1 auto;min-width:0;max-width:100%;overflow:auto;white-space:nowrap}
 .dsh-git-hint{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary)}
 .dsh-git-danger{color:var(--dsw-alias-state-error-primary)}
 .dsh-git-tools{position:relative;flex:none;display:flex;align-items:center;gap:3px;flex-wrap:nowrap;padding:5px 52px 5px 7px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2)}
@@ -2737,6 +2791,12 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-set-scope-body{display:flex;flex-direction:column;gap:14px;margin-top:2px;padding-left:12px;border-left:2px solid var(--dsw-alias-border-l2)}
 .dsh-git-set-scope > .dsh-git-set-group:first-child,
 .dsh-git-set-scope-body > .dsh-git-set-group:first-child{margin-top:0;padding-top:0;border-top:0}
+/* 配置页「worktree 主目录」下级组（80-panel.js wtGroupNode）：整组条件渲染，画出来
+   时是 scope-body 里与提交身份/远端/换行符同级的一格 —— 外面再包一层自己的纵列
+   （scope-body 的 gap 对包装层是一个整体），内部节奏与同级组一致（组头 → 说明 →
+   两行）。首组让双线的 :first-child 规则同样适用于这层包装。 */
+.dsh-git-wtmain{display:flex;flex-direction:column;gap:8px}
+.dsh-git-set-scope-body > .dsh-git-wtmain > .dsh-git-set-group:first-child{margin-top:0;padding-top:0;border-top:0}
 /* ── 配置页「仓库」组内「git 忽略项」分组（80-panel.js GitIgnoredScanGroup）──
     仓库 → 工作树 → 条目 三层的只读清单。类名另起 dsh-git-ign- 前缀，不混仓库块 /
     工作树块的 dsh-git-repo-box/-row、dsh-git-wt-box/-row —— 那两批是测试按个数认的
@@ -2961,6 +3021,10 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-repo-gone{opacity:.55}
 .dsh-git-repo-x{flex:none;border:0;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:1;padding:0 2px;border-radius:3px;cursor:pointer}
 .dsh-git-repo-x:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+/* 仓库行的「wt」小标（24-repos.js，.git 是文件的仓库根）：描边空签、压暗一档 ——
+   与 git 忽略项扫描的「链接」徽标（.dsh-git-ign-tag-link）同一读法，字号再小一号，
+   它只是个提醒，不能和行名抢眼。 */
+.dsh-git-repo-wt{flex:none;padding:0 3px;border-radius:3px;border:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-secondary);font-size:9px;line-height:13px;cursor:default}
 .dsh-git-repo-add{display:flex;align-items:center;gap:5px;margin-top:2px;min-height:20px;padding:1px 5px;border-radius:5px;font-size:11px;cursor:pointer;white-space:nowrap}
 .dsh-git-repo-add:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dsh-git-repo-addrow{display:flex;gap:4px;padding:2px 5px}
@@ -3001,6 +3065,13 @@ textarea.dsh-git-input{resize:vertical}
 /* ⚠（目录已丢失）与 🔒（已锁定）这两个行尾小记号：本版没有 prune / 解锁的动作，
     它们只是「这条有状况」的眼标，详情全在行 tooltip 里，所以压一点透明度。 */
 .dsh-git-wt-mark{flex:none;font-size:9px;line-height:1;opacity:.85}
+/* worktree 块的「主目录」行（25-worktree.js v1.2）：块头正下方的一行身份说明。
+   刻意不叫 dsh-git-wt-row —— 那个类名是测试按清单行认的（gp57/gp60 数个数），
+   这一行说的是目录身份不是清单行；左缩进对齐行名的 18px，读起来是头行的从属。 */
+.dsh-git-wt-mainrow{display:flex;align-items:center;gap:5px;min-height:20px;padding:1px 5px 1px 18px;font-size:11px;white-space:nowrap;-webkit-user-select:none;user-select:none}
+.dsh-git-wt-mainrow .dsh-git-tsub{flex:none}
+.dsh-git-wt-main-act{flex:none;border:1px solid var(--dsw-alias-border-l1);border-radius:4px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:10px;line-height:14px;padding:0 5px;cursor:pointer}
+.dsh-git-wt-main-act:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 
 /* ── 差异页右列：这批修改的来源文件列表 ──
    补丁区 flex:1、右列固定 240px。右列的行复用树行那套类名（dsh-git-trow），
@@ -6042,6 +6113,132 @@ textarea.dsh-git-input{resize:vertical}
       return found
     }
 
+    /* ── 说明页里的「worktree 主目录」块（v1.2）──
+
+       会话工作区是一个 worktree、而主仓库那头读不动（被删/搬走）时，说明页的 reason
+       是 'not-a-repo'，那一页 editable:false —— 但这个目录恰恰**有**要配置的东西：
+       把主目录的新位置告诉面板。这块不受 editable / init 开关管（用户点名的要求），
+       挂载时对 initial 发一次 git/wt-main（Host 答身份与主目录候选），kind 是
+       linked / broken-gitlink 才渲染；找到的主目录可以直接「打开这个目录」（与
+       RepoSetup 的 onOpen 同一条路），主目录不合适就手填一个存进插件配置
+       （git/wt-main-save），错误话术沿用 24-repos.js 的 repoSaveProblem。 */
+    function WorktreeMainSetup(props) {
+      const sessionId = props.sessionId
+      const target = text(props.initial)
+      const [snap, setSnap] = React.useState(null)
+      const [draft, setDraft] = React.useState('')
+      const [busy, setBusy] = React.useState(false)
+      const [note, setNote] = React.useState('')
+      const [problem, setProblem] = React.useState('')
+      /* 挂载（或 initial 变了）发一次读。失败静默 null：说明页的主流程是「认路、
+          开目录」，这块是补充身份说明，它自己读不出来不该变成一条新错误。 */
+      React.useEffect(function () {
+        if (target.length === 0) return undefined
+        let alive = true
+        const request = target.length > 0 ? { repo: target } : {}
+        if (sessionId.length > 0) request.sessionId = sessionId
+        callHost('git/wt-main', request).then(function (data) {
+          if (alive !== true) return
+          setSnap(data)
+          /* 草稿预填 configured ?? auto mainDir：读者多数时候只需要改一两个字。 */
+          const prefill = data != null && data.ok === true && text(data.mainDir).length > 0 ? text(data.mainDir) : ''
+          setDraft(function (previous) { return previous.length > 0 ? previous : prefill })
+        }, function () {
+          if (alive === true) setSnap(null)
+        })
+        return function () { alive = false }
+      }, [target, sessionId])
+
+      const saveMain = function () {
+        const dir = draft.trim()
+        if (dir.length === 0 || busy === true) return
+        setBusy(true)
+        setNote('')
+        setProblem('')
+        const request = { repo: target, add: dir }
+        if (sessionId.length > 0) request.sessionId = sessionId
+        rpc('git/wt-main-save', request, '保存失败').then(function (reply) {
+          setBusy(false)
+          setSnap(reply)
+          setNote('已配置主目录（手动配置）：' + text(reply.mainDir))
+        }, function (failure) {
+          setBusy(false)
+          setProblem(repoSaveProblem(failure, dir))
+        })
+      }
+
+      const clearMain = function () {
+        if (busy === true) return
+        setBusy(true)
+        setNote('')
+        setProblem('')
+        const request = { repo: target, remove: true }
+        if (sessionId.length > 0) request.sessionId = sessionId
+        rpc('git/wt-main-save', request, '清除失败').then(function (reply) {
+          setBusy(false)
+          setSnap(reply)
+          setNote('已清除配置：主目录回到自动识别' + (text(reply.mainDir).length > 0 ? '（' + text(reply.mainDir) + '）' : '（暂无）'))
+        }, function (failure) {
+          setBusy(false)
+          setProblem(repoSaveProblem(failure, target))
+        })
+      }
+
+      if (target.length === 0) return null
+      const kind = snap != null && snap.ok === true ? text(snap.kind) : ''
+      if (kind !== 'linked' && kind !== 'broken-gitlink') return null
+      const mainDir = text(snap.mainDir)
+      const configured = text(snap.configured)
+      const gitlink = text(snap.gitlink)
+      const broken = kind === 'broken-gitlink'
+      return h('div', { className: 'dsh-git-setup-sub' },
+        h('div', { className: 'dsh-git-setup-h' }, '这是一个 worktree（链接工作区）'),
+        h('div', { className: 'dsh-git-hint' },
+          broken
+            ? '这个目录的 .git 是一个链接文件' + (gitlink.length > 0 ? '（' + gitlink + '）' : '')
+              + '，它指向的主仓库读不到 —— 多半被删了或搬走了。下面的主目录配置告诉面板这个工作区属于谁；'
+              + '配置之后历史、变更、提交都照常可用，读的是配置里那个主仓库的版本库。'
+            : '这个目录的 .git 是一个链接文件' + (gitlink.length > 0 ? '（' + gitlink + '）' : '')
+              + '，它自己不是独立仓库 —— 读写的都是下面这个主仓库的版本库。'),
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, broken ? '找到的主目录' : '主目录'),
+          mainDir.length > 0
+            ? h('span', { className: 'dsh-git-setup-path dsh-git-wtmain-path', title: mainDir }, mainDir)
+            : h('span', { className: 'dsh-git-hint' }, '读不到：gitlink 配不上一个存在的目录（配置一个现存的目录即可）'),
+          mainDir.length > 0 && typeof props.onOpen === 'function'
+            ? h('button', {
+              type: 'button', className: 'dsh-git-btn',
+              title: '把生效仓库切到主目录 ' + mainDir + '（与仓库行单击同一手势）',
+              onClick: function () { props.onOpen(mainDir) },
+            }, '打开这个目录')
+            : null),
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '配置主目录'),
+          clearable('wtmain', h('input', {
+            className: 'dsh-git-input dsh-git-set-input',
+            placeholder: '主仓库目录的绝对路径',
+            value: draft,
+            onChange: function (event) { setDraft(event.target.value); setNote('') },
+            onKeyDown: function (event) { if (event.key === 'Enter') saveMain() },
+          }), draft.length > 0, function () { setDraft('') }),
+          h('button', {
+            type: 'button', className: 'dsh-git-btn dsh-git-primary',
+            disabled: busy === true || draft.trim().length === 0,
+            title: '把这个目录记成 ' + target + ' 的主仓库（存进插件配置，换浏览器/换机器都在）',
+            onClick: saveMain,
+          }, busy === true ? '保存中…' : '保存'),
+          configured.length > 0
+            ? h('button', {
+              type: 'button', className: 'dsh-git-btn',
+              disabled: busy === true,
+              title: '删掉这条配置，主目录回到自动识别（git 与 gitlink 文本）',
+              onClick: clearMain,
+            }, '清除配置')
+            : null,
+          note.length > 0 ? h('span', { className: 'dsh-git-hint' }, note) : null),
+        problem.length > 0 ? h('div', { className: 'dsh-git-hint dsh-git-error' }, problem) : null)
+    }
+
     function RepoSetup(props) {
       const plugin = usePluginConfig()
       const [draft, setDraft] = React.useState(props.initial)
@@ -6117,7 +6314,11 @@ textarea.dsh-git-input{resize:vertical}
           }, '取消') : null),
         armed ? h('div', { className: 'dsh-git-hint dsh-git-danger' },
           '将在 ' + target + ' 下执行 git init' + (plugin.initBranch.length > 0 ? ' -b ' + plugin.initBranch : '') + ' —— 这会创建一个 .git 目录并写入文件，无法通过界面撤销。') : null,
-        problem !== null ? h('div', { className: 'dsh-git-hint dsh-git-error' }, problem) : null)
+        problem !== null ? h('div', { className: 'dsh-git-hint dsh-git-error' }, problem) : null,
+        /* worktree 主目录块（上面的 WorktreeMainSetup）：不受 editable / init 开关
+           管 —— 「not-a-repo」那一页正是 worktree 主仓库读不动时落的那一页，这里
+           恰恰是唯一能配置它的地方。它自己认 kind，不是 worktree 就什么都不画。 */
+        h(WorktreeMainSetup, { key: 'wtmain', sessionId: props.sessionId, initial: props.initial, onOpen: props.onOpen }))
     }
 
     /* ── 面板「命令」页：这个工作区里执行过的 git 命令 ──
@@ -9281,11 +9482,6 @@ textarea.dsh-git-input{resize:vertical}
         next[key] = value
         apply(next)
       }
-      const num = function (key, value, min, max) {
-        const n = parseInt(value, 10)
-        set(key, isNaN(n) ? min : n)
-      }
-      const watchOff = draft.watchEnabled !== true
 
       return h('div', {
         className: 'dsh-git-global',
@@ -9379,35 +9575,7 @@ textarea.dsh-git-input{resize:vertical}
         h('div', { className: 'dsh-git-set-row' },
           h('label', { className: 'dsh-git-set-check' },
             h('input', {
-              type: 'checkbox', checked: draft.watchEnabled === true,
-              onChange: function (event) { set('watchEnabled', event.target.checked) },
-            }),
-            h('span', null, '后台监测仓库变化，发现变化就自动刷新'))),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('span', { className: 'dsh-git-set-label' }, '面板打开时每'),
-          h('input', {
-            className: 'dsh-git-input dsh-git-set-num', type: 'number', min: 1, max: 120,
-            disabled: watchOff,
-            value: String(draft.watchFastSec),
-            onChange: function (event) { num('watchFastSec', event.target.value, 1, 120) },
-          }),
-          h('span', { className: 'dsh-git-set-hint' }, '秒检查一次')),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('span', { className: 'dsh-git-set-label' }, '只有按钮时每'),
-          h('input', {
-            className: 'dsh-git-input dsh-git-set-num', type: 'number', min: 2, max: 600,
-            disabled: watchOff,
-            value: String(draft.watchSlowSec),
-            onChange: function (event) { num('watchSlowSec', event.target.value, 2, 600) },
-          }),
-          h('span', { className: 'dsh-git-set-hint' }, '秒检查一次')),
-
-        h('div', { className: 'dsh-git-set-row' },
-          h('label', { className: 'dsh-git-set-check' },
-            h('input', {
-              type: 'checkbox', checked: draft.watchChip === true, disabled: watchOff,
+              type: 'checkbox', checked: draft.watchChip === true,
               onChange: function (event) { set('watchChip', event.target.checked) },
             }),
             h('span', null, '面板关着时也监测，让按钮上的分支名和改动数保持实时'))),
@@ -10121,6 +10289,12 @@ textarea.dsh-git-input{resize:vertical}
       return h('div', { className: 'dsh-git-ign' }, rows)
     }
 
+    /* 配置页「worktree 主目录」组的模块级读数缓存：按仓库路径记 git/wt-main 的答复。
+        进入配置页或换编辑目标时查它，命中就不发请求（不发 ≠ 不刷新：保存成功会把
+        最新答复写回这一格）；面板级那面 wtMain 读数另有 React state，两份互不干扰
+        —— 这里的缓存只服务「别每帧发、别每次进页都发」这一件事。 */
+    const cfgWtMainCache = {}
+
     function GitConfigPane(props) {
       const sessionId = props.sessionId
       /* 两档作用域：项目（本仓库的 .git/config）与全局（插件与这台机器，79-globalconfig.js）。
@@ -10200,6 +10374,9 @@ textarea.dsh-git-input{resize:vertical}
         setRemoteSnap(null)
         setName(''); setEmail(''); setRName(''); setRUrl('')
         setEditRemote(null); setEditUrl(''); setArmRemote('')
+        /* 主目录组的草稿同样是对着上一个仓库打的字：目标一换就清（读数 effect 会按
+           新目标重新预填 configured ?? auto mainDir）。 */
+        setWtDraft(''); setWtNote(''); setWtProblem('')
         setNote(''); setProblem('')
       }
       const pickRepo = function (path) {
@@ -10263,6 +10440,40 @@ textarea.dsh-git-input{resize:vertical}
         readRemotes(function (snap) { if (alive === true) setRemoteSnap(snap) })
         return function () { alive = false }
       }, [sessionId, targetRepo])
+
+      /* ── worktree 主目录组的读数：进入配置页 / pick 变化时按 pick 路径问一次 ──
+
+         模块级缓存（cfgWtMainCache）命中就直接用，不命中才发 git/wt-main；答复按
+         仓库对上号才上屏（targetBox 同一个「目标切走了就别上屏」的道理）。读失败
+         折成 ok:false 的占位 —— 组只在 kind 对得上时渲染，读不出来整组消失，与
+         「这不是 worktree」同一种安静。 */
+      const [wtSnap, setWtSnap] = React.useState(null)
+      const [wtDraft, setWtDraft] = React.useState('')
+      const [wtBusy, setWtBusy] = React.useState(false)
+      const [wtNote, setWtNote] = React.useState('')
+      const [wtProblem, setWtProblem] = React.useState('')
+      React.useEffect(function () {
+        if (scope !== 'project' || targetRepo.length === 0) return undefined
+        let alive = true
+        const forRepo = targetRepo
+        const hit = cfgWtMainCache[forRepo]
+        if (hit !== undefined) {
+          setWtSnap(hit)
+          setWtDraft(function (previous) { return previous.length > 0 ? previous : (hit != null && hit.ok === true && text(hit.mainDir).length > 0 ? text(hit.mainDir) : '') })
+          return undefined
+        }
+        callHost('git/wt-main', request()).then(function (data) {
+          cfgWtMainCache[forRepo] = data
+          if (alive !== true) return
+          setWtSnap(data)
+          const prefill = data != null && data.ok === true && text(data.mainDir).length > 0 ? text(data.mainDir) : ''
+          setWtDraft(function (previous) { return previous.length > 0 ? previous : prefill })
+        }, function (failure) {
+          console.error('dsh-git-idea: could not read worktree main of ' + forRepo, failureText(failure))
+          if (alive === true) setWtSnap({ ok: false, repo: forRepo, error: 'unavailable' })
+        })
+        return function () { alive = false }
+      }, [sessionId, targetRepo, scope])
 
       /* 组头的 ⟳：只重发上面那次读。busy 期间禁用 —— 同一页可能正在写 .git/config，
          先让写动作把话（note/problem）说完。它自己也不碰那两条：note/problem 是写
@@ -10544,6 +10755,119 @@ textarea.dsh-git-input{resize:vertical}
                 ? '还没有配置任何远端 —— 添加一个之后，fetch / pull / push 与分支树的「远程」分组才有内容'
                 : 'fetch / pull / push 推向谁、分支树「远程」分组里有什么，都跟着这份清单走；名字之外每个远端还各有 push 地址'))))
 
+      /* 主目录组的保存与清除：git/wt-main-save 的答复就是最新一份 wt-main 读数 ——
+          照它重画本组（读回来而不是回显输入，与身份/远端两组同一条原则），写回
+          模块级缓存，再 props.onChanged() 让面板级那份 wtMain 读数重读（Host 侧
+          已按 tag 失效 'wt-main'，重读必是新账）。错误话术走 repoSaveProblem
+          （24-repos.js 同一份词）：把 ok:false 的答复折成它认得的 failure 形状。 */
+      const wtSaveProblemOf = function (result, path) {
+        const failure = new Error(commandDetail(result) || '保存失败')
+        failure.reply = result
+        return repoSaveProblem(failure, path)
+      }
+      const saveWtMain = function () {
+        const dir = wtDraft.trim()
+        if (dir.length === 0 || wtBusy === true) return
+        setWtBusy(true)
+        setWtNote('')
+        setWtProblem('')
+        const body = request()
+        body.add = dir
+        const forRepo = targetBox.repo
+        callHost('git/wt-main-save', body).then(function (result) {
+          setWtBusy(false)
+          if (targetBox.repo !== forRepo) return
+          if (result == null || result.ok !== true) {
+            setWtProblem(wtSaveProblemOf(result, dir))
+            return
+          }
+          cfgWtMainCache[forRepo] = result
+          setWtSnap(result)
+          setWtNote('已配置主目录（手动配置）：' + text(result.mainDir))
+          if (typeof props.onChanged === 'function') props.onChanged()
+        }, function (failure) {
+          setWtBusy(false)
+          setWtProblem(failureText(failure))
+        })
+      }
+      const clearWtMain = function () {
+        if (wtBusy === true) return
+        setWtBusy(true)
+        setWtNote('')
+        setWtProblem('')
+        const body = request()
+        body.remove = true
+        const forRepo = targetBox.repo
+        callHost('git/wt-main-save', body).then(function (result) {
+          setWtBusy(false)
+          if (targetBox.repo !== forRepo) return
+          if (result == null || result.ok !== true) {
+            setWtProblem(wtSaveProblemOf(result, forRepo))
+            return
+          }
+          cfgWtMainCache[forRepo] = result
+          setWtSnap(result)
+          setWtNote('已清除配置：主目录回到自动识别')
+          if (typeof props.onChanged === 'function') props.onChanged()
+        }, function (failure) {
+          setWtBusy(false)
+          setWtProblem(failureText(failure))
+        })
+      }
+
+      /* ── 「worktree 主目录」下级组：编辑目标是链接工作区时才出现 ──
+
+          与提交身份/远端/换行符同级（同在 scope-body），同样只作用于本页编辑目标。
+          答复必须对上当前的 pick 才画（adoptTarget 之后的一帧里 wtSnap 还是上一个
+          仓库的，比不得）；kind 是 linked / broken-gitlink 之外的（普通仓库、bare、
+          目录缺失……）整组安静 —— 普通 repo 没有主目录可配。 */
+      const wtSnapNow = wtSnap != null && wtSnap.ok === true && text(wtSnap.repo) === targetRepo ? wtSnap : null
+      const wtKind = wtSnapNow != null ? text(wtSnapNow.kind) : ''
+      const wtGroupOn = wtSnapNow != null && (wtKind === 'linked' || wtKind === 'broken-gitlink')
+      const wtGroupTitle = (targetShortName.length > 0 ? 'worktree 主目录（' + targetShortName + '）' : 'worktree 主目录')
+      const wtGroupHint = wtKind === 'linked'
+        ? '这个仓库是链接工作区（.git 是链接文件，worktree 或子模块）：它自己没有版本库，读写的都是主仓库那头。主目录多半已自动找到；主仓库被删/搬走时，把新位置填在下面告诉面板。'
+        : '这个仓库的 .git 是链接文件，但它指向的主仓库读不到（多半被删了或搬走了）—— 面板原来只能当它「不是仓库」。把主仓库的新位置填在下面，历史、变更、提交就都能照常用。'
+      const wtMainDir = wtSnapNow != null ? text(wtSnapNow.mainDir) : ''
+      const wtConfigured = wtSnapNow != null ? text(wtSnapNow.configured) : ''
+      const wtMainOk = wtSnapNow != null && wtSnapNow.mainOk === true
+      const wtGroupNode = wtGroupOn !== true ? null : h('div', { className: 'dsh-git-wtmain' },
+        h('div', { className: 'dsh-git-set-group' }, wtGroupTitle),
+        h('div', { className: 'dsh-git-set-hint' }, wtGroupHint),
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '主目录'),
+          wtMainDir.length > 0
+            ? h('span', { className: 'dsh-git-set-hint dsh-git-set-url', title: wtMainDir },
+              wtMainDir + '（' + (wtSnapNow.mainSource === 'config' ? '手动配置' : '自动找到') + (wtMainOk ? '' : ' · 目录不在了') + '）')
+            : h('span', { className: 'dsh-git-set-hint' }, '读不到：gitlink 配不上一个存在的目录（在下面配一个现存的目录即可）')),
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '配置主目录'),
+          h('input', {
+            className: 'dsh-git-input dsh-git-set-input',
+            placeholder: '主仓库目录的绝对路径',
+            value: wtDraft,
+            disabled: wtBusy === true,
+            title: '存进插件配置（worktreeMains），换浏览器/换机器打开同一工作区还在',
+            onChange: function (event) { setWtDraft(event.target.value); setWtNote('') },
+            onKeyDown: function (event) { if (event.key === 'Enter') saveWtMain() },
+          }),
+          h('button', {
+            type: 'button', className: 'dsh-git-btn dsh-git-primary',
+            disabled: wtBusy === true || wtDraft.trim().length === 0,
+            title: '把这个目录记成本页编辑目标的主仓库',
+            onClick: saveWtMain,
+          }, wtBusy === true ? '保存中…' : '保存'),
+          wtConfigured.length > 0
+            ? h('button', {
+              type: 'button', className: 'dsh-git-btn',
+              disabled: wtBusy === true,
+              title: '删掉这条配置，主目录回到自动识别（git 与 gitlink 文本）',
+              onClick: clearWtMain,
+            }, '清除配置')
+            : null,
+          wtNote.length > 0 ? h('span', { className: 'dsh-git-set-hint' }, wtNote) : null),
+        wtProblem.length > 0 ? h('div', { className: 'dsh-git-set-row dsh-git-error' }, wtProblem) : null)
+
       const rNameDraft = rName.trim()
       const rUrlDraft = rUrl.trim()
 
@@ -10599,7 +10923,7 @@ textarea.dsh-git-input{resize:vertical}
         h('div', { className: 'dsh-git-set-scope' },
           h('div', { className: 'dsh-git-set-group' }, '仓库（这一页在编辑哪个仓库）'),
           h('div', { className: 'dsh-git-set-hint' },
-            '收在本组内的提交身份、远端、换行符三个下级组，读写的都是这里选中的仓库，默认是当前生效仓库（带 ● 的行）。单击行只换本页的编辑目标 —— 面板的生效仓库（历史、提交、推送用的那个）不跟着换，要换生效仓库去「历史」或「变更」页的仓库列表。会话工作区本身不是仓库时这组照常可用：把仓库目录「＋ 添加目录」登记进来，就能直接配置它。最末的「git 忽略项」是只读扫描，不跟这里的单选走 —— 它扫的是整份清单里的全部仓库。'),
+            '收在本组内的提交身份、远端、换行符三个下级组（编辑目标是 worktree 链接工作区时，还会多出一个「worktree 主目录」组），读写的都是这里选中的仓库，默认是当前生效仓库（带 ● 的行）。单击行只换本页的编辑目标 —— 面板的生效仓库（历史、提交、推送用的那个）不跟着换，要换生效仓库去「历史」或「变更」页的仓库列表。会话工作区本身不是仓库时这组照常可用：把仓库目录「＋ 添加目录」登记进来，就能直接配置它。最末的「git 忽略项」是只读扫描，不跟这里的单选走 —— 它扫的是整份清单里的全部仓库。'),
           h(RepoSwitcher, {
             key: 'cfg-repos',
             sessionId: sessionId, pane: 'config', list: repoList, effective: effective,
@@ -10731,7 +11055,11 @@ textarea.dsh-git-input{resize:vertical}
             lineSelect('core.autocrlf', autocrlf, ['true', 'false', 'input'], '检出时把 LF 转 CRLF、提交时转回 LF（input 只在提交时转 LF，false 什么都不转）'),
             lineSelect('core.safecrlf', safecrlf, ['true', 'false', 'warn'], '换行转换不可逆（会丢字）时的把关开关：true 让 git 拒绝这次操作、warn 只警告照做、false 不把关'),
 
-            /* 「git 忽略项」：第四个下级组，只读、不跟本页编辑目标走 —— 扫的是
+            /* 「worktree 主目录」：又一个下级组，编辑目标是链接工作区（worktree /
+               子模块）时才出现 —— wtGroupNode 自己认 kind，普通仓库/bare 整组不画。 */
+            wtGroupNode,
+
+            /* 「git 忽略项」：只读的下级组、不跟本页编辑目标走 —— 扫的是
                整份 shown 清单（pickable）里全部仓库的每个工作树，仓库短名也用
                同一份标签账（cfgLabels），分组头与切换器里叫的是同一个名字。 */
             h(GitIgnoredScanGroup, { key: 'ignored-scan', sessionId: sessionId, repos: pickable, labels: cfgLabels }))),
@@ -11728,6 +12056,27 @@ textarea.dsh-git-input{resize:vertical}
         return function () { alive = false }
       }, [appliedRepo, repoOk, freshAt, props.ready])
 
+      /* ── worktree 主目录（git/wt-main）的读数：与上面 worktrees 同一组依赖 ──
+
+         生效仓库是链接工作区（worktree/子模块）时，worktree 块的「主目录」行、配置
+         页仓库组的「worktree 主目录」下级组吃的都是这一份。失败折成 ok:false 占位、
+         不上横幅 —— 与 worktrees 同一个格调（辅助读数，error 位一次只说一件事）。
+         git/wt-main-save 那边（配置页保存）在 Host 侧已按 tag 失效 'wt-main' 一格，
+         这里保存成功后 props.onChanged() → bump() 推 freshAt，effect 重读拿到的必是
+         新账。 */
+      const [wtMain, setWtMain] = React.useState(null)
+      React.useEffect(function () {
+        if (!repoOk || props.ready !== true) return undefined
+        let alive = true
+        callHost('git/wt-main', base(appliedRepo)).then(function (data) {
+          if (alive) setWtMain(data)
+        }).catch(function (failure) {
+          console.error('dsh-git-idea: could not read worktree main', failureText(failure))
+          if (alive) setWtMain({ ok: false, repo: appliedRepo.length > 0 ? appliedRepo : null, error: 'unavailable' })
+        })
+        return function () { alive = false }
+      }, [appliedRepo, repoOk, freshAt, props.ready])
+
       /* 分支树里双击分支。repo 为空 = 今天的单仓库树，行为一字不差；带仓库 = 多选
          分组里双击「切到那个仓库并只看这个分支」—— 两步并成一步，否则在多选视图里
          双击一个分支什么都不发生，看起来就像双击坏了。 */
@@ -11961,14 +12310,14 @@ textarea.dsh-git-input{resize:vertical}
       }, [changeSelKey, tab, props.ready, freshAt, sessionId])
 
       /* 多选时只 watch 选中的那几个仓库（不是清单里的全部 —— watcher 是真的在跑
-         git 的，多一个仓库就多一份轮询）。深度那半和单仓库一样只在变更页正在被看
-         时开，问的路径也是那个仓库自己的脏路径。 */
+         git 的，多一个仓库就多一份签名核对请求）。深度那半和单仓库一样只在变更页
+         正在被看时开，问的路径也是那个仓库自己的脏路径。 */
       React.useEffect(function () {
         if (props.ready !== true || props.active !== true || tab !== 'changes' || changeSelKey.length === 0) return undefined
         const repos = changeSelKey.split('\u0000')
         const stops = []
         for (let i = 0; i < repos.length; i += 1) {
-          stops.push(watchRepo(repos[i], sessionId, bump, true, true))
+          stops.push(watchRepo(repos[i], sessionId, bump, true))
           setWatchPaths(repos[i], sessionId, treeReadPaths(repos[i]))
         }
         return function () { for (let i = 0; i < stops.length; i += 1) stops[i]() }
@@ -12107,15 +12456,16 @@ textarea.dsh-git-input{resize:vertical}
         return function () { view.cancelAnimationFrame(raf) }
       }, [props.active])
 
-      /* The panel watches fast only while it is the thing on screen; closed, it
-         falls back to the chip's slow lane and shares that poller. */
+      /* The panel keeps one listener on its repository for as long as it is
+         ready — freshness arrives as Host pushes either way, so opening or
+         closing the panel changes nothing about the registration. */
       React.useEffect(function () {
         if (!repoOk || props.ready !== true) return undefined
         /* The deep signature is the one that notices edits inside files, and it
            is the expensive one; it is worth paying only while the changes tab is
            the thing being looked at. */
-        return watchRepo(appliedRepo, sessionId, bump, props.active === true, tab === 'changes')
-      }, [appliedRepo, repoOk, sessionId, props.active, props.ready, tab])
+        return watchRepo(appliedRepo, sessionId, bump, tab === 'changes')
+      }, [appliedRepo, repoOk, sessionId, props.ready, tab])
 
       /* The watcher's deep tick asks about the paths on screen, so it has to be
          told which ones they are. Nothing else drives this: a snapshot that
@@ -13765,6 +14115,17 @@ textarea.dsh-git-input{resize:vertical}
             data: worktrees,
             refs: refs,
             effective: effectiveRepo,
+            /* 主目录行（25-worktree.js v1.2）：wtMain 是面板级那份 git/wt-main 读数；
+               onOpenMain 与仓库行单击同一条 repoSingle 路（切生效仓库 + 变更列表重读）；
+               onConfigure 切到配置页并把本页编辑目标对到生效仓库 —— setRepoSelection
+               的 'config' 格就是配置页读的那个 pick（GitConfigPane 的 storedPick），
+               是现成入口，不必新造。 */
+            wtMain: wtMain,
+            onOpenMain: function (path) { repoSingle('changes', path) },
+            onConfigure: function () {
+              if (effectiveRepo.length > 0) setRepoSelection(sessionId, 'config', [effectiveRepo])
+              setTab('config')
+            },
             onPickWorktree: function (path) { repoSingle('changes', path) },
           },
           groups: changeGroups,
@@ -13938,6 +14299,14 @@ textarea.dsh-git-input{resize:vertical}
                 activeRef: shownRef,
                 repo: logSel.length > 0 ? effectiveRepo : '',
                 onPickBranch: pickBranch,
+                /* 主目录行（25-worktree.js v1.2）：与变更页同一组动作 —— 打开主目录
+                   走 repoSingle('log', …)（先收拢多选再切生效仓库），配置进配置页。 */
+                wtMain: wtMain,
+                onOpenMain: function (path) { repoSingle('log', path) },
+                onConfigure: function () {
+                  if (effectiveRepo.length > 0) setRepoSelection(sessionId, 'config', [effectiveRepo])
+                  setTab('config')
+                },
               },
               groups: logSel.length > 0 ? logSel.map(function (repo) {
                 return { repo: repo, refs: repoRefs[repo] === undefined ? null : repoRefs[repo] }
@@ -14821,11 +15190,12 @@ textarea.dsh-git-input{resize:vertical}
         setInfo(chipLabelFor(sessionId))
       }, [sessionId])
 
-      /* Slow lane: the chip is always on screen but it is not what the user is
-         working in, so it may lag the panel. */
+      /* The chip's own listener: with the panel closed it is the only one
+         watching this workspace, so the branch label and change count stay
+         current off the Host's pushes. */
       React.useEffect(function () {
         if (gitSettings.watchChip !== true) return undefined
-        return watchRepo(watched, sessionId, bumpData, false)
+        return watchRepo(watched, sessionId, bumpData)
       }, [watched, repoVersion, sessionId, isOpen])
 
       /* 这个页面在哪个会话里 —— chip 一直挂在输入框旁边，所以它是把这件事记下来的
@@ -15371,7 +15741,7 @@ textarea.dsh-git-input{resize:vertical}
 
     /* host→client 的实时通道（真包的 client-pre.js 提供 liveBus）：插件活着连接就活着，
        插件卸载连接断开。bridge 版没有 liveBus（也没有 WS 路由可连），typeof 守卫让它
-       安静跳过 —— 面板的一切照旧走轮询。 */
+       安静跳过 —— 没有连接就没有推送，读数的新旧由手动刷新与回可见核对兜住。 */
     ctx.effect(function () {
       if (typeof liveBus !== 'undefined' && liveBus != null && typeof liveBus.open === 'function') liveBus.open()
       return function () {
@@ -15383,8 +15753,8 @@ textarea.dsh-git-input{resize:vertical}
 
        完成刷新与仓库变化的「发现」已搬进宿主进程：无论浏览器停在哪个会话视图、
        chip 挂没挂着，这里的订阅都在（它挂在插件生命周期上，不随会话切换卸载）。
-       bridge 版没有 liveBus，typeof 守卫安静跳过 —— 面板照旧走轮询和 chip 自己的
-       会话监听。三种消息：
+       bridge 版没有 liveBus，typeof 守卫安静跳过 —— 三种推送都收不到，chip 自己的
+       会话监听照旧，其余靠手动刷新与回可见核对。三种消息：
 
        · repo-changed：宿主已经失效过自己的读缓存并广播，这里把本地那份读数标成
          「不再证明完整」（markTreePartial）、敲整树重读的铃、bump —— 面板开着就走
