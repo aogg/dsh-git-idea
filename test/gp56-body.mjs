@@ -57,6 +57,15 @@ const remotesFor = function (repo) {
     ? [{ name: 'up', url: 'https://example.com/lab.git', pushUrl: '' }]
     : [{ name: 'origin', url: 'https://example.com/ws.git', pushUrl: '' }] }
 }
+/* 「git 忽略项」组只扫编辑目标这一个仓库（请求的 repos 只有一个元素）；应答按
+   请求现做 —— 报告自报仓库路径，组件靠它认「眼前这份扫描是谁的」。 */
+const ignoredScanReply = function (args) {
+  const repo = args != null && Array.isArray(args.repos) && args.repos.length > 0 ? args.repos[0] : ''
+  return { ok: true, repos: [{ path: repo, ok: true, reason: '', worktrees: [
+    { path: repo, main: true, branch: 'main', ok: true, reason: '', truncated: false,
+      items: [{ path: 'build/cache/', dir: true }, { path: 'tmp.log', dir: false }] },
+  ] }], truncated: false, timedOut: false }
+}
 const realCall56 = host.call
 host.call = function (method, args) {
   if (method === 'git/repos') { calls.push({ method: method, args: args }); return Promise.resolve(reposReply) }
@@ -65,6 +74,7 @@ host.call = function (method, args) {
   if (method === 'git/project-config-save') { calls.push({ method: method, args: args }); projectSaveCalls.push(args); return Promise.resolve(projectSaveReply(args)) }
   if (method === 'git/remotes') { calls.push({ method: method, args: args }); return Promise.resolve(remotesFor(args != null ? args.repo : undefined)) }
   if (method === 'git/remotes-save') { calls.push({ method: method, args: args }); remoteSaveCalls.push(args); return Promise.resolve(remotesFor(args != null ? args.repo : undefined)) }
+  if (method === 'git/ignored-scan') { calls.push({ method: method, args: args }); return Promise.resolve(ignoredScanReply(args)) }
   return realCall56(method, args)
 }
 
@@ -134,10 +144,24 @@ ok('四个下级组（提交身份/远端/换行符/git 忽略项）都在 scope
   && subGroups56().some((s) => s.indexOf('git 忽略项') === 0)
   && collect(tree).some((n) => hasClass56(n, 'dsh-git-set-group') && textOf(n) === '会话完成')
   && byClass(scopeBox56(), 'dsh-git-set-group').every((g) => textOf(g) !== '会话完成'))
-ok('三个组头都点名当前目标短名（/tmp/ws → ws）；忽略项组是只读扫描，不跟编辑目标走',
+ok('四个组头都点名当前目标短名（/tmp/ws → ws），只读的忽略项组也点名',
   subJoin56().indexOf('提交身份（只写 ws 的 .git/config）') >= 0
   && subJoin56().indexOf('远端（ws 的 remote 清单）') >= 0
-  && subJoin56().indexOf('换行符（ws 的 git 换行配置）') >= 0)
+  && subJoin56().indexOf('换行符（ws 的 git 换行配置）') >= 0
+  && subJoin56().indexOf('git 忽略项（只读 ws）') >= 0)
+mark56 = calls.length
+tree = await clickText56(tree, '扫描忽略项')
+ok('扫描只发编辑目标这一个仓库（repos=[/tmp/ws]，不再是整份清单）',
+  callsOf56(mark56, 'git/ignored-scan').length === 1 && Array.isArray(lastArgs('git/ignored-scan').repos)
+  && lastArgs('git/ignored-scan').repos.length === 1 && lastArgs('git/ignored-scan').repos[0] === '/tmp/ws')
+ok('扫完只有这一个仓库：仓库组头一行、工作树一行报 2 项',
+  collect(tree).filter((n) => hasClass56(n, 'dsh-git-ign-repo-head')).length === 1
+  && collect(tree).some((n) => hasClass56(n, 'dsh-git-ign-wt') && textOf(n).indexOf('2 项') >= 0))
+const wtRow56 = collect(tree).find((n) => hasClass56(n, 'dsh-git-ign-wt'))
+wtRow56.props.onClick()
+tree = await settle()
+ok('点开工作树行：2 条忽略项上屏（默认收起，条目要点开看）',
+  collect(tree).filter((n) => hasClass56(n, 'dsh-git-ign-item')).length === 2)
 
 console.log('')
 console.log('== 单击行只换本页编辑目标：Ctrl+单击也是单击，生效仓库不动，草稿清空 ==')
@@ -158,10 +182,19 @@ ok('「此刻生效」跟着换了仓库：Lab（来自 .git/config）', saysOn(
 ok('对着上一个仓库打的草稿被清空（不留给下一个仓库误写）',
   nameBox56() !== undefined && nameBox56().props.value === '')
 ok('远端表也换了仓库：lab 的远端是 up', saysOn(tree, 'https://example.com/lab.git'))
-ok('组头跟着换目标：写配置的三个组头改点名 lab（忽略项组头不点名）',
+ok('组头跟着换目标：四个组头改点名 lab（忽略项组也在内）',
   subJoin56().indexOf('提交身份（只写 lab 的 .git/config）') >= 0
   && subJoin56().indexOf('远端（lab 的 remote 清单）') >= 0
-  && subJoin56().indexOf('换行符（lab 的 git 换行配置）') >= 0)
+  && subJoin56().indexOf('换行符（lab 的 git 换行配置）') >= 0
+  && subJoin56().indexOf('git 忽略项（只读 lab）') >= 0)
+ok('换了目标旧扫描作废：ws 的忽略项不再上屏，回到「还没扫描过」',
+  collect(tree).some((n) => hasClass56(n, 'dsh-git-ign-item')) !== true
+  && saysOn(tree, '还没扫描过'))
+mark56 = calls.length
+tree = await clickText56(tree, '扫描忽略项')
+ok('再扫只发新目标（repos=[/tmp/lab]）',
+  callsOf56(mark56, 'git/ignored-scan').length === 1 && Array.isArray(lastArgs('git/ignored-scan').repos)
+  && lastArgs('git/ignored-scan').repos.length === 1 && lastArgs('git/ignored-scan').repos[0] === '/tmp/lab')
 ok('没碰任何持久化（清单的 add/remove 一次都没发）', reposSaveCalls.length === 0)
 
 console.log('')
