@@ -347,8 +347,9 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-wtmain{display:flex;flex-direction:column;gap:8px}
 .dsh-git-set-scope-body > .dsh-git-wtmain > .dsh-git-set-group:first-child{margin-top:0;padding-top:0;border-top:0}
 /* ── 配置页「仓库」组内「git 忽略项」分组（80-panel.js GitIgnoredScanGroup）──
-    仓库 → 工作树 → 条目 三层的只读清单。类名另起 dsh-git-ign- 前缀，不混仓库块 /
-    工作树块的 dsh-git-repo-box/-row、dsh-git-wt-box/-row —— 那两批是测试按个数认的
+    工作树 → 条目 两层的只读清单（单仓库结果里没有仓库这层）。类名另起
+    dsh-git-ign- 前缀，不混仓库块 / 工作树块的 dsh-git-repo-box/-row、
+    dsh-git-wt-box/-row —— 那两批是测试按个数认的
     控件（gp44 数 repo-box / repo-row 的个数，25-worktree.js 的注释说明），混进来会
     把那些账搅乱；折叠三角这类没人按个数认的小记号才借现成的（dsh-git-repo-caret）。
     「主 / 链接」徽标是同一枚小签的两种画法：主工作区浅底实签，链接工作区描边空签
@@ -357,11 +358,9 @@ textarea.dsh-git-input{resize:vertical}
     加颜色，目录与文件扫一眼就分得开。变量统一用全页主流的 dsw-alias 那组（306 行
     set-select 的 --dsh-alias-* 是历史笔误，那几个键在主题里没有定义，不跟）。 */
 .dsh-git-ign{display:flex;flex-direction:column;gap:4px}
-.dsh-git-ign-repo-head,.dsh-git-ign-wt{display:flex;align-items:center;gap:6px;min-height:20px;padding:1px 5px;border-radius:5px;font-size:11px;color:var(--dsw-alias-label-primary);white-space:nowrap;-webkit-user-select:none;user-select:none}
-.dsh-git-ign-repo-head{cursor:pointer;font-weight:600;margin-top:2px}
-.dsh-git-ign-repo-head:hover,.dsh-git-ign-wt:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dsh-git-ign-wt{display:flex;align-items:center;gap:6px;min-height:20px;padding:1px 5px;border-radius:5px;font-size:11px;color:var(--dsw-alias-label-primary);white-space:nowrap;-webkit-user-select:none;user-select:none}
+.dsh-git-ign-wt:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dsh-git-ign-wt{cursor:pointer}
-.dsh-git-ign-repo-name{overflow:hidden;text-overflow:ellipsis}
 .dsh-git-ign-tag{flex:none;padding:0 4px;border-radius:4px;background:var(--dsw-alias-interactive-bg-hover);font-size:10px;line-height:15px;color:var(--dsw-alias-label-primary)}
 .dsh-git-ign-tag-link{background:transparent;border:1px solid var(--dsw-alias-border-l1);padding:0 3px;color:var(--dsw-alias-label-secondary)}
 .dsh-git-ign-branch{flex:none;max-width:45%;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-secondary)}
