@@ -225,6 +225,12 @@ const host = {
     if (method === 'git/flush') return Promise.resolve({ ok: true })
     if (method === 'git/config') return Promise.resolve({ ok: true, path: '/home/u/.dsh/dsh-git-idea.json', config: { initBranch: 'main', cherryPickRecord: false } })
     if (method === 'git/checkout') return Promise.resolve(checkoutReply)
+    /* 生效仓库的后端账：中性应答「这个工作区没记过」（repo 空串）。不能落进下面的
+       兜底 —— 那份应答带着 repo:'/tmp/ws'，收养路径（adoptHostRepo）会把它当成
+       别处记下的账接回本页，此后每个请求都多出 repo 字段，与这些套件「单仓库不带
+       repo」的既有口径整批打架。 */
+    if (method === 'git/repo-applied') return Promise.resolve({ ok: true, workspace: '/tmp/ws', repo: '' })
+    if (method === 'git/repo-applied-save') return Promise.resolve({ ok: true, workspace: '/tmp/ws', repo: '', unchanged: true })
     return Promise.resolve({ ok: true, repo: '/tmp/ws', stdout: '', stderr: '', exitCode: 0 })
   },
 }

@@ -225,6 +225,12 @@ const host = {
     if (method === 'git/flush') return Promise.resolve({ ok: true })
     if (method === 'git/config') return Promise.resolve({ ok: true, path: '/home/u/.dsh/dsh-git-idea.json', config: { initBranch: 'main', cherryPickRecord: false } })
     if (method === 'git/checkout') return Promise.resolve(checkoutReply)
+    /* 生效仓库的后端账：中性应答「这个工作区没记过」（repo 空串）。不能落进下面的
+       兜底 —— 那份应答带着 repo:'/tmp/ws'，收养路径（adoptHostRepo）会把它当成
+       别处记下的账接回本页，此后每个请求都多出 repo 字段，与这些套件「单仓库不带
+       repo」的既有口径整批打架。 */
+    if (method === 'git/repo-applied') return Promise.resolve({ ok: true, workspace: '/tmp/ws', repo: '' })
+    if (method === 'git/repo-applied-save') return Promise.resolve({ ok: true, workspace: '/tmp/ws', repo: '', unchanged: true })
     return Promise.resolve({ ok: true, repo: '/tmp/ws', stdout: '', stderr: '', exitCode: 0 })
   },
 }
@@ -1062,9 +1068,9 @@ await openBranchCtx('★main')
 let brMenu = byClass(brTree, 'dsh-git-menu')[0]
 let brItems = brMenu === undefined ? [] : buttons(brMenu)
 const brItem = (label) => brItems.find((b) => textOf(b) === label)
-ok('HEAD 组的行也是分支行：签出/新建分支…/推送/重命名分支…/复制分支名称/修改跟踪分支…/删除分支 依序都在',
-  brItems.length === 7
-  && brItems.map(textOf).join('|') === '签出|新建分支…|推送|重命名分支…|复制分支名称|修改跟踪分支…|删除分支')
+ok('HEAD 组的行也是分支行：签出/新建分支…/拉取/变基/推送/合并×2/重命名分支…/复制分支名称/修改跟踪分支…/删除分支 依序都在',
+  brItems.length === 11
+  && brItems.map(textOf).join('|') === '签出|新建分支…|拉取|变基|推送|合并到当前分支|合并到当前分支（--no-ff）|重命名分支…|复制分支名称|修改跟踪分支…|删除分支')
 ok('本地菜单的动作四件套都在，当前分支的「签出」置灰（title 说已经在这个分支上）',
   ['签出', '新建分支…', '推送', '重命名分支…'].every((l) => brItem(l) !== undefined)
   && brItem('签出').props.disabled === true
@@ -1093,14 +1099,14 @@ ok('右键复制同样落到提示条（菜单收起）', textOf(byClass(brTree,
 /* 普通本地分支：两段式删除，第二段才发 -d */
 await openBranchCtx('stable')
 brItems = buttons(byClass(brTree, 'dsh-git-menu')[0])
-ok('普通本地分支的删除项可用', brItems.length === 7 && brItem('删除分支') !== undefined
+ok('普通本地分支的删除项可用', brItems.length === 11 && brItem('删除分支') !== undefined
   && brItem('删除分支').props.disabled !== true)
 const armMark = calls.length
 brItem('删除分支').props.onClick({ stopPropagation() {} })
 await wait(15)
 brTree = await settle('pop')
 const armItems = buttons(byClass(brTree, 'dsh-git-menu')[0])
-ok('第一段只武装：按钮换成「确认删除 stable」，rpc 还没发', armItems.length === 7
+ok('第一段只武装：按钮换成「确认删除 stable」，rpc 还没发', armItems.length === 11
   && armItems.find((b) => textOf(b) === '确认删除 stable') !== undefined
   && calls.slice(armMark).every((c) => c.method !== 'git/branch-delete'))
 const delMark = calls.length
@@ -1134,13 +1140,13 @@ await wait(20)
 brTree = await settle('pop')
 const forceItems = buttons(byClass(brTree, 'dsh-git-menu')[0])
 ok('-d 被拒（not fully merged）：菜单里出现「强制删除（-D）」，错误条说了原因',
-  forceItems.length === 7 && forceItems.find((b) => textOf(b) === '强制删除（-D）') !== undefined
+  forceItems.length === 11 && forceItems.find((b) => textOf(b) === '强制删除（-D）') !== undefined
   && textOf(byClass(brTree, 'dsh-git-error')[0]).indexOf('还没有合并到别处') >= 0)
 forceItems.find((b) => textOf(b) === '强制删除（-D）').props.onClick({ stopPropagation() {} })
 await wait(15)
 brTree = await settle('pop')
 const armForceItems = buttons(byClass(brTree, 'dsh-git-menu')[0])
-ok('-D 也要再确认一次（按钮换成「确认强制删除 feature」）', armForceItems.length === 7
+ok('-D 也要再确认一次（按钮换成「确认强制删除 feature」）', armForceItems.length === 11
   && armForceItems.find((b) => textOf(b) === '确认强制删除 feature') !== undefined)
 armForceItems.find((b) => textOf(b) === '确认强制删除 feature').props.onClick({ stopPropagation() {} })
 await wait(20)
