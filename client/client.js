@@ -2891,8 +2891,9 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-wtmain{display:flex;flex-direction:column;gap:8px}
 .dsh-git-set-scope-body > .dsh-git-wtmain > .dsh-git-set-group:first-child{margin-top:0;padding-top:0;border-top:0}
 /* ── 配置页「仓库」组内「git 忽略项」分组（80-panel.js GitIgnoredScanGroup）──
-    仓库 → 工作树 → 条目 三层的只读清单。类名另起 dsh-git-ign- 前缀，不混仓库块 /
-    工作树块的 dsh-git-repo-box/-row、dsh-git-wt-box/-row —— 那两批是测试按个数认的
+    工作树 → 条目 两层的只读清单（单仓库结果里没有仓库这层）。类名另起
+    dsh-git-ign- 前缀，不混仓库块 / 工作树块的 dsh-git-repo-box/-row、
+    dsh-git-wt-box/-row —— 那两批是测试按个数认的
     控件（gp44 数 repo-box / repo-row 的个数，25-worktree.js 的注释说明），混进来会
     把那些账搅乱；折叠三角这类没人按个数认的小记号才借现成的（dsh-git-repo-caret）。
     「主 / 链接」徽标是同一枚小签的两种画法：主工作区浅底实签，链接工作区描边空签
@@ -2901,11 +2902,9 @@ textarea.dsh-git-input{resize:vertical}
     加颜色，目录与文件扫一眼就分得开。变量统一用全页主流的 dsw-alias 那组（306 行
     set-select 的 --dsh-alias-* 是历史笔误，那几个键在主题里没有定义，不跟）。 */
 .dsh-git-ign{display:flex;flex-direction:column;gap:4px}
-.dsh-git-ign-repo-head,.dsh-git-ign-wt{display:flex;align-items:center;gap:6px;min-height:20px;padding:1px 5px;border-radius:5px;font-size:11px;color:var(--dsw-alias-label-primary);white-space:nowrap;-webkit-user-select:none;user-select:none}
-.dsh-git-ign-repo-head{cursor:pointer;font-weight:600;margin-top:2px}
-.dsh-git-ign-repo-head:hover,.dsh-git-ign-wt:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dsh-git-ign-wt{display:flex;align-items:center;gap:6px;min-height:20px;padding:1px 5px;border-radius:5px;font-size:11px;color:var(--dsw-alias-label-primary);white-space:nowrap;-webkit-user-select:none;user-select:none}
+.dsh-git-ign-wt:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dsh-git-ign-wt{cursor:pointer}
-.dsh-git-ign-repo-name{overflow:hidden;text-overflow:ellipsis}
 .dsh-git-ign-tag{flex:none;padding:0 4px;border-radius:4px;background:var(--dsw-alias-interactive-bg-hover);font-size:10px;line-height:15px;color:var(--dsw-alias-label-primary)}
 .dsh-git-ign-tag-link{background:transparent;border:1px solid var(--dsw-alias-border-l1);padding:0 3px;color:var(--dsw-alias-label-secondary)}
 .dsh-git-ign-branch{flex:none;max-width:45%;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-secondary)}
@@ -10231,10 +10230,11 @@ textarea.dsh-git-input{resize:vertical}
 
        交互防重入：扫描在飞时按钮禁用（再点无效），单飞不排队 —— 结果回来整份替换
        上一次的。「作废」不用多记一笔账：答复里的仓库路径就是扫描时的目标，渲染时
-       对不上眼前的编辑目标就当没扫过（scanLive）。展示按 仓库 → 工作树 → 条目
-       三层折叠：仓库组头可收起（折叠惯例与 RepoSwitcher / WorktreeBox 同一家：
-       标题行即折叠开关、跟着组件挂载走）；工作树行默认收起、单击展开条目（2000 条
-       的清单不该开门就糊一脸）。类名另起 dsh-git-ign- 前缀，不混 dsh-git-repo-* /
+       对不上眼前的编辑目标就当没扫过（scanLive）。展示按 工作树 → 条目 两层折叠
+       —— 扫的本就是单仓库，结果里不再有仓库这层（组头已经点名它是谁，再出一行
+       仓库折叠头只算重复）；工作树行默认收起、单击展开条目（折叠惯例与
+       RepoSwitcher / WorktreeBox 同一家：标题行即折叠开关、跟着组件挂载走；2000
+       条的清单不该开门就糊一脸）。类名另起 dsh-git-ign- 前缀，不混 dsh-git-repo-* /
        -wt-* —— 那两批是测试按个数认的控件（46-css.js 的说明），折叠三角这类没人
        按个数认的小记号才借。 */
     function GitIgnoredScanGroup(props) {
@@ -10244,19 +10244,19 @@ textarea.dsh-git-input{resize:vertical}
       const [scan, setScan] = React.useState(null)
       const [scanning, setScanning] = React.useState(false)
       const [problem, setProblem] = React.useState('')
-      /* 折叠账：仓库按路径、工作树按「仓库路径 \0 工作树路径」，一只 state 收两本。
-         默认仓库全展开、工作树全收起 —— 第一次看到的是「有多少、在哪个仓库」，
-         条目要一层层点开看。 */
-      const [folded, setFolded] = React.useState(function () { return { repos: {}, trees: {} } })
+      /* 折叠账：只剩工作树那本，按「仓库路径 \0 工作树路径」记 —— 单仓库结果里
+         没有仓库这层，仓库账随折叠头一起撤了。默认全部收起：第一次看到的是
+         「每个工作树有多少」，条目要点开看。 */
+      const [folded, setFolded] = React.useState(function () { return { trees: {} } })
       /* 宿主旧版（git/ignored-scan 还没注册）：与「远端」组的 remoteHostOld 同一个
          判据 —— callHost 把 HOST_NOT_READY 重试耗尽的原话带回来，那与仓库、与 git
          都无关，甩原文只会把读者引去查仓库。 */
       const hostOld = problem.indexOf(HOST_NOT_READY) >= 0
 
-      const toggle = function (book, key) {
+      const toggle = function (key) {
         setFolded(function (prev) {
-          const next = { repos: Object.assign({}, prev.repos), trees: Object.assign({}, prev.trees) }
-          next[book][key] = next[book][key] !== true
+          const next = { trees: Object.assign({}, prev.trees) }
+          next.trees[key] = next.trees[key] !== true
           return next
         })
       }
@@ -10348,24 +10348,7 @@ textarea.dsh-git-input{resize:vertical}
       for (let i = 0; i < reports.length; i += 1) {
         const one = reports[i]
         const repoPath = text(one.path)
-        const repoFolded = folded.repos[repoPath] === true
         const trees = Array.isArray(one.worktrees) ? one.worktrees : []
-        let count = 0
-        for (let t = 0; t < trees.length; t += 1) {
-          count += Array.isArray(one.worktrees[t].items) ? one.worktrees[t].items.length : 0
-        }
-        rows.push(h('div', {
-          key: 'repo:' + repoPath,
-          className: 'dsh-git-ign-repo-head',
-          title: repoPath + (repoFolded === true ? '\n单击展开这个仓库的工作树' : '\n单击收起这个仓库的工作树'),
-          onClick: function () { toggle('repos', repoPath) },
-        },
-          h('span', { className: 'dsh-git-repo-caret' + (repoFolded === true ? ' dsh-git-repo-caret-off' : '') },
-            h(Icon, { name: 'down', size: 10 })),
-          h('span', { className: 'dsh-git-ign-repo-name' }, repoShortName(labels, repoPath)),
-          h('span', { className: 'dsh-git-ign-count' },
-            one.ok === true ? trees.length + ' 个工作树 · ' + count + ' 项' : '扫描失败')))
-        if (repoFolded === true) continue
         if (one.ok !== true) {
           rows.push(h('div', { key: 'repofail:' + repoPath, className: 'dsh-git-ign-wt dsh-git-ign-gone' },
             h('span', { className: 'dsh-git-ign-note' }, '这个仓库没扫出来：' + text(one.reason))))
@@ -10394,7 +10377,7 @@ textarea.dsh-git-input{resize:vertical}
             key: 'wt:' + wtKey,
             className: 'dsh-git-ign-wt' + (okWt === true ? '' : ' dsh-git-ign-gone'),
             title: wtTitle.join('\n'),
-            onClick: okWt === true ? function () { toggle('trees', wtKey) } : undefined,
+            onClick: okWt === true ? function () { toggle(wtKey) } : undefined,
           },
             h('span', { className: 'dsh-git-repo-caret' + (wtOpen === true ? '' : ' dsh-git-repo-caret-off') },
               okWt === true ? h(Icon, { name: 'down', size: 10 }) : null),
