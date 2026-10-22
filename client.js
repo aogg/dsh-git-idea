@@ -1041,6 +1041,13 @@ return {
          生效仓库就全没了。原样搬运、不做清洗 —— 清洗是 Host 那边 normalizeAppliedRepos
          的职责。 */
       appliedRepos: {},
+      /* worktree 的目录映射（host 65-worktree.js 识别主目录时套用，编辑器在
+         79-globalconfig.js 的「worktree」组）。与 repos 同一条先例：配置页保存的是
+         **整份**配置，客户端的归一化把它丢了的话，读者在配置页改一次 git 路径，
+         手工配好的目录映射就全没了。原样搬运、不做清洗 —— 清洗是 Host 那边
+         normalizeWorktreeDirMappings 的职责（quickCommands 那种「两边都归一化」
+         是编辑器要当场数条数校验的特例，这里的编辑器只拦「条数」，形状交给 Host）。 */
+      worktreeDirMappings: [],
     }
     let pluginConfig = Object.assign({}, PLUGIN_CONFIG_DEFAULTS)
     let pluginConfigPath = ''
@@ -1078,6 +1085,10 @@ return {
       out.worktreeMains = raw.worktreeMains != null && typeof raw.worktreeMains === 'object' && !Array.isArray(raw.worktreeMains) ? raw.worktreeMains : {}
       /* appliedRepos 同 repos/drafts/worktreeMains 一条先例：原样搬运，Host 那边负责清洗。 */
       out.appliedRepos = raw.appliedRepos != null && typeof raw.appliedRepos === 'object' && !Array.isArray(raw.appliedRepos) ? raw.appliedRepos : {}
+      /* worktreeDirMappings 是数组款的原样搬运（repos 一族是对象款）：条目形状与
+         清洗都在 Host（normalizeWorktreeDirMappings），这里只守住「不是数组就当
+         没有配置」的底。 */
+      out.worktreeDirMappings = Array.isArray(raw.worktreeDirMappings) ? raw.worktreeDirMappings : []
       return out
     }
 
@@ -1761,14 +1772,20 @@ return {
         const mainDir = text(wtMainNow.mainDir)
         const hasMain = mainDir.length > 0
         const fromConfig = wtMainNow.mainSource === 'config'
+        /* mainMapped（host 65-worktree.js 的目录映射）：主目录是 gitlink 里那台别的
+           机器的路径按映射规则换算来的 —— 来源说「目录映射」而不是「自动找到」，
+           读者才追得到这个路径是哪来的（去全局配置的 worktree 组看/改规则）。 */
+        const viaMapping = wtMainNow.mainMapped === true
         const mainOk = wtMainNow.mainOk === true
         const gitlink = text(wtMainNow.gitlink)
         /* kind 含义的一句话（说明页 WorktreeMainSetup 同一文案的短版）。 */
         const kindSaid = wtMainKind === 'linked'
           ? '本目录是链接工作区：.git 是一个链接文件（' + (gitlink.length > 0 ? gitlink : 'gitlink') + '），读写的都是主仓库那头的版本库'
-          : '主仓库那头读不到（多半被删了或搬走了）：.git 还指着老地方'
+          : (viaMapping && hasMain
+            ? '主仓库那头 git 读不到：.git 记的是另一台机器的目录（' + (gitlink.length > 0 ? gitlink : 'gitlink') + '），主目录已按全局配置的「目录映射」换算到本机'
+            : '主仓库那头读不到（多半被删了或搬走了）：.git 还指着老地方')
         const tip = [
-          hasMain ? '主目录：' + mainDir + (fromConfig ? '（手动配置）' : '（自动找到）') : '主目录读不到：gitlink 配不上一个存在的目录',
+          hasMain ? '主目录：' + mainDir + (fromConfig ? '（手动配置）' : (viaMapping ? '（目录映射找到）' : '（自动找到）')) : '主目录读不到：gitlink 配不上一个存在的目录',
           kindSaid,
         ]
         if (hasMain && mainOk !== true) tip.push('这个主目录现在不存在（或里面没有 .git）—— 用「配置…」把正确路径告诉面板')
@@ -1784,7 +1801,7 @@ return {
             h('span', { className: 'dsh-git-tname' }, hasMain ? repoBaseName(mainDir) : '主目录读不到'),
             h('span', { className: 'dsh-git-tsub' + (hasMain ? '' : ' dsh-git-tsub-none') },
               hasMain
-                ? (fromConfig ? '手动配置' : '自动找到') + (mainOk ? '' : ' · 目录不在了')
+                ? (fromConfig ? '手动配置' : (viaMapping ? '目录映射' : '自动找到')) + (mainOk ? '' : ' · 目录不在了')
                 : (wtMainKind === 'broken-gitlink' ? '主目录读不到' : 'bare：没有工作区可言'))),
           h('span', { key: 'r', className: 'dsh-git-wt-right' },
             hasMain && typeof props.onOpenMain === 'function'
@@ -3077,10 +3094,15 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-qc-vars{display:flex;flex-direction:column;gap:2px;padding:6px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;background:var(--dsw-alias-bg-base)}
 .dsh-git-qc-varrow{display:flex;gap:8px;font-size:11px;line-height:16px}
 .dsh-git-qc-varname{flex:none;width:180px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-.dsh-git-qc-row{display:flex;align-items:center;gap:8px;padding:3px 0}
+/* 行的声明与下面 qc 那三行共用同一组选择器（分组而不是复制，25-worktree.js 的
+   wt-row 与 repo-box 同一条先例）—— 类名另起 dsh-git-wdm- 前缀：测试按类名认
+   控件，目录映射的行与快捷命令的行各自可数。 */
+.dsh-git-wdm-row,.dsh-git-qc-row{display:flex;align-items:center;gap:8px;padding:3px 0}
 .dsh-git-qc-name{flex:none;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
 .dsh-git-qc-cmd{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:var(--dsw-alias-label-secondary)}
-.dsh-git-qc-row .dsh-git-btn{flex:none}
+.dsh-git-wdm-row .dsh-git-btn,.dsh-git-qc-row .dsh-git-btn{flex:none}
+.dsh-git-wdm-from{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:var(--dsw-alias-label-secondary)}
+.dsh-git-wdm-to{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
 .dsh-git-qc-empty{padding:6px 2px;font-size:11px;line-height:18px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dsw-alias-label-secondary)}
 .dsh-git-qc-inrow{display:flex;align-items:center;gap:8px}
 .dsh-git-qc-inhint{flex:none;width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--dsw-alias-label-secondary)}
@@ -6103,13 +6125,21 @@ textarea.dsh-git-input{resize:vertical}
       const configured = text(snap.configured)
       const gitlink = text(snap.gitlink)
       const broken = kind === 'broken-gitlink'
+      /* 目录映射命中的 broken（host 65-worktree.js 的 mainMapped）：.git 记的是别的
+         机器的目录，主目录是按全局配置「worktree → 目录映射」换算到本机的 —— 这时
+         「多半被删了或搬走了」不是事实，话得换成「另一台机器的目录已换算」，
+         出路（打开主目录）也已经摆在下面。 */
+      const viaMapping = snap.mainMapped === true
       return h('div', { className: 'dsh-git-setup-sub' },
         h('div', { className: 'dsh-git-setup-h' }, '这是一个 worktree（链接工作区）'),
         h('div', { className: 'dsh-git-hint' },
           broken
-            ? '这个目录的 .git 是一个链接文件' + (gitlink.length > 0 ? '（' + gitlink + '）' : '')
-              + '，它指向的主仓库读不到 —— 多半被删了或搬走了。下面的主目录配置告诉面板这个工作区属于谁；'
-              + '配置之后历史、变更、提交都照常可用，读的是配置里那个主仓库的版本库。'
+            ? (viaMapping
+              ? '这个目录的 .git 是一个链接文件' + (gitlink.length > 0 ? '（' + gitlink + '）' : '')
+                + '，里面记的是另一台机器的目录路径 —— 面板按全局配置「worktree → 目录映射」把它换算成了本机路径，主目录在下面；点「打开这个目录」即可照常使用。'
+              : '这个目录的 .git 是一个链接文件' + (gitlink.length > 0 ? '（' + gitlink + '）' : '')
+                + '，它指向的主仓库读不到 —— 多半被删了或搬走了。下面的主目录配置告诉面板这个工作区属于谁；'
+                + '配置之后历史、变更、提交都照常可用，读的是配置里那个主仓库的版本库。')
             : '这个目录的 .git 是一个链接文件' + (gitlink.length > 0 ? '（' + gitlink + '）' : '')
               + '，它自己不是独立仓库 —— 读写的都是下面这个主仓库的版本库。'),
         h('div', { className: 'dsh-git-set-row' },
@@ -9363,6 +9393,147 @@ textarea.dsh-git-input{resize:vertical}
         problem.length > 0 ? h('div', { className: 'dsh-git-set-row dsh-git-error' }, problem) : null)
     }
 
+    /* ── worktree 的目录映射编辑器：列表态 + 编辑态 ──
+
+        「配置 → 全局配置」的 worktree 组专用（不像快捷命令编辑器那样还有历史页
+        ⚡ 菜单那一处使用）。结构照 QuickCommandsEditor 同一副骨架：列表态 + 编辑
+        态、删除两段式（第一次点把按钮换成「确认删除」）、上限 50 条 —— 超出的那次
+        新增不保存并把原因说在编辑器里（Host 归一化里的截断只是兜底）。配置读写
+        走 usePluginConfig / savePluginConfig，那一层已有 400ms 去抖，这里不另开炉灶。
+        条目的形状清洗不在客户端做（20-prefs.js 里 worktreeDirMappings 一格的说明）：
+        这里只拦「两条都填了」，空半条的条目保存不了；Host 那边 normalizeWorktreeDirMappings
+        收尾。 */
+    const WORKTREE_DIR_MAPPINGS_MAX = 50
+    let worktreeDirMappingSeq = 0
+    function worktreeDirMappingId() {
+      worktreeDirMappingSeq += 1
+      return 'wdm-' + String(Date.now()) + '-' + String(worktreeDirMappingSeq)
+    }
+    function WorktreeDirMappingsEditor(props) {
+      const plugin = usePluginConfig()
+      const mappings = plugin != null && Array.isArray(plugin.worktreeDirMappings) ? plugin.worktreeDirMappings : []
+      const [mode, setMode] = React.useState('list')
+      const [draft, setDraft] = React.useState({ id: null, from: '', to: '' })
+      const [problem, setProblem] = React.useState('')
+      const [armDel, setArmDel] = React.useState('')
+
+      const startNew = function () {
+        setDraft({ id: null, from: '', to: '' })
+        setProblem('')
+        setArmDel('')
+        setMode('edit')
+      }
+      const startEdit = function (one) {
+        setDraft({ id: one.id, from: text(one.from), to: text(one.to) })
+        setProblem('')
+        setArmDel('')
+        setMode('edit')
+      }
+      const backToList = function () {
+        setProblem('')
+        setArmDel('')
+        setMode('list')
+      }
+
+      const save = function () {
+        const from = draft.from.trim()
+        const to = draft.to.trim()
+        if (from.length === 0 || to.length === 0) { setProblem('原目录和替换目录都要填'); return }
+        const list = mappings.slice()
+        let at = -1
+        for (let i = 0; i < list.length; i += 1) if (list[i].id === draft.id) { at = i; break }
+        if (at < 0) {
+          if (list.length >= WORKTREE_DIR_MAPPINGS_MAX) {
+            setProblem('最多 ' + String(WORKTREE_DIR_MAPPINGS_MAX) + ' 条 —— 先删掉几条再新增，这条没有保存')
+            return
+          }
+          list.push({ id: worktreeDirMappingId(), from: from, to: to })
+        } else {
+          list[at] = { id: draft.id, from: from, to: to }
+        }
+        savePluginConfig(Object.assign({}, plugin, { worktreeDirMappings: list }))
+        setProblem('')
+        setMode('list')
+      }
+
+      /* 删除也走两段式（QuickCommandsEditor 同款）：第一次点把按钮换成「确认删除」，
+         配置只在第二次点时写。 */
+      const drop = function (one) {
+        if (armDel !== one.id) { setArmDel(one.id); return }
+        const next = []
+        for (let i = 0; i < mappings.length; i += 1) if (mappings[i].id !== one.id) next.push(mappings[i])
+        savePluginConfig(Object.assign({}, plugin, { worktreeDirMappings: next }))
+        setArmDel('')
+      }
+
+      if (mode === 'edit') {
+        return h('div', { className: 'dsh-git-qc-box' },
+          h('div', { key: 'h', className: 'dsh-git-qc-head' }, draft.id == null ? '新建目录映射' : '编辑目录映射'),
+          h('label', { key: 'f', className: 'dsh-git-qc-field' },
+            h('span', { key: 'k', className: 'dsh-git-qc-k' }, '原目录（另一台机器上的前缀）'),
+            clearable('wdmf', h('input', {
+              className: 'dsh-git-input', placeholder: '例：D:/code/www/gs/zuodian', autoFocus: true,
+              value: draft.from,
+              onChange: function (event) {
+                setDraft({ id: draft.id, from: event.target.value, to: draft.to })
+              },
+            }), draft.from.length > 0, function () {
+              setDraft({ id: draft.id, from: '', to: draft.to })
+            })),
+          h('label', { key: 't', className: 'dsh-git-qc-field' },
+            h('span', { key: 'k', className: 'dsh-git-qc-k' }, '替换目录（这台机器上的路径）'),
+            clearable('wdmt', h('input', {
+              className: 'dsh-git-input', placeholder: '例：/code/www/gs/zuodian',
+              value: draft.to,
+              onChange: function (event) {
+                setDraft({ id: draft.id, from: draft.from, to: event.target.value })
+              },
+            }), draft.to.length > 0, function () {
+              setDraft({ id: draft.id, from: draft.from, to: '' })
+            })),
+          h('div', { key: 'x', className: 'dsh-git-qc-hint' },
+            '识别 worktree 的主目录时，路径以原目录开头的那一段整段替换成替换目录（前缀匹配，D:/… 与 D:\\… 两种写法都认；从上到下第一条配上的生效）。'),
+          problem.length > 0 ? h('div', { key: 'er', className: 'dsh-git-error' }, problem) : null,
+          h('div', { key: 'a', className: 'dsh-git-qc-actions' },
+            h('button', { key: 'ok', type: 'button', className: 'dsh-git-btn dsh-git-primary', onClick: save }, '保存'),
+            h('button', { key: 'no', type: 'button', className: 'dsh-git-btn', onClick: backToList }, '取消')))
+      }
+
+      const rows = []
+      if (mappings.length === 0) {
+        rows.push(h('div', { key: 'none', className: 'dsh-git-menu-dim dsh-git-qc-empty' },
+          '还没有目录映射。worktree 从别的机器整棵拷来（如在 Windows 上建好拿到这台 Linux 用）',
+          h('br'), '而 .git 里记的还是那台机器的路径时，配一条：',
+          h('br'), 'D:/code/www/gs/zuodian → /code/www/gs/zuodian'))
+      } else {
+        for (let i = 0; i < mappings.length; i += 1) {
+          const one = mappings[i]
+          rows.push(h('div', { key: one.id, className: 'dsh-git-wdm-row' },
+            h('span', { key: 'f', className: 'dsh-git-wdm-from', title: text(one.from) }, text(one.from)),
+            h('span', { key: 'a', className: 'dsh-git-qc-k' }, '→'),
+            h('span', { key: 't', className: 'dsh-git-wdm-to', title: text(one.to) + '\n' + '路径以 ' + text(one.from) + ' 开头的那一段替换成 ' + text(one.to) }, text(one.to)),
+            h('button', {
+              key: 'e', type: 'button', className: 'dsh-git-btn', title: '编辑这条目录映射',
+              onClick: function (event) { stopEvent(event); startEdit(one) },
+            }, '编辑'),
+            h('button', {
+              key: 'd', type: 'button',
+              className: 'dsh-git-btn' + (armDel === one.id ? ' dsh-git-danger' : ''),
+              title: armDel === one.id ? '再点一次确认删除' : '删除这条目录映射',
+              onClick: function (event) { stopEvent(event); drop(one) },
+            }, armDel === one.id ? '确认删除' : '删除')))
+        }
+      }
+      return h('div', { className: 'dsh-git-qc-box' },
+        h('div', { key: 'h', className: 'dsh-git-qc-head' },
+          '目录映射' + (mappings.length > 0
+            ? '（' + String(mappings.length) + '/' + String(WORKTREE_DIR_MAPPINGS_MAX) + '）' : '')),
+        rows,
+        h('div', { key: 'a', className: 'dsh-git-qc-actions' },
+          h('button', { key: 'new', type: 'button', className: 'dsh-git-btn', onClick: startNew }, '新增'),
+          h('span', { key: 'n', className: 'dsh-git-menu-dim' }, '保存在插件配置里，识别 worktree 主目录时套用')))
+    }
+
     /* ── 全局配置这一档的整页 ──
 
        老设置页 GitSettingsSection 的正文，去掉页首大标题（作用域切换那排已经说了
@@ -9470,6 +9641,14 @@ textarea.dsh-git-input{resize:vertical}
         h('div', { className: 'dsh-git-set-hint' },
           '自定义命令模板，历史页的 ⚡ 按钮一键执行；{branch}、{hash} 这类变量按当前分支和选中的提交代值。与那个菜单共用同一份（也保存在上面那个 json 里）。'),
         h(QuickCommandsEditor, { key: 'qc', initial: 'list' }),
+
+        /* worktree 组（本组现在只有「目录映射」一项，组名留给以后的 worktree 全局
+            设置）：它描述的是「这台机器上目录长什么样」（别的机器的路径在本机叫
+            什么），跟插件与机器走而不是跟某个项目走，所以放全局档。 */
+        h('div', { className: 'dsh-git-set-group' }, 'worktree'),
+        h('div', { className: 'dsh-git-set-hint' },
+          'worktree 的 .git 链接文件里记着主仓库的目录路径；整棵目录树从别的机器拷来时（如在 Windows 上建好、拿到这台 Linux 机器用），里面记的还是那台机器的路径（D:/code/…），这台机器的 git 读不动它。下面的「目录映射」类似虚拟机挂载的目录映射：识别 worktree 的主目录时，路径以「原目录」开头的那一段整段替换成「替换目录」（前缀匹配替换，D:/… 与 D:\\… 两种写法都认），换算出的主仓库就能被面板认出、打开。'),
+        h(WorktreeDirMappingsEditor, { key: 'wdm' }),
 
         h(GitToolchainGroup),
 
@@ -10783,7 +10962,8 @@ textarea.dsh-git-input{resize:vertical}
           h('span', { className: 'dsh-git-set-label' }, '主目录'),
           wtMainDir.length > 0
             ? h('span', { className: 'dsh-git-set-hint dsh-git-set-url', title: wtMainDir },
-              wtMainDir + '（' + (wtSnapNow.mainSource === 'config' ? '手动配置' : '自动找到') + (wtMainOk ? '' : ' · 目录不在了') + '）')
+              wtMainDir + '（' + (wtSnapNow.mainSource === 'config' ? '手动配置'
+                : (wtSnapNow.mainMapped === true ? '目录映射找到' : '自动找到')) + (wtMainOk ? '' : ' · 目录不在了') + '）')
             : h('span', { className: 'dsh-git-set-hint' }, '读不到：gitlink 配不上一个存在的目录（在下面配一个现存的目录即可）')),
         h('div', { className: 'dsh-git-set-row' },
           h('span', { className: 'dsh-git-set-label' }, '配置主目录'),
