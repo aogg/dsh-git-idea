@@ -524,19 +524,33 @@ return {
     const repoAppliedSignal = createSignal(function () { return repoApplied })
     const useRepoApplied = repoAppliedSignal.use
 
-    /* ── 生效仓库的浏览器级持久化层 ──
+    /* ── 生效仓库的持久化：两层 ──
 
-       内存里的 sharedRepos 只活一页：DSH 换会话时整个 session 子树重挂，模块级的它
-       还在；但页面刷新、断线重连之后就没了 —— chip 只好退回工作区默认仓库，读者上次
-       单击选定的仓库等于被静默改掉。所以再垫一层 localStorage：一个 JSON 键存
-       { [sessionId]: 仓库绝对路径 }。这是视图态（这台浏览器里、这个读者怎么看这个
-       会话），按面板尺寸 PANEL_SIZE_KEY 的先例进 localStorage：不进 Host 部署配置、
-       不加 RPC，换浏览器、换机器不跟 —— 跨机器那是配置层（drafts / repos）的职责。
+       权威一层在后端：插件配置（dsh-git-idea.json）的 appliedRepos，按**工作区**
+       一格（键 = 工作区绝对路径，Host repoKeyOf 的口径）。读者在这个工作区里单击
+       选定的仓库是这个项目的事实，不是某台浏览器怎么看它 —— 换浏览器、换机器、
+       开新会话都还是它。读是 git/repo-applied（每个会话只问一次，ensureAppliedRepo），
+       写是 git/repo-applied-save（每次单击 fire-and-forget 地回写）；清洗都在 Host
+       （70-config.js 的 normalizeAppliedRepos）。这一层管「跟谁走」。
 
-       读取懒一次：第一次用到时才碰 localStorage，之后以内存这份账为准（页面上问
-       sessionRepo 的频率不低，没必要反复解析同一份 JSON）。store 还拿不到时不算
-       「读过」、下次再试 —— 刷新后的第一帧往往还没有人把 document 交进来，若把那
-       一空读当成「确实没选过」缓存住，等 doc 到了也救不回来。 */
+       快速通道一层在浏览器：localStorage 一个 JSON 键存 { [sessionId]: 仓库绝对
+       路径 }。后端账落地之前，第一帧先按它画，免得闪一帧工作区默认仓库；后端账
+       落地以后端为准 —— 本页亲手单击选过的除外（liveRepos，本页的赢）。它是视图
+       态，按面板尺寸 PANEL_SIZE_KEY 的先例进 localStorage，上限 50、按最近使用
+       淘汰，不设过期。
+
+       内存里的 sharedRepos 仍然是运行期的唯一真账，两层都是它的垫底。localStorage
+       这份的读取懒一次：第一次用到时才碰 localStorage，之后以内存这份账为准（页面
+       上问 sessionRepo 的频率不低，没必要反复解析同一份 JSON）。store 还拿不到时
+       不算「读过」、下次再试 —— 刷新后的第一帧往往还没有人把 document 交进来，
+       若把那一空读当成「确实没选过」缓存住，等 doc 到了也救不回来。 */
+    /* 后端账的两份页内簿记（不持久，只活这一页）：
+       liveRepos —— 本页亲手单击选过的会话：后端账不许覆盖它（adoptHostRepo 见了
+       就退）。另一台浏览器记下的是昨天的事实，本页读者刚刚点的是现在的事实。
+       appliedAsked —— 后端账问过一次的会话：不再问第二遍（chip 与面板谁先挂载
+       都只发出一问）。 */
+    const liveRepos = {}
+    const appliedAsked = {}
     const APPLIED_REPOS_KEY = 'dsh.git-idea.applied-repos'
     /* 上限 50 个会话：一页同时开不了几个会话，但这个键跟着浏览器走一辈子，不设上限
        的话经年攒下的旧会话 id 就永远躺在里面。超出按最近使用淘汰 —— rememberRepo
@@ -594,35 +608,106 @@ return {
       const value = stored !== null ? stored[sessionId] : undefined
       return typeof value === 'string' ? value : ''
     }
+    /* 快速通道那份账的写入，提炼成一个小函数：rememberRepo（单击）与
+       adoptHostRepo（后端账落地）都要它，LRU 的语义只写一遍。 */
+    function storedAppliedPut(sessionId, next) {
+      const stored = appliedReposMap()
+      if (stored === null) return
+      if (next.length > 0) {
+        /* 先删再插：普通对象的键序就是这份账的「最近使用」序，重插即挪到队尾，
+           淘汰从队首开始 —— 最久没人碰的会话先让位。 */
+        delete stored[sessionId]
+        stored[sessionId] = next
+        const keys = Object.keys(stored)
+        for (let i = 0; i < keys.length - APPLIED_REPOS_MAX; i += 1) delete stored[keys[i]]
+      } else {
+        /* 空串是删除语义：与内存格同一条路，盘上也不留这一格。 */
+        delete stored[sessionId]
+      }
+      writeStoredJSON(APPLIED_REPOS_KEY, stored)
+    }
+
+    /* 后端那份权威账的回写：fire-and-forget，失败只进控制台，绝不影响主流程 ——
+       单击已经生效，存不进配置不能把它变成一次操作失败（saveDraft 同一条规矩）。
+       两条路共用：真选择（正常路径），与第一次亲手点到同一个值的重申。 */
+    function saveAppliedToHost(sessionId, next) {
+      callHost('git/repo-applied-save', { sessionId: sessionId, repo: next }).then(function (result) {
+        if (result == null || result.ok !== true) {
+          console.warn('dsh-git-idea: 生效仓库存进后端配置失败:', result != null && result.error != null ? String(result.error) : 'unknown')
+        }
+      }, function (failure) {
+        console.warn('dsh-git-idea: 生效仓库存进后端配置失败:', failureText(failure))
+      })
+    }
+
     function rememberRepo(sessionId, next) {
       if (sessionId === undefined || sessionId === null) return
       const previous = sessionRepo(sessionId)
+      const firstLive = !(String(sessionId) in liveRepos)
       /* 同值早退：不重复通知，也不写盘 —— 盘上的字节是「读者做过一次真选择」的
-         账，一个没变成别的值的重申不配留痕。 */
-      if (previous === next) return
+         账，一个没变成别的值的重申不配留痕。唯一的例外是第一次亲手点到同一个值：
+         内存里一致不代表后端账也一致 —— 那可能正是另一台浏览器改过的旧值，等刷新
+         后被 adoptHostRepo 盖回来，就成了「切了多次老是变回去」的另一种形态。所以
+         这一次要把 liveRepos 立起来、同值也往后端递一次（重申式单击要让后端也认
+         它），屏幕上没有任何变化，不通知。 */
+      if (previous === next) {
+        if (next.length > 0 && firstLive === true) {
+          liveRepos[String(sessionId)] = true
+          saveAppliedToHost(sessionId, next)
+        }
+        return
+      }
       if (next.length > 0) sharedRepos[sessionId] = next
       else delete sharedRepos[sessionId]
-      /* 盘上的账与内存同进退。store 不在（还没人交 doc、或 localStorage 被私隐模式
-         拒了）就只记内存 —— 与这个层出现之前的行为完全一致，writeStored 自己那层
-         try/catch 语义也是这么承诺的；store 在，则这次单击换来的选择立刻落盘，
-         刷新、重连、切走再切回来都还是它。 */
-      const stored = appliedReposMap()
-      if (stored !== null) {
-        if (next.length > 0) {
-          /* 先删再插：普通对象的键序就是这份账的「最近使用」序，重插即挪到队尾，
-             淘汰从队首开始 —— 最久没人碰的会话先让位。 */
-          delete stored[sessionId]
-          stored[sessionId] = next
-          const keys = Object.keys(stored)
-          for (let i = 0; i < keys.length - APPLIED_REPOS_MAX; i += 1) delete stored[keys[i]]
-        } else {
-          /* 空串是删除语义：与内存格同一条路，盘上也不留这一格。 */
-          delete stored[sessionId]
-        }
-        writeStoredJSON(APPLIED_REPOS_KEY, stored)
-      }
+      /* 本页亲手点过的记号：立一次就够，之后后端账不许再覆盖这个会话。 */
+      liveRepos[String(sessionId)] = true
+      /* 盘上的账（快速通道）与内存同进退：store 不在（还没人交 doc、或 localStorage
+         被私隐模式拒了）就只记内存 —— 与持久化层出现之前的行为完全一致；store 在，
+         这次单击换来的选择立刻落盘，刷新、重连、切走再切回来都还是它。 */
+      storedAppliedPut(sessionId, next)
       repoApplied += 1
       repoAppliedSignal.notify()
+      saveAppliedToHost(sessionId, next)
+    }
+
+    /* 后端账落地，接回本页（收养）：ensureAppliedRepo 问到的那份账里记着读者上次
+       在这个工作区选定的仓库，把它写进 sharedRepos、快速通道跟着对齐，applied
+       信号一响，chip 与面板都换过去 —— 等价于「带着上次的选择打开这一页」。两条
+       刻意的「不」：不标 liveRepos（这不是本页的单击，只是把别处记下的事实搬
+       过来）；不回写后端（账本来就从后端来，回写会让两页互相追着写，死循环）。 */
+    function adoptHostRepo(sessionId, repo) {
+      const value = text(repo)
+      /* 后端没记过（空串）= 维持现状：回落到工作区默认仓库，与没有这一层时一字不差。 */
+      if (value.length === 0) return
+      /* 本页亲手选过，本页的赢。 */
+      if (liveRepos[String(sessionId)] === true) return
+      /* 账已一致：一个字节不动、不通知。 */
+      if (sessionRepo(sessionId) === value) return
+      sharedRepos[sessionId] = value
+      storedAppliedPut(sessionId, value)
+      repoApplied += 1
+      repoAppliedSignal.notify()
+    }
+
+    /* 问一次后端账（每个会话只问一次，appliedAsked 去重）。 */
+    function ensureAppliedRepo(sessionId) {
+      if (sessionId === undefined || sessionId === null) return
+      const key = String(sessionId)
+      if (appliedAsked[key] === true) return
+      appliedAsked[key] = true
+      callHost('git/repo-applied', { sessionId: sessionId }).then(function (data) {
+        if (data == null || data.ok !== true) return
+        if (data.stale === true) return
+        adoptHostRepo(sessionId, text(data.repo))
+      }, function () {
+        /* 后端账读不到（旧版 Host 还没有这个方法、运输层断着）就安静维持现状 ——
+           与没有这一层时一字不差。 */
+      })
+    }
+
+    /* 这个会话本页有没有亲手选过仓库（面板收养 effect 的让路条件）。 */
+    function liveRepoChosen(sessionId) {
+      return sessionId == null ? false : liveRepos[String(sessionId)] === true
     }
 
     /* The same answer for the one surface that has no session of its own: the
@@ -950,6 +1035,12 @@ return {
          没了 —— 那正是主仓库被删/搬走后读者唯一亲手给对的答案。原样搬运、不做
          清洗 —— 清洗是 Host 那边 normalizeWorktreeMains 的职责。 */
       worktreeMains: {},
+      /* 生效仓库的跨浏览器记忆（按工作区分键，host 61-repos.js 的 appliedRepoSnapshot
+         读、saveAppliedRepo 写）。与 repos 同一条先例：配置页保存的是**整份**配置，
+         客户端的归一化把它丢了的话，读者在配置页改一次 git 路径，各工作区记住的
+         生效仓库就全没了。原样搬运、不做清洗 —— 清洗是 Host 那边 normalizeAppliedRepos
+         的职责。 */
+      appliedRepos: {},
     }
     let pluginConfig = Object.assign({}, PLUGIN_CONFIG_DEFAULTS)
     let pluginConfigPath = ''
@@ -985,6 +1076,8 @@ return {
       out.drafts = raw.drafts != null && typeof raw.drafts === 'object' && !Array.isArray(raw.drafts) ? raw.drafts : {}
       /* worktreeMains 同 repos/drafts 一条先例：原样搬运，Host 那边负责清洗。 */
       out.worktreeMains = raw.worktreeMains != null && typeof raw.worktreeMains === 'object' && !Array.isArray(raw.worktreeMains) ? raw.worktreeMains : {}
+      /* appliedRepos 同 repos/drafts/worktreeMains 一条先例：原样搬运，Host 那边负责清洗。 */
+      out.appliedRepos = raw.appliedRepos != null && typeof raw.appliedRepos === 'object' && !Array.isArray(raw.appliedRepos) ? raw.appliedRepos : {}
       return out
     }
 
@@ -2964,8 +3057,13 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-oknote{flex:none;box-sizing:border-box;max-height:120px;overflow:auto;color:var(--dsw-alias-state-success-primary);background:var(--dsw-alias-bg-layer-2);border-bottom:1px solid var(--dsw-alias-border-l1);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
 
 /* ── 快捷命令的确认框与编辑器 ──
-    面板里是覆盖层（盖住正文、居中一张卡片）；配置页的全局组里同一张卡片直接排在管理组下面。 */
-.dsh-git-qc-overlay{position:absolute;inset:0;z-index:50;display:flex;padding:14px;background:var(--dsw-alias-bg-layer-1);overflow:auto}
+    面板里是覆盖层（盖住正文、居中一张卡片）；配置页的全局组里同一张卡片直接排在管理组下面。
+    底板是半透明暗遮罩（rgba(0,0,0,.32)），不再是实色背景 —— 整块面板被盖成一张
+    白纸（推送确认弹窗打开时连「现在推的是哪个仓库」都看不见，更别提拿身后的分支
+    列表核对）就是实色底板干的。遮罩之下隐约看得见面板，弹窗本体 qc-box 保持实色
+    —— 卡片与底板的层次由 box-shadow 与这道暗化一起撑。这一层是签出二选一、推送
+    确认、reword 等多个框共用的同一块板，一并受益，属预期。 */
+.dsh-git-qc-overlay{position:absolute;inset:0;z-index:50;display:flex;padding:14px;background:rgba(0,0,0,.32);overflow:auto}
 .dsh-git-qc-box{margin:auto;width:min(620px,100%);max-height:100%;box-sizing:border-box;display:flex;flex-direction:column;gap:8px;padding:12px 14px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1);box-shadow:var(--dsw-elevation-soft)}
 .dsh-git-qc-head{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600}
 .dsh-git-qc-x{display:inline-flex;align-items:center;justify-content:center;flex:none;margin-left:auto;width:18px;height:18px;padding:0;border:0;border-radius:4px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:13px;line-height:1;cursor:pointer}
@@ -9549,9 +9647,8 @@ textarea.dsh-git-input{resize:vertical}
          只写该仓库 .git/config 的提交身份、git 自己管换行符的两个键
          （core.autocrlf / core.safecrlf）、远端表（长在 .git/config 里，走
          git remote 自己的三条子命令，74-identity.js）。最末一组「git 忽略项」
-         （GitIgnoredScanGroup）是例外：只读、不跟本页编辑目标走 —— 一口扫描
-         shown 清单里的全部仓库、每个仓库再逐个 worktree 工作树（主/链接都标），
-         列出被 git 忽略的文件与目录。
+         （GitIgnoredScanGroup）同样跟本页编辑目标走：只读扫描这一个仓库、每个
+         worktree 工作树（主/链接都标），列出被 git 忽略的文件与目录。
        · 全局配置 —— 跟着插件与这台机器走（79-globalconfig.js 的 GitGlobalConfigPane，
          原先是 DSH 设置面板里的「dsh-git-idea配置」页，2026-10 起搬到这里）：初始化
          分支、远程同步实参、快捷命令、git 位置、提交身份（--global）、换行符
@@ -9642,12 +9739,15 @@ textarea.dsh-git-input{resize:vertical}
        props.state 是面板那份 pushConfirm（branch/repo/setUpstream/preview/
        loading/running/error），预览的读在面板自己的 effect 里 —— 组件只管画与手势。
 
-       几种形状：读取中一行灰字；预览失败把原话说在框内；上游已知列出提交行
-       （ahead 为 0 时没有可推的，按钮换成「关闭」）；没有上游翻成「设置上游并
-       推送」的说明态 —— 远端已在打开前挑好的（右键推送 / 横幅那两条，setUpstream
-       带着）直接说将执行什么；顶栏 ↑ 这条要到预览答复才知道，远端由面板按
-       guessPushRemote 同一套规矩猜好传进来（props.guess），猜不出时按钮不出、
-       props.guessNote 把出路（「修改跟踪分支…」）说出来。
+       几种形状：读取中一行灰字；本地不存在（localExists === false）把出路说在
+       红字里、不出「推送」按钮 —— 这是推送事故（对着本地不存在的分支跑 push，
+       git 报 src refspec 天书）在弹窗里的提前半步；预览失败把原话说在框内；上游
+       已知列出提交行（ahead 为 0 时没有可推的，按钮换成「关闭」）；没有上游翻成
+       「设置上游并推送」的说明态 —— 远端已在打开前挑好的（右键推送 / 横幅那两条，
+       setUpstream 带着）直接说将执行什么；顶栏 ↑ 这条要到预览答复才知道，远端由
+       面板按 guessPushRemote 同一套规矩猜好传进来（props.guess），猜不出时按钮
+       不出、props.guessNote 把出路（「修改跟踪分支…」）说出来。标题下常显一行
+       「仓库 · 分支」小字 —— 仓库选错在推送前就能看出来。
 
        推送中（running）按钮全禁、Esc 与点遮罩一起失效 —— 推到一半的推送没有
        「取消」可言。useOutsideDismiss 的 onClose 闭包停在 open 翻真的那一帧
@@ -9663,13 +9763,30 @@ textarea.dsh-git-input{resize:vertical}
       const ahead = preview != null && typeof preview.ahead === 'number' ? preview.ahead : commits.length
       const behind = preview != null && typeof preview.behind === 'number' ? preview.behind : 0
       const noUpstream = preview != null && preview.ok === true && preview.upstream == null
+      /* 本地不存在（2026-10-15 推送事故的提前半步）：预览带回来的 localExists ===
+         false = 这个仓库里根本没有这个分支 —— 这件事在读者点「推送」之前就该说破
+         （Host git/push 的 branch-missing 是点了之后的最后一道闸，这里是提前的那
+         道）。它蕴含 noUpstream（本地分支都不在，@{u} 必然问不出来），所以一切
+         判断都排在 noUpstream 前面；命令强制空串 —— 「推送」按钮自然就不出。 */
+      const localMissing = preview != null && preview.ok === true && preview.localExists === false
       const guess = text(props.guess)
       /* 这次推送最终会以什么命令形状执行（按钮 title 与「将执行」那行都从这来）。
          带 -u 的两个来处：打开前就定好的（setUpstream），与顶栏 ↑ 读完预览才发现
-         没有上游、按老规矩现猜的（guess）。 */
-      const command = state.setUpstream != null
-        ? 'git push -u ' + state.setUpstream.remote + ' ' + state.setUpstream.branch
-        : (noUpstream === true && guess.length > 0 ? 'git push -u ' + guess + ' ' + text(state.branch) : (noUpstream === true ? '' : 'git push'))
+         没有上游、按老规矩现猜的（guess）。本地不存在时永远空串 —— 推送无从谈起。 */
+      const command = localMissing === true
+        ? ''
+        : (state.setUpstream != null
+          ? 'git push -u ' + state.setUpstream.remote + ' ' + state.setUpstream.branch
+          : (noUpstream === true && guess.length > 0 ? 'git push -u ' + guess + ' ' + text(state.branch) : (noUpstream === true ? '' : 'git push')))
+      /* 常显小字用的两个名字：分支取预览答复的（detached 是 null → 退回请求里的
+         state.branch，再退回 HEAD），仓库取预览答复的实际仓库路径（顶栏 ↑ 这条在
+         预览回来前只有生效仓库可说）。短名用 24-repos.js 的 repoBaseName（路径最后
+         一段）—— 推送弹窗只是认一下仓库，不需要同名消歧的完整短名算法。 */
+      const branchLabel = preview != null && text(preview.branch).length > 0
+        ? text(preview.branch)
+        : (text(state.branch).length > 0 ? text(state.branch) : 'HEAD')
+      const repoShown = preview != null && text(preview.repo).length > 0 ? text(preview.repo) : text(state.repo)
+      const repoShort = repoShown.length > 0 ? repoBaseName(repoShown) : '当前生效仓库'
       const upName = preview != null && text(preview.upstream).length > 0
         ? text(preview.upstream)
         : (state.setUpstream != null ? state.setUpstream.remote + '/' + state.setUpstream.branch : '')
@@ -9695,19 +9812,30 @@ textarea.dsh-git-input{resize:vertical}
           h('span', { key: 'd', className: 'dsh-git-pwhen' }, relativeDate(one.date))))
       }
 
-      /* 标题与正文按读到的形状说：读取中、读失败、没有上游、没有可推的、正常列表。 */
+      /* 标题与正文按读到的形状说：读取中、本地不存在、读失败、没有上游、没有可推
+         的、正常列表。本地不存在排在没有上游前面 —— 后者是前者的必然推论，先说
+         更要紧的那句。 */
       const head = loading === true && preview == null
         ? '推送：正在读取要推的提交…'
-        : (noUpstream === true
-            ? '「' + (text(state.branch).length > 0 ? text(state.branch) : 'HEAD') + '」还没有上游 —— 先设置上游并推送'
-            : (preview != null && preview.ok !== true
-                ? '推送：读不到要推的提交'
-                : (ahead === 0
-                    ? '推送 ' + (upName.length > 0 ? upName : '上游')
-                    : '推送 ' + String(ahead) + ' 个提交到 ' + (upName.length > 0 ? upName : '上游'))))
+        : (localMissing === true
+            ? '「' + branchLabel + '」在本地不存在 —— 这个仓库里没有这个分支'
+            : (noUpstream === true
+                ? '「' + (text(state.branch).length > 0 ? text(state.branch) : 'HEAD') + '」还没有上游 —— 先设置上游并推送'
+                : (preview != null && preview.ok !== true
+                    ? '推送：读不到要推的提交'
+                    : (ahead === 0
+                        ? '推送 ' + (upName.length > 0 ? upName : '上游')
+                        : '推送 ' + String(ahead) + ' 个提交到 ' + (upName.length > 0 ? upName : '上游')))))
       const body = []
       if (loading === true && preview == null) {
         body.push(h('div', { key: 'wait', className: 'dsh-git-hint' }, '正在读取要推送的提交…'))
+      } else if (localMissing === true) {
+        /* 红字（dsh-git-error，与预览失败同款）把出路说全：仓库路径照实给 ——
+           读者拿它对一眼「这是不是我项目的那个仓库」，两条出路各接一种搞错的形状。 */
+        body.push(h('div', { key: 'nolocal', className: 'dsh-git-error', style: { whiteSpace: 'pre-wrap', fontSize: '11px', lineHeight: '16px' } },
+          '仓库 ' + repoShown + ' 里没有分支 ' + branchLabel + ' —— 它可能已被删除、或只在远端存在。两条出路：'
+            + '在左栏分支列表里右键它选「签出」，建出本地分支后再推；'
+            + '或者先确认顶部分支芯片当前打开的是项目所在仓库（现在是 ' + repoShort + '），再推。'))
       } else if (preview != null && preview.ok !== true) {
         const said = text(preview.stderr)
         body.push(h('div', { key: 'bad', className: 'dsh-git-error', style: { whiteSpace: 'pre-wrap', fontSize: '11px', lineHeight: '16px' } },
@@ -9743,10 +9871,15 @@ textarea.dsh-git-input{resize:vertical}
       }
 
       /* head / 正文各行 / 按钮排都是 qc-box 的直接孩子 —— 那块盒子是 flex 列、
-         gap:8px，中间不再垫一层（垫了就把行距全挤没了）。 */
+         gap:8px，中间不再垫一层（垫了就把行距全挤没了）。标题下常显一行小字：
+         「仓库 · 分支」。事故的另一半根因是仓库张冠李戴（外层 dsh 工作区仓库 ≠
+         嵌在里面的项目仓库）—— 把「这次推的是哪个仓库的哪个分支」常驻在标题下，
+         选错了仓库在推送前就能看出来，不用等 git 的天书。 */
       const kids = [h('div', { key: 'h', className: 'dsh-git-qc-head' },
         running === true ? h('span', { key: 'spin', className: 'dsh-git-spin' }, '↑') : null,
-        head)].concat(body)
+        head),
+        h('div', { key: 'meta', className: 'dsh-git-hint' },
+          '仓库 ' + repoShort + ' · 分支 ' + branchLabel)].concat(body)
       kids.push(h('div', { key: 'a', className: 'dsh-git-qc-actions' },
         canPush === true
           ? h('button', {
@@ -9893,24 +10026,32 @@ textarea.dsh-git-input{resize:vertical}
 
     /* ── 「git 忽略项」分组（配置页「仓库」组的第四个下级组）──
 
-       与收在它前面的三个下级组（提交身份 / 远端 / 换行符）不是一类账：那三组读写
-       「本页正在编辑的那个仓库」的 .git/config，这一组是**只读扫描**，吃的是页首
-       仓库清单里的**全部**可选仓库（shown 清单：工作区扫到 + 手动登记，missing
-       不在列）—— 被忽略的文件是每个工作树各一份的，所以每个仓库还要逐个 worktree
-       工作树（主工作区 + git worktree add 出来的链接工作区）列一遍，行上标主/链接
-       与分支。数据来自 Host 的 git/ignored-scan（65-worktree.js 下半，不进读缓存
-       —— 要的就是「现在点、现在看」），点按钮才发，结果只住 React state：不持久化、
-       不自动刷新，换会话面板重挂即清零。
+       与收在它前面的三个下级组（提交身份 / 远端 / 换行符）如今是一类账了：都吃
+       「本页正在编辑的那个仓库」（页首受控单选的 targetRepo，默认当前生效仓库）。
+       过去这一组自扫一份清单 —— 页首仓库清单里的**全部**可选仓库，扫完按仓库
+       分组展示，等于在配置页里又长出一个仓库选择来；而「看哪个仓库的忽略项」
+       页首那行单选本来就在回答，两份选择只会打架（在 A 上配置、扫到的却是
+       B 的忽略项）。所以收敛成一份：单选指向谁就只扫谁，扫完自然也只有它的
+       结果，仓库那一层选择就地消失。
+
+       被忽略的文件是每个工作树各一份的，所以这一个仓库仍要逐个 worktree
+       工作树（主工作区 + git worktree add 出来的链接工作区）列一遍，行上标
+       主/链接与分支。数据来自 Host 的 git/ignored-scan（65-worktree.js 下半，
+       不进读缓存 —— 要的就是「现在点、现在看」），点按钮才发，结果只住 React
+       state：不持久化、不自动刷新，换会话面板重挂即清零；换编辑目标则整份作废
+       —— 留着上一个仓库的忽略项，读者会当成眼前这个仓库的。
 
        纯只读也写在明面上：扫描不写 .git/config、不动文件系统、更不删任何被忽略的
        项，分组说明与按钮 tooltip 都这么说。
 
        交互防重入：扫描在飞时按钮禁用（再点无效），单飞不排队 —— 结果回来整份替换
-       上一次的。展示按 仓库 → 工作树 → 条目 三层折叠：仓库组头可收起（折叠惯例与
-       RepoSwitcher / WorktreeBox 同一家：标题行即折叠开关、跟着组件挂载走）；工作树
-       行默认收起、单击展开条目（2000 条的清单不该开门就糊一脸）。类名另起
-       dsh-git-ign- 前缀，不混 dsh-git-repo-* / -wt-* —— 那两批是测试按个数认的
-       控件（46-css.js 的说明），折叠三角这类没人按个数认的小记号才借。 */
+       上一次的。「作废」不用多记一笔账：答复里的仓库路径就是扫描时的目标，渲染时
+       对不上眼前的编辑目标就当没扫过（scanLive）。展示按 仓库 → 工作树 → 条目
+       三层折叠：仓库组头可收起（折叠惯例与 RepoSwitcher / WorktreeBox 同一家：
+       标题行即折叠开关、跟着组件挂载走）；工作树行默认收起、单击展开条目（2000 条
+       的清单不该开门就糊一脸）。类名另起 dsh-git-ign- 前缀，不混 dsh-git-repo-* /
+       -wt-* —— 那两批是测试按个数认的控件（46-css.js 的说明），折叠三角这类没人
+       按个数认的小记号才借。 */
     function GitIgnoredScanGroup(props) {
       const sessionId = props.sessionId
       const repos = Array.isArray(props.repos) ? props.repos : []
@@ -9955,25 +10096,27 @@ textarea.dsh-git-input{resize:vertical}
       }
 
       const rows = []
-      /* 组头行：标题吃剩余宽度，主视觉扫描按钮贴行尾 —— 与「远端」组头挂 ⟳ 同一个
-         group-row 画法，按钮用这一页的主按钮长相（这一页不新造按钮长相）。 */
+      /* 本组吃的是「本页正在编辑的那个仓库」（挂载点只递一个元素进来）：组头与
+         三个写配置的组头一样点名它的短名 —— 扫的是谁，看一眼组头就知道。目标
+         还没就位（面板还没读到生效仓库）时退回泛称。 */
+      const ignTarget = repos.length > 0 ? text(repos[0]) : ''
       rows.push(h('div', { key: 'head', className: 'dsh-git-set-group dsh-git-set-group-row' },
-        h('span', null, 'git 忽略项（只读）'),
+        h('span', null, 'git 忽略项（只读' + (ignTarget.length > 0 ? ' ' + repoShortName(labels, ignTarget) : '') + '）'),
         h('button', {
           type: 'button', className: 'dsh-git-btn dsh-git-primary',
           disabled: scanning === true || repos.length === 0,
           title: repos.length === 0
-            ? '上面还没有可选的仓库 —— 先把仓库加进清单再来扫描'
-            : '列出清单里全部仓库（含每个 worktree 工作树）被 git 忽略的文件与目录。只读：不写 .git、不动文件、不删任何被忽略的项',
+            ? '上面还没有选中的仓库 —— 先在「仓库」清单里点一行，再来扫描'
+            : '只扫上面选中的这个仓库（含每个 worktree 工作树）被 git 忽略的文件与目录。只读：不写 .git、不动文件、不删任何被忽略的项',
           onClick: function () { runScan() },
         }, scanning === true ? '扫描中…' : '扫描忽略项')))
 
       rows.push(h('div', { key: 'hint', className: 'dsh-git-set-hint' },
-        '扫的是上面仓库清单里的全部仓库（不只是本页正在编辑的那个），每个仓库再逐个 worktree 工作树列：忽略规则按 .gitignore、.git/info/exclude 与全局排除一起算，整个被忽略的目录折成一行带尾斜杠。结果不保存、不自动刷新，每次都是点了按钮现扫；扫描只读，不会改任何文件。'))
+        '只扫上面选中的这一个仓库（本页编辑目标，默认当前生效仓库），它的每个 worktree 工作树各列一遍：忽略规则按 .gitignore、.git/info/exclude 与全局排除一起算，整个被忽略的目录折成一行带尾斜杠。结果不保存、不自动刷新，每次都是点了按钮现扫；扫描只读，不会改任何文件。'))
 
       if (repos.length === 0) {
         rows.push(h('div', { key: 'norepos', className: 'dsh-git-set-hint' },
-          '这个工作区还没有可选的仓库 —— 先在上面把仓库加进清单，再来扫忽略项。'))
+          '上面还没有选中的仓库 —— 先在「仓库」清单里点一行，再来扫忽略项。'))
         return h('div', { className: 'dsh-git-ign' }, rows)
       }
 
@@ -9984,7 +10127,11 @@ textarea.dsh-git-input{resize:vertical}
             : '扫描失败：' + problem))
       }
 
-      if (scan == null) {
+      /* 眼前这份扫描还是不是这个仓库的：答复自报仓库路径，对不上编辑目标就当
+         没扫过（换目标不作废会被读者当成眼前仓库的忽略项）。 */
+      const scanLive = scan != null && Array.isArray(scan.repos) && scan.repos.length === 1
+        && text(scan.repos[0].path) === ignTarget
+      if (scan == null || scanLive !== true) {
         if (problem.length === 0) {
           rows.push(h('div', { key: 'unscanned', className: 'dsh-git-set-hint' },
             scanning === true ? '正在扫描…' : '还没扫描过 —— 点右上角的「扫描忽略项」开始。'))
@@ -10000,12 +10147,12 @@ textarea.dsh-git-input{resize:vertical}
       }
       if (scan.timedOut === true) {
         rows.push(h('div', { key: 'timedout', className: 'dsh-git-set-hint dsh-git-warn' },
-          '扫描总时长到了上限（约 30 秒）：标着「没有扫」的仓库与工作树是到点后停下来的，再点一次扫描可以重试。'))
+          '扫描总时长到了上限（约 30 秒）：标着「没有扫」的工作树是到点后停下来的，再点一次扫描可以重试。'))
       }
 
       const reports = Array.isArray(scan.repos) ? scan.repos : []
       if (reports.length === 0) {
-        rows.push(h('div', { key: 'empty', className: 'dsh-git-set-hint' }, '清单里没有可扫描的仓库。'))
+        rows.push(h('div', { key: 'empty', className: 'dsh-git-set-hint' }, '这个仓库没有扫出来。'))
         return h('div', { className: 'dsh-git-ign' }, rows)
       }
 
@@ -10738,7 +10885,7 @@ textarea.dsh-git-input{resize:vertical}
         h('div', { className: 'dsh-git-set-scope' },
           h('div', { className: 'dsh-git-set-group' }, '仓库（这一页在编辑哪个仓库）'),
           h('div', { className: 'dsh-git-set-hint' },
-            '收在本组内的提交身份、远端、换行符三个下级组（编辑目标是 worktree 链接工作区时，还会多出一个「worktree 主目录」组），读写的都是这里选中的仓库，默认是当前生效仓库（带 ● 的行）。单击行只换本页的编辑目标 —— 面板的生效仓库（历史、提交、推送用的那个）不跟着换，要换生效仓库去「历史」或「变更」页的仓库列表。会话工作区本身不是仓库时这组照常可用：把仓库目录「＋ 添加目录」登记进来，就能直接配置它。最末的「git 忽略项」是只读扫描，不跟这里的单选走 —— 它扫的是整份清单里的全部仓库。'),
+            '收在本组内的提交身份、远端、换行符三个下级组（编辑目标是 worktree 链接工作区时，还会多出一个「worktree 主目录」组），读写的都是这里选中的仓库，默认是当前生效仓库（带 ● 的行）。单击行只换本页的编辑目标 —— 面板的生效仓库（历史、提交、推送用的那个）不跟着换，要换生效仓库去「历史」或「变更」页的仓库列表。会话工作区本身不是仓库时这组照常可用：把仓库目录「＋ 添加目录」登记进来，就能直接配置它。最末的「git 忽略项」是只读扫描，跟这里的单选走 —— 只扫选中仓库的每个工作树。'),
           h(RepoSwitcher, {
             key: 'cfg-repos',
             sessionId: sessionId, pane: 'config', list: repoList, effective: effective,
@@ -10874,10 +11021,13 @@ textarea.dsh-git-input{resize:vertical}
                子模块）时才出现 —— wtGroupNode 自己认 kind，普通仓库/bare 整组不画。 */
             wtGroupNode,
 
-            /* 「git 忽略项」：只读的下级组、不跟本页编辑目标走 —— 扫的是
-               整份 shown 清单（pickable）里全部仓库的每个工作树，仓库短名也用
-               同一份标签账（cfgLabels），分组头与切换器里叫的是同一个名字。 */
-            h(GitIgnoredScanGroup, { key: 'ignored-scan', sessionId: sessionId, repos: pickable, labels: cfgLabels }))),
+            /* 「git 忽略项」：只读的下级组、跟本页编辑目标走 —— 只扫 targetRepo
+               这一个仓库（单选行）：扫完也只有它的结果，仓库那一层选择就地消失。
+               短名标签与切换器同源（cfgLabels），目标还没就位时递空清单、组内
+               自己说「还没有选中的仓库」。 */
+            h(GitIgnoredScanGroup, {
+              key: 'ignored-scan', sessionId: sessionId,
+              repos: targetRepo.length > 0 ? [targetRepo] : [], labels: cfgLabels }))),
 
         note.length > 0 ? h('div', { className: 'dsh-git-set-row dsh-git-set-hint' }, note) : null,
         problem.length > 0 ? h('div', { className: 'dsh-git-set-row dsh-git-error' }, problem) : null)
@@ -10949,8 +11099,8 @@ textarea.dsh-git-input{resize:vertical}
 
          busy 是面板级的：一抬起来四个键一起 40% 透明、提交框/右键菜单/快捷命令全部
          锁死。同步组的一次点击只有那一个键在干活，不该连坐整个面板 —— 所以各记各的
-         （函数式更新，一次只翻一个键），按钮的禁用与转圈都从这份算；fetch/pull/push
-         另外彼此串行（panelBox.syncs 那条链），⟳ 等它自己触发的全树读落地。 */
+         （函数式更新，一次只翻一个键），按钮的禁用与转圈都从这份算；fetch/pull/
+         ↷/push 另外彼此串行（panelBox.syncs 那条链），⟳ 等它自己触发的全树读落地。 */
       const [syncRunning, setSyncRunning] = React.useState({})
       const setSyncKey = function (key, on) {
         setSyncRunning(function (previous) {
@@ -11339,8 +11489,12 @@ textarea.dsh-git-input{resize:vertical}
         setPathFilter('')
       }
 
-      const applyRepo = function (next) {
-        rememberRepo(sessionId, next)
+      /* viaAdoption：收养路径（后端账落地那一面的 effect）专用。账是 adoptHostRepo
+         刚从后端搬来的，内存、快速通道、后端三处已经一致，再走 rememberRepo 只会
+         多发一次同值 save —— 与「收养不回写后端」的规矩（10-state.js adoptHostRepo
+         那段注释）对着干。这里只做面板这侧的整套重置与换仓。 */
+      const applyRepo = function (next, viaAdoption) {
+        if (viaAdoption !== true) rememberRepo(sessionId, next)
         setAppliedRepo(next)
         setStatus(null)
         panelBox.status = null
@@ -11366,6 +11520,19 @@ textarea.dsh-git-input{resize:vertical}
         setUntrackedOpen({})
         setUntrackedFiles({})
       }
+
+      /* 生效仓库的后端账落地（10-state.js 的 adoptHostRepo 发的 applied 信号）：
+         本页还没亲手点过仓库时，面板跟着换到后端记的那个 —— 等价于「带着上次的选择
+         打开面板」，所以走 applyRepo 整套重置，与单击同一套路径；只有「记」那一步
+         省掉（viaAdoption）—— 账本来就是从后端来的，回写一次同值纯属冗余。本页亲手
+         点过（liveRepoChosen）或已一致时一个字节不动。 */
+      const appliedVersion = useRepoApplied()
+      React.useEffect(function () {
+        const next = sessionRepo(sessionId)
+        if (next.length === 0 || next === appliedRepo) return
+        if (appliedRepo.length > 0 && liveRepoChosen(sessionId) === true) return
+        applyRepo(next, true)
+      }, [appliedVersion, sessionId, appliedRepo])
 
       const bump = bumpData
 
@@ -11570,7 +11737,7 @@ textarea.dsh-git-input{resize:vertical}
         reloadChanges()
       }
 
-      /* ── 同步组的运行中包装器（⇣↓↑，⟳ 纯读不进链）──
+      /* ── 同步组的运行中包装器（⇣↓↷↑，⟳ 纯读不进链）──
 
          先立标记再发起：动作排在链里等前一个跑完时，按钮已经在转了 —— 点下去的那
          一帧就得到「收到了」的反馈，而不是等前一个结束才亮。防抖在这里：转着的键
@@ -12194,6 +12361,9 @@ textarea.dsh-git-input{resize:vertical}
            （单测直接挂面板、或未来的挂载顺序变化），账也赶在下次询问前就位。 */
         loadAppliedRepos(doc)
         loadPluginConfig()
+        /* 面板先于 chip 到场时的兜底：后端账这一问也在这里发（appliedAsked 去重，
+           与 chip 谁先到都只问一次）。 */
+        ensureAppliedRepo(sessionId)
         if (panelSize.w > 0 || panelSize.h > 0) setSize({ w: panelSize.w, h: panelSize.h })
       }, [])
 
@@ -12592,8 +12762,14 @@ textarea.dsh-git-input{resize:vertical}
          优先 → 唯一远端 → 都不满足就不猜）：猜得出就给「推送并设为上游」的确认
          按钮；猜不出把出路说成一句话（与 ctxPush 的两句提示同款话术），不开天窗、
          也不发请求。 */
+      /* 猜远端的数据源：refs 就是当前生效仓库的那份读数 —— 确认的仓库与它一致时
+         直接用（顶栏 ↑ 与横幅这条，repoRefs 只在多选时才有账，单选下拿 repoRefs
+         认账会把「推送并设为上游」的按钮饿没）；只有跨仓库的确认（分支行右键推送
+         别的仓库分支）才去 repoRefs 按仓庘认账，没读过就认输（guessNote 说破）。 */
       const pushConfirmData = pushConfirm === null ? null
-        : (text(pushConfirm.repo).length > 0 ? (repoRefs[pushConfirm.repo] !== undefined ? repoRefs[pushConfirm.repo] : null) : refs)
+        : (text(pushConfirm.repo).length > 0 && pushConfirm.repo !== appliedRepo
+            ? (repoRefs[pushConfirm.repo] !== undefined ? repoRefs[pushConfirm.repo] : null)
+            : refs)
       const pushGuessRemote = pushConfirm !== null && pushConfirm.setUpstream === null ? guessPushRemote(pushConfirmData) : ''
       const pushGuessNote = (function () {
         if (pushConfirm === null || pushConfirm.setUpstream !== null) return ''
@@ -13302,9 +13478,9 @@ textarea.dsh-git-input{resize:vertical}
          beside the branch it acts on — not in the commit graph's own toolbar,
          which is about the selected commit. The middle toolbar keeps only what
          the selection scopes. */
-      /* 四个键的禁用只看「自己是不是在跑」，不再看面板级 busy：一个键转圈时，其余
-         三个照常可点（点了进 panelBox.syncs 排队），提交框、右键菜单、快捷命令也
-         全程照常 —— busy 不再为这四个动作抬起来。 */
+      /* 五个键的禁用只看「自己是不是在跑」，不再看面板级 busy：一个键转圈时，其余
+         四个照常可点（点了进 panelBox.syncs 排队），提交框、右键菜单、快捷命令也
+         全程照常 —— busy 不再为这五个动作抬起来。 */
       const syncRunningKey = function (key) { return syncRunning[key] === true }
       const syncGroup = h('div', { className: 'dsh-git-sync' },
         tool('refresh', '⟳', '重新读取仓库（忽略缓存）', function () { runSync('refresh', refresh) },
@@ -13313,6 +13489,16 @@ textarea.dsh-git-input{resize:vertical}
           { disabled: !repoOk || syncRunningKey('fetch'), running: syncRunningKey('fetch') }),
         tool('pull', '↓', 'pull：拉取并合入当前分支', function () { runSync('pull', function () { return runOp('git/pull', null, 'pull') }) },
           { disabled: !repoOk || syncRunningKey('pull'), running: syncRunningKey('pull'), badge: behind }),
+        /* 「rebase 更新」：↓ 的变基款。更新即变基 —— `git pull --rebase`（Host 无视
+            pull.rebase 配置：按钮明说的要求，配置压不住），先 fetch 再把当前分支的
+            本地提交摘下来重放到上游之后，历史保持一条直线、不造合并提交。走 runOp
+            的 git/pull 同一条路（syncKey 沿用 'pull' 的先例：不抬面板级 busy，只是
+            「这个动作自己在跑」的过路标记），所以没有上游时与 ↓ 一样进上游选择层，
+            而不是甩一句 git 的天书。badge 不加 —— 领先/落后的数字是 ↓↑ 的事，这个
+            键的语义说在 title 里。 */
+        tool('rebase', '↷', 'rebase 更新：先 fetch 再把当前分支变基到上游（git pull --rebase，无视 pull.rebase 配置）',
+          function () { runSync('rebase', function () { return runOp('git/pull', { rebase: true }, 'pull') }) },
+          { disabled: !repoOk || syncRunningKey('rebase'), running: syncRunningKey('rebase') }),
         /* 两段式：↑ 先开推送确认框（openPushConfirm 的 promise 在弹窗收起时才落定，
             runSync 链因此把 ↑ 的转圈与再点保护跨满整个弹窗生命期）。detached 时
             没有分支名可确认，预览也无从谈起 —— 照旧直接推，git 自己的原话
@@ -13320,7 +13506,10 @@ textarea.dsh-git-input{resize:vertical}
         tool('push', '↑', 'push：推送当前分支（先弹确认框列出要推的提交）', function () {
           runSync('push', function () {
             if (currentName.length === 0) return runOp('git/push', null, 'push')
-            return openPushConfirm(currentName, '', null, '')
+            /* repo 必须带上生效仓库：留空会让确认框的推送回落到会话工作区 ——
+               工作区嵌套仓库时（外层 dsh 仓库无远端），refspec 天书就是这么来的
+               （读分支用的是嵌套真仓库、推送却跑去了外层）。 */
+            return openPushConfirm(currentName, appliedRepo, null, '')
           })
         },
           { disabled: !repoOk || syncRunningKey('push'), running: syncRunningKey('push'), badge: ahead }))
@@ -13634,9 +13823,11 @@ textarea.dsh-git-input{resize:vertical}
           title: 'git push -u ' + upstreamGuess + ' ' + currentName + '（先弹确认框，点「推送」才真推）',
           onClick: function () {
             /* 两段式：远端在这里挑好带进确认框，框里点「推送」才发（pushConfirmRun
-               发的命令与这行 title 一字不差）。横幅先留着 —— 确认成功关框时
-               setNeedsUpstream 还立着的话横幅还在，读者可以「忽略」掉它。 */
-            openPushConfirm(currentName, '', { remote: upstreamGuess, branch: currentName }, '')
+               发的命令与这行 title 一字不差）。repo 带生效仓库 —— 与顶栏 ↑ 同一条
+               规矩，空串会把推送落到会话工作区（外层无远端仓库）。横幅先留着 ——
+               确认成功关框时 setNeedsUpstream 还立着的话横幅还在，读者可以「忽略」
+               掉它。 */
+            openPushConfirm(currentName, appliedRepo, { remote: upstreamGuess, branch: currentName }, '')
           },
         }, '推送并设为上游（' + upstreamGuess + '）') : null,
         h('button', { key: 'n', type: 'button', className: 'dsh-git-btn', onClick: function () { setNeedsUpstream(false) } }, '忽略'))
@@ -14404,7 +14595,8 @@ textarea.dsh-git-input{resize:vertical}
       ] : [
         /* ── 分支行右键菜单（PhpStorm 的分栏顺序：动作在上，元信息居中，破坏性在下）──
 
-           本地（含 HEAD 组的行）：签出 → 新建分支… → 推送 → 重命名分支… → 分隔线 →
+           本地（含 HEAD 组的行）：签出 → 新建分支… → 拉取 → 变基 → 推送 →
+           合并到当前分支 → 合并到当前分支（--no-ff）→ 重命名分支… → 分隔线 →
            复制分支名称 → 修改跟踪分支… → 分隔线 → 删除分支。远程行只有签出与复制 ——
            远程分支没有「跟踪谁 / 重命名」这些本地才有的事；它的「签出」是 DWIM 的
            显式形（git/checkout 的 asNewLocal）：建同名本地分支并建立跟踪。签出的
@@ -14444,6 +14636,39 @@ textarea.dsh-git-input{resize:vertical}
             setPrompt({ kind: 'branch-at', value: '', at: ctxMenu.name, repo: ctxMenu.repo })
           },
         }, '新建分支…'),
+        /* 拉取（本地行）：当前分支 = 跟自己的上游拉取并合并（普通 pull，与 ↓ 同义）；
+            别的分支 = 把它快进(fast-forward)到它的上游 —— HEAD 不动、工作区不切，
+            Host 走 `git fetch <上游>:<分支>`（不带 +，非快进 git 自己拒绝）。 */
+        ctxMenu.remote === true ? null : h('button', {
+          key: 'pull', type: 'button', className: 'dsh-git-menu-item',
+          title: ctxMenu.head === true
+            ? 'git pull：当前分支跟自己的上游拉取并合并'
+            : 'git fetch <上游> ' + ctxMenu.name + '：把它快进(fast-forward)到上游'
+              + ' —— 不切换工作区，HEAD 停在原地',
+          disabled: busy === true,
+          onClick: function (event) {
+            stopEvent(event)
+            setCtxMenu(null)
+            if (ctxMenu.head === true) ctxRun('git/pull', {}, ctxMenu.repo, '拉取失败')
+            else ctxRun('git/pull', { branch: ctxMenu.name }, ctxMenu.repo, '拉取失败')
+          },
+        }, '拉取'),
+        /* 变基（本地行）：当前分支 = 更新即变基（git pull --rebase，与顶部 ↷ 同义）；
+            别的分支 = git rebase <这个分支> —— 把当前分支的提交摘下来，重放到它
+            之后（写提交，走 git/sequence，冲突横幅那排 继续/跳过/中止 直接可用）。 */
+        ctxMenu.remote === true ? null : h('button', {
+          key: 'rebase', type: 'button', className: 'dsh-git-menu-item',
+          title: ctxMenu.head === true
+            ? 'git pull --rebase：先 fetch 再把当前分支变基到上游（与顶部 ↷ 同义）'
+            : 'git rebase ' + ctxMenu.name + '：把当前分支的提交摘下来，重放到这个分支之后',
+          disabled: busy === true,
+          onClick: function (event) {
+            stopEvent(event)
+            setCtxMenu(null)
+            if (ctxMenu.head === true) ctxRun('git/pull', { rebase: true }, ctxMenu.repo, '变基更新失败')
+            else ctxRun('git/sequence', { op: 'rebase', action: 'start', targets: [ctxMenu.name] }, ctxMenu.repo, '变基失败')
+          },
+        }, '变基'),
         ctxMenu.remote === true ? null : h('button', {
           key: 'push', type: 'button', className: 'dsh-git-menu-item',
           title: 'git push -u <远端> ' + ctxMenu.name
@@ -14456,6 +14681,36 @@ textarea.dsh-git-input{resize:vertical}
             ctxPush(ctxMenu.name, ctxMenu.repo)
           },
         }, '推送'),
+        /* 合并到当前分支（本地行）：把右键的这个分支合入当前分支。快进与否由 git
+            按默认规矩定；--no-ff 款总是造一条合并提交 —— 分叉在图上一眼看得出来
+            处，代价是多一条提交，两个决定都摆出来让读者挑。已站在这个分支上时
+            两款一起禁用 —— 合并自己是空操作，不是「成功」。 */
+        ctxMenu.remote === true ? null : h('button', {
+          key: 'merge', type: 'button', className: 'dsh-git-menu-item',
+          title: ctxMenu.head === true
+            ? '已经在这个分支上'
+            : 'git merge ' + ctxMenu.name + '：把 ' + ctxMenu.name + ' 合入当前分支'
+              + '（能快进就快进，否则造合并提交；冲突时横幅接管）',
+          disabled: ctxMenu.head === true || busy === true,
+          onClick: function (event) {
+            stopEvent(event)
+            setCtxMenu(null)
+            ctxRun('git/sequence', { op: 'merge', action: 'start', targets: [ctxMenu.name] }, ctxMenu.repo, '合并失败')
+          },
+        }, '合并到当前分支'),
+        ctxMenu.remote === true ? null : h('button', {
+          key: 'mergenoff', type: 'button', className: 'dsh-git-menu-item',
+          title: ctxMenu.head === true
+            ? '已经在这个分支上'
+            : 'git merge --no-ff ' + ctxMenu.name + '：把 ' + ctxMenu.name + ' 合入当前分支，'
+              + '生成合并提交（即使能快进也造一个 merge commit）',
+          disabled: ctxMenu.head === true || busy === true,
+          onClick: function (event) {
+            stopEvent(event)
+            setCtxMenu(null)
+            ctxRun('git/sequence', { op: 'merge', action: 'start', noFf: true, targets: [ctxMenu.name] }, ctxMenu.repo, '合并失败')
+          },
+        }, '合并到当前分支（--no-ff）'),
         ctxMenu.remote === true ? null : h('button', {
           key: 'rename', type: 'button', className: 'dsh-git-menu-item',
           title: 'git branch -m ' + ctxMenu.name + ' <新名字>'
@@ -15017,6 +15272,13 @@ textarea.dsh-git-input{resize:vertical}
          那个面（配置页「全局配置」的提交身份组没有自己的会话，读的就是这份记忆）。
          放在 effect 里而不是渲染里：渲染期间通知订阅者就是渲染期间改别人的 state。 */
       React.useEffect(function () { rememberSession(sessionId) }, [sessionId])
+
+      /* 生效仓库的后端账（跨浏览器那份）：chip 每个会话必挂、又比面板早，由它发这一问
+         （ensureAppliedRepo 每会话只问一次）。后端记了哪个仓库，就把它接回本页 ——
+         新会话、换浏览器、刷新页面都还是读者上次选定的那个，不再回落到工作区默认仓库。 */
+      React.useEffect(function () {
+        ensureAppliedRepo(sessionId)
+      }, [sessionId])
 
       /* ── 会话状态（有则用之，bridge 版这些 props 不存在）──
 

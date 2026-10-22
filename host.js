@@ -770,6 +770,85 @@ async function saveWorkspaceRepo(input) {
   /* 答复带的是合并后的新清单：客户端一次往返就能把整份列表换成新的。 */
   return await readWorkspaceRepos(input)
 }
+
+/* ── 生效仓库的后端账（按工作区一格）──
+
+   单击选定的生效仓库过去只记在浏览器的 localStorage 里，而且键是「会话 id」：
+   会话 id 一换（开新对话）、浏览器一换、缓存一清，账就没了，面板于是回落到
+   工作区默认仓库 —— 读者切了几次的仓库「过一会老是变回第一个」，正是这个 bug。
+   生效仓库跟着的应该是这个工作区，不是某一次对话：所以它按工作区分键存进插件
+   配置（normalizeConfig 的 appliedRepos），换浏览器、换机器、开新会话都还是它。
+
+   为什么读改写都放在 Host、客户端只递「这个会话、哪个仓库」：config-save 是
+   「整份换掉」的写法 —— 客户端先读整份、改一个键、再整体写回，读与写之间别人
+   落盘的键（另一台浏览器刚存的草稿、全局档正在改的 git 路径）会被这一次整体
+   写回悄悄抹掉，draftSave 同一条理由（70-config.js 那一段写全了）。这里与
+   saveWorkspaceRepo 一样只动自己那一格，其余键原样带过去，谁也抹不掉谁。 */
+
+/* 读当前工作区记的生效仓库。repo 非空时顺手探测一次它还在不在、git 还读不读得
+   动 —— 记的账是持久化的，目录会被删/搬走；**.git 是文件（worktree/子模块）时
+   里面那条 gitdir 还可能指向别处**（Windows 上建的 worktree 整棵拷来 Linux，
+   gitdir 写的是 D:/ 盘符路径），文件在、git 却读不动。两种坏都答空串（不套用），
+   但**不删账**：也许只是暂时挂不上，读者下一次单击自然会覆写它。stale: true 把
+   「账上有、盘上读不了」这件事说破，客户端据此安静维持现状 —— 不做这一步，账
+   就会每次打开面板把读者自动带进「这个目录不是 Git 仓库」的说明页。 */
+async function appliedRepoSnapshot(input) {
+  const workspace = sessionWorkdir(input)
+  if (workspace === undefined) {
+    return { ok: false, error: 'no-path', workspace: null, repo: '' }
+  }
+  const config = await readConfigFile()
+  const key = repoKeyOf(workspace)
+  const found = config.appliedRepos[key]
+  let repo = isStr(found) ? found : ''
+  if (repo.length > 0) {
+    /* probeShell 的 workdir 是会话自己的目录 —— 正合「检查别处路径」的教条：
+       要检查的这个仓库多半不在会话目录里，拿它当 workdir 只会在 spawn 那一步
+       就失败。`[ -e ]` 加一道 `rev-parse --absolute-git-dir`：前者只证明 .git
+       这个文件/目录在，后者才是「git 认这是不是一个仓库」—— worktree 的
+       gitlink 指向不存在的 gitdir 时前者真、后者假。与面板打开时对每个仓库的
+       身份读数（64-history.js readPanelIdentity）同一道判据，账本与面板才不会
+       各说各话。一次 spawn，是账本的自检，不是仓库读数，不进读缓存。 */
+    const check = await probeShell(input, 'if [ -e ' + shq(repo) + '/.git ] && '
+      + gitCmd() + ' -C ' + shq(repo) + ' rev-parse --absolute-git-dir >/dev/null 2>&1; then echo repo; else echo gone; fi')
+    if (check.stdout.trim() !== 'repo') {
+      return { ok: true, workspace: workspace, repo: '', stale: true }
+    }
+  }
+  return { ok: true, workspace: workspace, repo: repo }
+}
+
+/* 存/清当前工作区的生效仓库。repo 空串 = 删除语义（这个工作区回到默认回落），
+   非空必须是 / 开头、不超过 APPLIED_PATH_MAX 的绝对路径。**不做存在性探测**：
+   客户端只会把扫描清单里的路径送来，而读的那条（appliedRepoSnapshot）已经对
+   死路径自愈 —— 存进一个此刻还在、明天被删的路径，不是这次保存该拦的事。
+
+   同值早退：重申式单击常来同值 —— 与账上完全一致的那一次连盘都不该碰
+   （draftSave 同一条纪律），别的键也少冒一次被并发写回抹掉的风险。 */
+async function saveAppliedRepo(input) {
+  const workspace = sessionWorkdir(input)
+  if (workspace === undefined) {
+    return { ok: false, error: 'no-path', workspace: null }
+  }
+  const repo = input != null && isStr(input.repo) ? input.repo.trim() : ''
+  if (repo.length > 0 && (repo.charAt(0) !== '/' || repo.length > APPLIED_PATH_MAX)) {
+    return { ok: false, error: 'absolute path required', repo: repo }
+  }
+  const config = await readConfigFile()
+  const map = Object.assign({}, config.appliedRepos)
+  const key = repoKeyOf(workspace)
+  if (repo.length === 0) delete map[key]
+  else map[key] = repo
+  /* 改完的副本与原账逐键一致（含「删一条本来就没有的」）= 一个字节不用写。 */
+  if (map[key] === config.appliedRepos[key]) {
+    return { ok: true, workspace: workspace, repo: repo, unchanged: true }
+  }
+  /* 写这份文件要这个会话的沙箱策略 —— 它在任何工作区之外（writeConfigFile 的
+     那段说明），argsAt 把 sessionId 带上，理由与 saveWorkspaceRepo 相同。 */
+  const written = await writeConfigFile(Object.assign({}, config, { appliedRepos: map }), argsAt(input, null))
+  if (written.ok !== true) return written
+  return { ok: true, workspace: workspace, repo: repo }
+}
 /* ─────────────── the identity reads, and reading by pathspec ─────────────── */
 
 /* Diagnostics for the "this path is not a repository" setup page. The workdir is
@@ -2263,7 +2342,14 @@ async function branchesSnapshot(input) {
    （作者、相对时间），不再另造一个解析器。上限 200 条：预览是给人过目的，不是
    完整变更集，顶满就带 hasMore 说一声。进读缓存（tag push-preview，按分支各一
    份），寿命与 refs 相同 —— 真推送、提交、fetch 都会整仓失效，弹窗开着期间上游
-   被人动了，下一次打开读到的就是新账。 */
+   被人动了，下一次打开读到的就是新账。
+
+   localExists（2026-10-15 推送事故的另一半）：这个分支在**本地**存不存在，一次
+   `git show-ref --verify --quiet refs/heads/<名字>` 就有答案 —— 弹窗在读者点
+   「推送」之前就该把「本地没有这个分支」说破（git/push 那边的 branch-missing 是
+   最后一道闸，这里是提前的那道）；detached 那条 branch:null 也带 localExists:
+   false —— 没有名字就是没有本地分支。它跟着这份预览一起进读缓存，失效寿命与
+   refs 相同，不需要单独作废。 */
 const PUSH_PREVIEW_MAX = 200
 
 async function readPushPreview(input, repo) {
@@ -2275,20 +2361,25 @@ async function readPushPreview(input, repo) {
   if (name.length === 0) {
     const sym = await git(args, ['symbolic-ref', '--quiet', '--short', 'HEAD'], null, {})
     if (sym.exitCode !== 0) {
-      return { ok: true, repo: sym.cwd, branch: null, upstream: null, ahead: 0, behind: 0, hasMore: false, maxCount: PUSH_PREVIEW_MAX, commits: [] }
+      return { ok: true, repo: sym.cwd, branch: null, localExists: false, upstream: null, ahead: 0, behind: 0, hasMore: false, maxCount: PUSH_PREVIEW_MAX, commits: [] }
     }
     name = sym.stdout.trim()
   }
+  /* 本地分支在不在：只认退出码 0/1 之外不猜（与 git/push 的预检、resolveCheckoutTarget
+     的 localProbe 同一条规矩）—— 答不上来就当「不在」，弹窗宁可多说一句，不放过
+     一次对着不存在的分支推送的机会。 */
+  const localProbe = await git(args, ['show-ref', '--verify', '--quiet', 'refs/heads/' + name], null, {})
+  const localExists = localProbe.exitCode === 0
   const upstream = await git(args, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', name + '@{u}'], null, {})
   if (upstream.exitCode !== 0) {
-    return { ok: true, repo: upstream.cwd, branch: name, upstream: null, ahead: 0, behind: 0, hasMore: false, maxCount: PUSH_PREVIEW_MAX, commits: [] }
+    return { ok: true, repo: upstream.cwd, branch: name, localExists: localExists, upstream: null, ahead: 0, behind: 0, hasMore: false, maxCount: PUSH_PREVIEW_MAX, commits: [] }
   }
   const up = upstream.stdout.trim()
   const range = up + '..' + name
   const listed = await git(args, ['-c', 'core.quotePath=false', 'log', '--max-count=' + String(PUSH_PREVIEW_MAX + 1), '--date-order',
     '--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s%x1f%D%x1f%P%x1e', range], null, {})
   if (listed.exitCode !== 0) {
-    return { ok: false, repo: listed.cwd, branch: name, upstream: up, error: 'not-a-repository', stderr: listed.stderr, noGit: gitMissing(listed), commits: [] }
+    return { ok: false, repo: listed.cwd, branch: name, localExists: localExists, upstream: up, error: 'not-a-repository', stderr: listed.stderr, noGit: gitMissing(listed), commits: [] }
   }
   const parsed = parseCommitRecords(listed.stdout)
   const hasMore = parsed.length > PUSH_PREVIEW_MAX
@@ -2307,7 +2398,7 @@ async function readPushPreview(input, repo) {
     }
   }
   return {
-    ok: true, repo: listed.cwd, branch: name, upstream: up,
+    ok: true, repo: listed.cwd, branch: name, localExists: localExists, upstream: up,
     ahead: ahead, behind: behind, hasMore: hasMore, maxCount: PUSH_PREVIEW_MAX,
     commits: commits,
   }
@@ -3055,6 +3146,13 @@ function normalizeConfig(raw) {
        项目走，而不是跟着某台浏览器；客户端 20-prefs.js 同样照 repos 的先例原样
        搬运，配置页一次整份保存不至于把手工配置的主目录抹掉。 */
     worktreeMains: {},
+    /* 生效仓库的跨浏览器记忆：{ "<工作区绝对路径>": "<仓库绝对路径>" }。
+       读者在这个工作区里单击选定的仓库是这个项目的事实，不是某台浏览器怎么看它 ——
+       按工作区（不是按会话）存进这份配置，换浏览器、换机器、开新会话都还是它。
+       浏览器 localStorage 那层（客户端 10-state.js 的 APPLIED_REPOS_KEY）降级为
+       首帧快速通道：后端答复落地前后端为准。客户端 20-prefs.js 照 repos 的先例
+       原样搬运，设置页一次整份保存不至于把这份记忆抹掉。 */
+    appliedRepos: {},
   }
   if (raw == null || typeof raw !== 'object') return out
   if (isStr(raw.initBranch)) out.initBranch = raw.initBranch.trim().slice(0, 120)
@@ -3069,6 +3167,7 @@ function normalizeConfig(raw) {
   out.quickCommands = normalizeQuickCommands(raw.quickCommands)
   out.drafts = normalizeDrafts(raw.drafts)
   out.worktreeMains = normalizeWorktreeMains(raw.worktreeMains)
+  out.appliedRepos = normalizeAppliedRepos(raw.appliedRepos)
   return out
 }
 
@@ -3141,6 +3240,34 @@ function normalizeWorktreeMains(raw) {
     if (worktree.charAt(0) !== '/' || worktree.length > WT_MAIN_PATH_MAX) continue
     if (main.charAt(0) !== '/' || main.length > WT_MAIN_PATH_MAX) continue
     out[worktree] = main
+    kept += 1
+  }
+  return out
+}
+
+/* 工作区 → 生效仓库（61-repos.js 的 saveAppliedRepo 写、appliedRepoSnapshot 读）。
+   键是工作区的绝对路径（repoKeyOf 的口径 —— 去掉尾部斜杠后的样子），值是读者在
+   这个工作区里单击选定的仓库根绝对路径。清洗口径与 normalizeWorktreeMains 完全
+   一致：键与值都必须是「非空、以 / 开头、≤4096 字符」的字符串（去首尾空白 ——
+   同一个目录两种写法得是同一个键），4096 与 REPO_MAP / WT_MAIN 同款，是磁盘路径
+   的边界而不是 git 的；条数封顶 64（WT_MAIN_MAP_MAX / DRAFT_REPOS_MAX 同一个数，
+   读者点不出更多「工作区 × 仓库」的组合）。清洗后条目不足不报错、为空就存空
+   映射：一个读不出来的条目比一个被悄悄改写过的条目诚实。 */
+const APPLIED_MAP_MAX = 64
+const APPLIED_PATH_MAX = 4096
+
+function normalizeAppliedRepos(raw) {
+  const out = {}
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return out
+  let kept = 0
+  for (const key in raw) {
+    if (!Object.prototype.hasOwnProperty.call(raw, key)) continue
+    if (kept >= APPLIED_MAP_MAX) break
+    const workspace = key.trim()
+    const repo = isStr(raw[key]) ? raw[key].trim() : ''
+    if (workspace.charAt(0) !== '/' || workspace.length > APPLIED_PATH_MAX) continue
+    if (repo.charAt(0) !== '/' || repo.length > APPLIED_PATH_MAX) continue
+    out[workspace] = repo
     kept += 1
   }
   return out
@@ -5829,6 +5956,16 @@ onRpc('git/repos', function (input) { return readWorkspaceRepos(input) })
 
 onRpc('git/repos-save', function (input) { return saveWorkspaceRepo(input) })
 
+/* 生效仓库的后端账（61-repos.js 末尾那两条）：按工作区一区一格存进插件配置 ——
+    生效仓库跟的是这个工作区，不是某一次会话。读（git/repo-applied）对记下却已
+    不在、或 git 已读不动的仓库（gitlink 断链的 worktree）答 stale 自愈（不套用、
+    也不删账，等读者下次单击自然覆写）；写（git/repo-applied-save）同值不落盘 ——
+    重申式单击常来同值，一个字节都不该碰配置文件。两条的读改写都在 Host，理由与
+    drafts 一致（见 70-config.js）。 */
+onRpc('git/repo-applied', function (input) { return appliedRepoSnapshot(input) })
+
+onRpc('git/repo-applied-save', function (input) { return saveAppliedRepo(input) })
+
 /* 面板「命令」页：这个工作区里执行过的所有 git 命令，数据源是 DSH 的会话记录
    而不是仓库（76-cmdlog.js）。和上面两个 repos 读一样按工作区走，不进读缓存 ——
    它要的就是「刚刚又跑了什么」，每次都重读一遍会话文件。 */
@@ -6127,7 +6264,47 @@ onRpc('git/fetch', async function (input) {
 
 onRpc('git/pull', async function (input) {
   const config = await netConfig()
-  const argv = config.pullRebase === true ? ['pull', '--rebase'] : ['pull']
+  /* 「rebase 更新」的语义（顶部 ↷、分支行右键「变基」的当前分支那条）：更新即变基
+     —— input.rebase === true 时无条件 ['pull','--rebase']，把 pullRebase 配置盖过去
+     （配置只回答「普通 ↓ 默认哪种形状」，不该能反过来压住按钮明说的要求）。
+     setUpstream 的绑定流程与这个开关无关 —— 先绑后拉的顺序照旧。 */
+  const argv = (input != null && input.rebase === true) || config.pullRebase === true ? ['pull', '--rebase'] : ['pull']
+  /* 分支行右键「拉取」落在别的分支上（input.branch 给了、又不等于当前分支）：
+     普通 pull 只作用于当前分支，HEAD 不许动 —— 「把那个分支拉一下」要的是把它
+     快进(fast-forward)到它的上游，形状是 `git fetch <远端> <远端分支>:<分支>`：
+     不带 + 前缀，非快进的更新 git 自己就拒绝，快进语义不用这里再造。上游先问
+     <分支>@{u}：没有上游直说（绑一个的出路写在话里），不猜要跟谁。上游没有斜杠
+     = 它不是「远端/分支」形状，是本地分支当上游 —— 从「.」（本仓库自己）fetch
+     同一条 refspec，语义不变。这个 fetch 是网络动作（net 的理由与 git/fetch 同
+     一条），desc 跟普通 pull 共用「拉取」—— 命令页里读者认动作，不认 argv。
+     detached 时 HEAD 答不上来、current 是空串，同样走这条 —— 反正也不是「站在
+     某个分支上拉它自己的上游」。 */
+  const branch = input != null && isStr(input.branch) && input.branch.trim().length > 0 ? input.branch.trim() : ''
+  if (branch.length > 0) {
+    const asked = cleanRefHalf(branch)
+    if (asked === null || asked.length === 0) {
+      return { ok: false, error: 'bad-value', stderr: '拉取需要一个合法的分支名：不能为空、不能以 - 开头、不能含控制字符' }
+    }
+    const args = argsFor(input)
+    const head = await git(args, ['symbolic-ref', '--quiet', '--short', 'HEAD'], null, {})
+    const current = head.exitCode === 0 ? head.stdout.trim() : ''
+    if (current !== asked) {
+      const upstream = await git(args, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', asked + '@{u}'], null, {})
+      if (upstream.exitCode !== 0) {
+        return {
+          ok: false, error: 'no-upstream', repo: upstream.cwd,
+          stderr: '「' + asked + '」还没有上游 —— 拉取不知道要跟谁比。先用分支行右键「修改跟踪分支…」绑一个。',
+        }
+      }
+      const up = upstream.stdout.trim()
+      /* 远端分支名可能含斜杠（origin/feat/x）：远端名是第一段，剩下的整段是远端
+         分支名 —— 与 checkout 的 asNewLocal 拆 origin/feat/x 是同一把刀。 */
+      const slash = up.indexOf('/')
+      return panelMutate(input, slash > 0
+        ? ['fetch', up.slice(0, slash), up.slice(slash + 1) + ':' + asked]
+        : ['fetch', '.', up + ':' + asked], { net: true, spawn: NET_SPAWN, desc: '拉取' })
+    }
+  }
   const setup = input != null && input.setUpstream != null && typeof input.setUpstream === 'object' && !Array.isArray(input.setUpstream) ? input.setUpstream : null
   if (setup == null) {
     /* A pull that merges writes a commit, so the identity can be what failed. */
@@ -6141,12 +6318,15 @@ onRpc('git/pull', async function (input) {
      「命令」页（desc 区分「绑定上游」与「拉取」），答复带 upstreamSet / pulled 与
      每步自己的 exitCode / stderr。 */
   const remote = cleanRefHalf(setup.remote)
-  const branch = cleanRefHalf(setup.branch)
-  if (remote === null || branch === null || remote.length === 0 || branch.length === 0) {
+  /* 叫 upBranch 而不是 branch：函数前半已经用 branch 这个名字装「右键拉取的目标
+     分支」了（同一个函数体，两个 const branch 撞名）—— 这里绑的是上游的远端分支
+     名，名字跟着语义走。 */
+  const upBranch = cleanRefHalf(setup.branch)
+  if (remote === null || upBranch === null || remote.length === 0 || upBranch.length === 0) {
     return { ok: false, error: 'bad-value', upstreamSet: false, pulled: false, stderr: '绑定上游需要合法的远端名与远端分支名：不能为空、不能以 - 开头、不能含控制字符' }
   }
-  const bound = await panelMutate(input, ['branch', '--set-upstream-to=' + remote + '/' + branch], { desc: '绑定上游' })
-  const upstream = { remote: remote, branch: branch, exitCode: bound.exitCode, stderr: bound.stderr }
+  const bound = await panelMutate(input, ['branch', '--set-upstream-to=' + remote + '/' + upBranch], { desc: '绑定上游' })
+  const upstream = { remote: remote, branch: upBranch, exitCode: bound.exitCode, stderr: bound.stderr }
   if (bound.ok !== true) {
     return Object.assign(bound, { error: 'set-upstream-failed', upstreamSet: false, pulled: false, setUpstream: upstream })
   }
@@ -6159,21 +6339,40 @@ onRpc('git/pull', async function (input) {
     —— 读不进「命令」页，与 stage 那条注释说的是同一句。 */
 onRpc('git/push-preview', function (input) { return pushPreviewSnapshot(input) })
 
-onRpc('git/push', function (input) {
+onRpc('git/push', async function (input) {
   if (input != null && input.setUpstream === true) {
     const remote = input != null && isStr(input.remote) && input.remote.trim().length > 0 ? input.remote.trim() : ''
     const branch = input != null && isStr(input.branch) ? input.branch.trim() : ''
     if (remote.length === 0) return { ok: false, error: 'no remote is configured to push to' }
     if (branch.length === 0) return { ok: false, error: 'a branch is required to set an upstream' }
+    /* 推送前先问一句「本地真有这个分支吗」：show-ref --verify 精确比对整条 ref，
+       与 resolveCheckoutTarget 的 localProbe 同一把刀（不 glob、不替读者猜）。
+       2026-10-15 的事故：dsh 工作区本身是个没有远端的 git 仓库、项目仓库嵌在它
+       里面一层，插件对着一个本地不存在的分支跑了 `git push -u origin <分支>`，
+       git 报 `error: src refspec ... does not match any` —— 这句天书翻译过来就是
+       「本地没有这个分支」，但读者得先懂 refspec 才看得懂；而且无远端的仓库里
+       它也先报这一条，把「分支不存在」引向「远端有问题」的错误方向。探针答得出
+       来的失败就该在动手前用人数的话说出来：只认退出码 1（show-ref 对「没有这个
+       ref」的既定答案）；其余退出码（git 缺失、不是仓库、ref 名非法）不替读者下
+       结论，落回原样推 —— git 的原话就是事实，预检是加餐，不能变成新的门槛。
+       不带 setUpstream 的普通推送不预检：它推的是当前分支，HEAD 站在哪、有没有
+       上游，git 自己的原话说得一样清。 */
+    const probe = await git(argsFor(input), ['show-ref', '--verify', '--quiet', 'refs/heads/' + branch], null, {})
+    if (probe.exitCode === 1) {
+      return {
+        ok: false, error: 'branch-missing', repo: probe.cwd,
+        stderr: '本地没有分支 ' + branch + ' —— 它可能已被删除、或只在远端存在，也可能当前打开的不是项目所在仓库。请在分支列表右键它选「签出」建本地分支后再推。',
+      }
+    }
     return panelMutate(input, ['push', '-u', remote, branch], { net: true, spawn: NET_SPAWN, desc: '推送' })
   }
   return panelMutate(input, ['push'], { net: true, spawn: NET_SPAWN, desc: '推送' })
 })
 
-/* cherry-pick, revert and merge share one entry point because they also share
-   the way they stop half-done: continue, skip or abort has to be reachable or a
-   conflicted panel would trap the user with no way back. */
-const SEQUENCER_OPS = ['cherry-pick', 'revert', 'merge']
+/* cherry-pick, revert, merge and rebase share one entry point because they also
+   share the way they stop half-done: continue, skip or abort has to be reachable
+   or a conflicted panel would trap the user with no way back. */
+const SEQUENCER_OPS = ['cherry-pick', 'revert', 'merge', 'rebase']
 
 /* 右键菜单「作用于整个选区」（PhpStorm 同款）的目标集：客户端把选区按要应用的
    顺序（最旧→最新）放进 targets 数组，这里逐项清洗。目标不限于 hash —— revert /
@@ -6202,19 +6401,46 @@ onRpc('git/sequence', function (input) {
   const op = input != null && isStr(input.op) ? input.op : ''
   const action = input != null && isStr(input.action) ? input.action : ''
   if (SEQUENCER_OPS.indexOf(op) < 0) return { ok: false, error: 'unknown operation ' + op }
-  /* 拣选 / 还原 / 合并三件事共用一个入口，命令页里也共用一个名字 —— 读者在那一页
-     认操作，不认 argv 的拼写。 */
-  const said = '拣选·还原·合并'
+  /* 拣选 / 还原 / 合并 / 变基四件事共用一个入口，命令页里也各用各的名字 —— 读者在
+     那一页认操作，不认 argv 的拼写；变基单给「变基」二字，与它右键菜单/横幅上的
+     按钮用词一致。 */
+  const said = op === 'rebase' ? '变基' : '拣选·还原·合并'
 
   if (op === 'merge') {
     if (action === 'start') {
       const targets = sequenceTargets(input)
       if (targets.length === 0) return { ok: false, error: 'a branch or commit is required to merge' }
-      return commitMutation(input, ['merge', '--no-edit'].concat(targets), { desc: said })
+      /* noFf（分支行右键「合并到当前分支（--no-ff）」）：能快进也造一个合并提交
+         —— 分叉的历史在图上一眼看得出来处，代价是多一条提交，决定权在按钮。 */
+      return commitMutation(input, (input != null && input.noFf === true
+        ? ['merge', '--no-ff', '--no-edit']
+        : ['merge', '--no-edit']).concat(targets), { desc: said })
     }
     if (action === 'continue') return commitMutation(input, ['commit', '--no-edit'], { desc: said })
     if (action === 'abort') return panelMutate(input, ['merge', '--abort'], { desc: said })
     return { ok: false, error: 'merge supports start, continue and abort' }
+  }
+
+  /* 变基（分支行右键「变基」落在非当前分支上）：`git rebase <分支>` —— 把当前
+     分支的提交摘下来重放到 <分支> 之后。与 merge start 一样会写提交（重放的每一
+     条都是新对象），所以走 commitMutation，身份缺失那次失败照样说得清。start 只
+     收一个目标：git rebase 本来就吃一个 <upstream>，多目标没有意义，宁可拒绝。
+     --continue 之后的提交可能要过编辑器：消息编辑器是 core.editor 那层（与
+     cherry-pick / revert 的 continue 同一个压法），todo 编辑器是 sequence.editor
+     这层（78-actions.js 的 rebase -i 用它插 exec 行 —— 同一个配置键的两副面孔），
+     两层都压成 `true`（true 这个「编辑器」原样退出 0），面板里没有终端给它弹。 */
+  if (op === 'rebase') {
+    if (action === 'start') {
+      const targets = sequenceTargets(input)
+      if (targets.length !== 1) {
+        return { ok: false, error: 'rebase needs exactly one branch', stderr: '变基恰好需要一个分支：git rebase <分支>，把当前分支的提交重放到它之后' }
+      }
+      return commitMutation(input, ['rebase', targets[0]], { desc: said })
+    }
+    if (action === 'continue') return commitMutation(input, ['-c', 'core.editor=true', '-c', 'sequence.editor=true', 'rebase', '--continue'], { desc: said })
+    if (action === 'skip') return panelMutate(input, ['rebase', '--skip'], { desc: said })
+    if (action === 'abort') return panelMutate(input, ['rebase', '--abort'], { desc: said })
+    return { ok: false, error: 'rebase supports start, continue, skip and abort' }
   }
 
   if (action === 'start') {
