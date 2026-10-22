@@ -1076,11 +1076,11 @@ console.log('  harness 收到的工具定义:', TOOLS.size, '处')
 check('不向 DSH 注册任何工具', TOOLS.size === 0)
 check('源码里也没有 registerTool / defineTool 的调用',
   body.indexOf('registerTool(') < 0 && body.indexOf('defineTool(') < 0)
-/* 同一条源码还有第二份产物：正式包的 lib/index.js，前面挂着 pkg/host-pre.js 那个
+/* 同一条源码还有第二份产物：正式包的 dist/lib/index.js，前面挂着 pkg/host-pre.js 那个
    harness 垫片。垫片里曾经有 defineTool / registerTool 两项，撤工具时一起撤了 ——
    谁把它加回去，这里也要红，不然「不注册工具」只对桥那一半成立。 */
 const pkgBody = fs.readFileSync(new URL('../dist/lib/index.js', import.meta.url).pathname, 'utf8')
-check('正式包那一半（lib/index.js）也没有注册工具',
+check('正式包那一半（dist/lib/index.js）也没有注册工具',
   pkgBody.indexOf('registerTool(') < 0 && pkgBody.indexOf('defineTool(') < 0)
 
 /* ── 答复里不许有 undefined ──
