@@ -50,6 +50,27 @@ const liveRepoLastPush = new Map()
 const liveRunning = new Map()
 const liveCompletePending = new Map()
 
+/* 「服务不在」这件事本身要有声。跳过是契约 —— bridge 版与没装 sessions/agents 的
+ * 部署都靠它安静退化，面板照常工作；但完全无声时，「按设计跳过」与「以为在监听、
+ * 其实每一轮都在跳过」从外面无法区分，真机上为此付出过一整轮误诊（2026-10-22：
+ * WS 通路、RPC、轮询进程全都活着，唯独「会话清单为空 / 会话边沿不推」查不出原因，
+ * 因为跳过的一方一个字都不说）。每个服务记一份状态：缺失进门说一次、缺失转可见
+ * 再说一次，同一状态不重复；effect 卸载时复位，下次上任重新学。console.error 是
+ * 本文件既有的日志通道（bridge 版的 host 半同样走它）。 */
+const liveServiceState = new Map()
+function liveServiceMissing(name) {
+  if (liveServiceState.get(name) === 'missing') return
+  liveServiceState.set(name, 'missing')
+  console.error('dsh-git-idea: live 监听看不到 ' + name + ' 服务（这一半静默跳过，不推送）')
+}
+function liveServicePresent(name) {
+  const was = liveServiceState.get(name)
+  liveServiceState.set(name, 'present')
+  if (was === 'missing') {
+    console.error('dsh-git-idea: live 监听重新看到 ' + name + ' 服务（恢复这一半的监听）')
+  }
+}
+
 /* 时钟优先走 timer 服务（cordis 的 fiber 级定时器，插件卸载自动回收），没有就落回
  * 裸 setInterval/setTimeout（unref，宿主退出不为它等）—— 与客户端 10-state.js 的
  * timerOf 同一条兜底思路，两种形状都回拆销函数。 */
@@ -97,6 +118,7 @@ async function liveRepoList() {
   }
   const sessions = ctx.get('sessions')
   if (sessions !== undefined && sessions != null && typeof sessions.list === 'function') {
+    liveServicePresent('sessions')
     try {
       const rows = sessions.list()
       if (Array.isArray(rows)) {
@@ -108,6 +130,8 @@ async function liveRepoList() {
     } catch (error) {
       console.error('dsh-git-idea: live 监听枚举会话失败（这一轮只看配置登记的仓库）', String(error))
     }
+  } else {
+    liveServiceMissing('sessions')
   }
   return fresh
 }
@@ -196,8 +220,13 @@ function liveCancelComplete(sessionId) {
 function liveSessionTick() {
   const sessions = ctx.get('sessions')
   const agents = ctx.get('agents')
-  if (sessions === undefined || sessions == null || typeof sessions.list !== 'function') return
-  if (agents === undefined || agents == null || typeof agents.get !== 'function') return
+  /* 两个服务各自上报可见性再决定去留：sessions 缺席时顺带把 agents 的状态也说清
+   * —— 只报第一个缺席的，另一半哑了多久照样无人知晓。 */
+  const sessionsOk = sessions !== undefined && sessions != null && typeof sessions.list === 'function'
+  const agentsOk = agents !== undefined && agents != null && typeof agents.get === 'function'
+  if (sessionsOk === true) liveServicePresent('sessions'); else liveServiceMissing('sessions')
+  if (agentsOk === true) liveServicePresent('agents'); else liveServiceMissing('agents')
+  if (sessionsOk !== true || agentsOk !== true) return
   let rows
   try {
     rows = sessions.list()
@@ -250,6 +279,7 @@ ctx.effect(function () {
     for (const dispose of Array.from(liveCompletePending.values())) dispose()
     liveCompletePending.clear()
     liveRunning.clear()
+    liveServiceState.clear()
     liveSigBaselines.clear()
     liveRepoLastPush.clear()
     liveRepoOrder = []
