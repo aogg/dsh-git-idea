@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import { spawn } from 'node:child_process'
-const body = fs.readFileSync(process.env.GP_SRC || new URL('../host.js', import.meta.url).pathname, 'utf8')
+const body = fs.readFileSync(process.env.GP_SRC || new URL('../dist/host.js', import.meta.url).pathname, 'utf8')
 function runShell(spec) {
   return new Promise((res) => {
     const c = spawn('sh', ['-c', spec.command], { cwd: spec.workdir, env: Object.assign({}, process.env, { DSH_HOME: '/tmp/gp34d-home/.dsh', HOME: '/tmp/gp34d-home', GIT_CONFIG_GLOBAL: '/tmp/gp34d-home/.gitconfig', GIT_CONFIG_SYSTEM: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' }) })

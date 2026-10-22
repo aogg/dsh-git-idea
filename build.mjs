@@ -6,8 +6,9 @@
 
    Edit src/, run `node build.mjs`, then `cordis_stop` + `cordis_run` to make the
    running plugin re-read the result. `node build.mjs --check` reports whether
-   host.js and client.js on disk are current, which is what the test runner
-   asserts before it trusts a green run. */
+   dist/host.js and dist/client.js on disk are current, which is what the test
+   runner asserts before it trusts a green run. All build products live under
+   dist/ — the repo root and test/ carry sources and scripts only. */
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -18,7 +19,7 @@ const ROOT = path.dirname(new URL(import.meta.url).pathname)
    fragments above it defined, and nothing below. */
 export const TARGETS = [
   {
-    out: 'host.js',
+    out: 'dist/host.js',
     parts: [
       'src/host/00-plugin.js',
       'src/host/10-shell.js',
@@ -43,7 +44,7 @@ export const TARGETS = [
     ],
   },
   {
-    out: 'client.js',
+    out: 'dist/client.js',
     parts: [
       'src/client/00-plugin.js',
       'src/client/10-state.js',
@@ -101,7 +102,10 @@ export function buildAll(write) {
     const file = path.join(ROOT, target.out)
     const current = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null
     const stale = current !== next
-    if (write && stale) fs.writeFileSync(file, next)
+    if (write && stale) {
+      fs.mkdirSync(path.dirname(file), { recursive: true })
+      fs.writeFileSync(file, next)
+    }
     report.push({ out: target.out, stale: stale, bytes: Buffer.byteLength(next) })
   }
   return report

@@ -22,7 +22,7 @@ function load(file) {
 
 const repo = process.argv[2] || '/mnt/d/work/idea_work/holox_cloud'
 const N = 9
-for (const [label, file] of [['旧（只 stat）', '/tmp/gp-before-host.js'], ['新（读 HEAD 内容）', new URL('../host.js', import.meta.url).pathname]]) {
+for (const [label, file] of [['旧（只 stat）', '/tmp/gp-before-host.js'], ['新（读 HEAD 内容）', new URL('../dist/host.js', import.meta.url).pathname]]) {
   const watch = load(file)
   await watch(repo) /* 预热 */
   const times = []

@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import { spawn } from 'node:child_process'
-const body = fs.readFileSync('/home/mayou/.dsh/dsh-git-idea/host.js', 'utf8')
+const body = fs.readFileSync('new URL('../dist/host.js', import.meta.url).pathname', 'utf8')
 let spawns = 0
 function runShell(spec) {
   spawns += 1                                  // 每一次 shell.run 就是一次真实的子进程

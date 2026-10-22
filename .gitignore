@@ -2,3 +2,5 @@ test/.last-run.json
 bridge.log
 node_modules/
 .dsh
+# 所有构建产物（build.mjs / build-package.mjs / test/build-suites.mjs 的输出）
+dist/

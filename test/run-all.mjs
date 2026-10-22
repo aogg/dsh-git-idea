@@ -1,17 +1,26 @@
 #!/usr/bin/env node
 /* Every suite, in one command, against whatever is on disk right now.
    `node test/run-all.mjs` — and it refuses to trust a green run when either
-   generated artifact has fallen behind its sources: the built host.js/client.js
-   against src/, and each suite file against the harness plus the body it is
-   glued from. Both are failures this layout can produce and no assertion inside
-   a suite can see. */
+   generated artifact has fallen behind its sources: the built dist/host.js /
+   dist/client.js against src/, and each suite file against the harness plus the
+   body it is glued from. Both are failures this layout can produce and no
+   assertion inside a suite can see. */
 
 import { spawnSync } from 'node:child_process'
 import path from 'node:path'
 import fs from 'node:fs'
+import { SUITES } from './build-suites.mjs'
 
 const HERE = path.dirname(new URL(import.meta.url).pathname)
 const ROOT = path.dirname(HERE)
+const DIST_TEST = path.join(ROOT, 'dist', 'test')
+/* The glued suites are build products living under dist/test/; the handwritten
+   ones stay beside this runner in test/. One set derived from build-suites'
+   table keeps the split in sync with the gluer. */
+const GLUED = new Set(SUITES.map(function (row) { return row[1] }))
+function suitePath(file) {
+  return path.join(GLUED.has(file) ? DIST_TEST : HERE, file)
+}
 
 /* Suites that count ✓ / ✗ in their output. */
 const COUNTING = [
@@ -48,11 +57,12 @@ const PROSE = ['gp34a-host-test.mjs', 'gp34d-config-test.mjs', 'gp34e-bridge-tes
 
 /* ── GP_FRESH：不落仓库产物也做回归 ──
 
-   build.mjs 的产物（host.js / client.js / lib）落在仓库里，有些场合明令禁止在本机
-   重建它们（产物由用户侧统一重建）。但本文件进门的三道门槛恰恰要求产物与 src/ 一致
-   —— 那样一来，改了 src/ 的那次提交永远测不了。GP_FRESH=1 是给那种场合的出路：
-   用 build.mjs 自己的 TARGETS/render（纯函数，不写仓库内任何文件）把 src/ 拼到临时
-   目录，让套件经 GP_SRC 读这份拼接 —— 测的还是这份 src/，仓库里的产物一个字节不动。
+   build.mjs 的产物（dist/ 下的 host.js / client.js / lib / client）落在 dist/ 里，
+   而 dist/ 被 gitignore，有些场合明令禁止在本机重建它们（产物由用户侧统一重建）。
+   但本文件进门的三道门槛恰恰要求产物与 src/ 一致 —— 那样一来，改了 src/ 的那次
+   提交永远测不了。GP_FRESH=1 是给那种场合的出路：用 build.mjs 自己的 TARGETS/render
+   （纯函数，不写仓库内任何文件）把 src/ 拼到临时目录，让套件经 GP_SRC 读这份拼接
+   —— 测的还是这份 src/，仓库里的产物一个字节不动。
    门槛跳过时会大声说出来，绿色因此不会被误读成「产物也是新的」。 */
 const FRESH = process.env.GP_FRESH === '1'
 const FRESH_DIR = process.env.GP_FRESH_DIR || '/code/www/.dsh/tmp/dgi-gpfresh'
@@ -62,9 +72,9 @@ if (FRESH) {
   const built = await import('../build.mjs')
   fs.mkdirSync(FRESH_DIR, { recursive: true })
   for (const target of built.TARGETS) {
-    const file = path.join(FRESH_DIR, target.out)
+    const file = path.join(FRESH_DIR, path.basename(target.out))
     fs.writeFileSync(file, built.render(target))
-    if (target.out === 'client.js') freshClient = file
+    if (path.basename(target.out) === 'client.js') freshClient = file
     else freshHost = file
   }
   console.log('GP_FRESH: src/ 已拼接为临时产物（仓库产物未动），套件读：' + FRESH_DIR)
@@ -79,7 +89,7 @@ function run(file) {
   if (FRESH) {
     env.GP_SRC = hostHalves.indexOf(file) >= 0 ? freshHost : freshClient
   }
-  const result = spawnSync(process.execPath, [path.join(HERE, file)], { encoding: 'utf8', env: env })
+  const result = spawnSync(process.execPath, [suitePath(file)], { encoding: 'utf8', env: env })
   const out = (result.stdout || '') + (result.stderr || '')
   const mark = (text) => (out.match(new RegExp(text, 'g')) || []).length
   return {
@@ -102,10 +112,10 @@ function stale(script, hint) {
   return true
 }
 function publishedGap() {
-  const host = fs.readFileSync(path.join(ROOT, 'lib', 'index.js'), 'utf8')
-  const client = fs.readFileSync(path.join(ROOT, 'client', 'client.js'), 'utf8')
-  if (host.indexOf("export const inject = ['shell']") < 0) return 'lib/index.js does not declare the shell inject'
-  if (client.indexOf('const styles = {') < 0) return 'client/client.js does not define styles'
+  const host = fs.readFileSync(path.join(ROOT, 'dist', 'lib', 'index.js'), 'utf8')
+  const client = fs.readFileSync(path.join(ROOT, 'dist', 'client', 'client.js'), 'utf8')
+  if (host.indexOf("export const inject = ['shell']") < 0) return 'dist/lib/index.js does not declare the shell inject'
+  if (client.indexOf('const styles = {') < 0) return 'dist/client/client.js does not define styles'
   return null
 }
 
@@ -115,9 +125,9 @@ if (FRESH) {
   if (stale('build.mjs', 'run `node build.mjs` first: the suites would otherwise test a stale artifact')) process.exit(1)
   if (stale(path.join('test', 'build-suites.mjs'), 'run `node test/build-suites.mjs` first: the suite on disk would otherwise assert what its body said last time')) process.exit(1)
   /* The published package is built from the same fragments. Editing src/ and
-     running only build.mjs leaves lib/index.js — the file that actually ships —
-     asserting an older plugin. */
-  if (stale('build-package.mjs', 'run `node build-package.mjs` first: lib/index.js is what the published package exports')) process.exit(1)
+     running only build.mjs leaves dist/lib/index.js — the file that actually
+     ships — asserting an older plugin. */
+  if (stale('build-package.mjs', 'run `node build-package.mjs` first: dist/lib/index.js is what the published package exports')) process.exit(1)
   /* Two things the preludes must supply for the fragments to run at all, and
      both were missing once: the host half declares `shell` (or it applies
      before the executor exists and registers no RPC), and the client half

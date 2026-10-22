@@ -183,7 +183,7 @@ const ctx = {
   effect(cb) { const d = cb(); return typeof d === 'function' ? d : () => {} },
 }
 const styles = { insert: () => () => {} }
-new Function('ctx', 'React', 'host', 'styles', 'console', fs.readFileSync(process.env.GP_SRC || new URL('../client.js', import.meta.url).pathname, 'utf8'))(
+new Function('ctx', 'React', 'host', 'styles', 'console', fs.readFileSync(process.env.GP_SRC || new URL('../dist/client.js', import.meta.url).pathname, 'utf8'))(
   ctx, React, host, styles, console).apply(ctx)
 
 const chip = registered.find((r) => r.options.id === 'dsh-git-idea-chip').component

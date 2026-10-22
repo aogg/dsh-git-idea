@@ -53,7 +53,7 @@ function cmdrecQueue(line) {
   if (typeof cmdrecFlushTimer.unref === 'function') cmdrecFlushTimer.unref()
 }
 
-/* liveHub 由真包的 pkg 前奏提供；bridge 版（build.mjs 的 host.js）没有 pkg 层，这里
+/* liveHub 由真包的 pkg 前奏提供；bridge 版（build.mjs 的 dist/host.js）没有 pkg 层，这里
    靠 typeof 守卫安静地退化成无推送 —— 面板记录本身两种构建都在。 */
 function liveSend(payload) {
   if (typeof liveHub === 'undefined' || liveHub == null) return

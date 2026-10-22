@@ -19,7 +19,7 @@ import { spawn } from 'node:child_process'
  *   5. 整件事进了命令页：一行「git add -- 路径」、动作列人话「标记冲突已解决」
  *      （cmdrec 的断言法照 gp49 的 command-log 读法）。 */
 
-const body = fs.readFileSync(process.env.GP_SRC || new URL('../host.js', import.meta.url).pathname, 'utf8')
+const body = fs.readFileSync(process.env.GP_SRC || new URL('../dist/host.js', import.meta.url).pathname, 'utf8')
 
 /* 与 gp49 同一套骨架：HOME / GIT_CONFIG_GLOBAL / SYSTEM 都压到 /tmp —— 这份隔离钉
  * 在 makeBody 与 sh 里面，而不是靠每个调用点记得传。这里比 gp49 多一件事：spec.stdin

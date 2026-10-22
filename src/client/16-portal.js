@@ -15,7 +15,7 @@
        是 90；DSH 的 ui-cordis 插件面板是 fixed 30；应用的对话框栈在 100+。95 恰好
        压过 better-sidebar 的一切常驻面，又不挡应用自己的对话框。
 
-       createPortal 的来源：真包构建（client/client.js）的模块表里有 react-dom
+       createPortal 的来源：真包构建（dist/client/client.js）的模块表里有 react-dom
        （渲染器自己就 require 它），用 require 拿；个别环境只给了全局 ReactDOM 就
        读全局。两样都没有（bridge 动态加载、单测的迷你 React）返回 null ——
        GitPopover 据此整体回退旧的「槽位内 absolute」定位，行为一字不变。 */

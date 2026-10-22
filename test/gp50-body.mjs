@@ -218,7 +218,7 @@ ok('守卫落回 onOpenDiff：diff 页照常打开（行没有因为缺回调而
 
 console.log('')
 console.log('== 53-merge3.js 单独求值：分块、标记、块操作 ==')
-const M3 = new Function(fs.readFileSync(new URL('../src/client/53-merge3.js', import.meta.url).pathname, 'utf8')
+const M3 = new Function(fs.readFileSync(new URL('../../src/client/53-merge3.js', import.meta.url).pathname, 'utf8')
   + '; return { merge3SplitLines, merge3JoinLines, merge3Chunks, merge3Markers, merge3PrefillLines, merge3IsOpen, merge3IsSep, merge3IsClose, merge3ScanBlocks, merge3BlockHalves, merge3BlockSides, merge3ReplaceBlock, merge3ApplyNonConflicts, merge3SideRows }')()
 ok('切行/拼行逐字节还原：结尾换行就是末尾那个空串，不用额外状态；空文本是零行',
   JSON.stringify(M3.merge3SplitLines('a\nb\n')) === JSON.stringify(['a', 'b', ''])

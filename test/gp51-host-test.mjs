@@ -23,7 +23,7 @@ import { spawn } from 'node:child_process'
  * HOME / GIT_CONFIG_GLOBAL / SYSTEM 全部压进 /tmp（钉在 makeBody 与 sh 里，
  * 不靠每个调用点记得传）。 */
 
-const body = fs.readFileSync(process.env.GP_SRC || new URL('../host.js', import.meta.url).pathname, 'utf8')
+const body = fs.readFileSync(process.env.GP_SRC || new URL('../dist/host.js', import.meta.url).pathname, 'utf8')
 
 function makeBody(env, spy) {
   const shellEnv = Object.assign({}, process.env, {

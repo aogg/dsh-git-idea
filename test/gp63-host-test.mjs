@@ -30,7 +30,7 @@ import { spawn } from 'node:child_process'
  * 夹具骨架与 gp61 相同：HOME、GIT_CONFIG_GLOBAL/SYSTEM、DSH_HOME 全压到 /tmp，
  * 谁也摸不到跑测试这个人的真配置；每节换一份 body（configCache 各自独立）。 */
 
-const body = fs.readFileSync(process.env.GP_SRC || new URL('../host.js', import.meta.url).pathname, 'utf8')
+const body = fs.readFileSync(process.env.GP_SRC || new URL('../dist/host.js', import.meta.url).pathname, 'utf8')
 
 const HOME = '/tmp/gp63-home'
 const DSH = HOME + '/.dsh'

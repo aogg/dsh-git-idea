@@ -24,7 +24,7 @@ import { spawn } from 'node:child_process'
  * 末一节走注册路径：harness.handle 的桩接到了两条处理函数，save 的账同一条 RPC 读得回；
  * 不递 sessionCwd 时由 RPC 壳自己解会话工作区（sessions 桩的 cwd）。 */
 
-const body = fs.readFileSync(process.env.GP_SRC || new URL('../host.js', import.meta.url).pathname, 'utf8')
+const body = fs.readFileSync(process.env.GP_SRC || new URL('../dist/host.js', import.meta.url).pathname, 'utf8')
 
 const HOME = '/tmp/gp62-home'
 const DSH = HOME + '/.dsh'

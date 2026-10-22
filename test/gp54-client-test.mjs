@@ -337,10 +337,10 @@ console.log('== 老订阅者与真包 onopen ==')
     panelLive.indexOf("message.kind === 'cmdlog-start'") >= 0
     && panelLive.indexOf("message.kind === 'cmdlog-exit'") >= 0
     && panelLive.indexOf('return previous') >= 0)
-  /* 真包的 client-pre（client/client.js 的前奏）在 onopen 分发 live-open —— 从
+  /* 真包的 client-pre（dist/client/client.js 的前奏）在 onopen 分发 live-open —— 从
      build-package 的渲染函数取源码切片，GP_FRESH 下也不依赖盘上产物。 */
   const pkg = await import('../build-package.mjs')
-  const target = pkg.PACKAGE_TARGETS.find((t) => t.out === 'client/client.js')
+  const target = pkg.PACKAGE_TARGETS.find((t) => t.out === 'dist/client/client.js')
   const pkgSrc = pkg.render(target)
   const onopen = pkgSrc.slice(pkgSrc.indexOf('ws.onopen = function () {'), pkgSrc.indexOf('ws.onmessage = function (event) {'))
   ok('client-pre 的 onopen：向 listeners 分发 {kind:"live-open"}，逐订阅者 try/catch',

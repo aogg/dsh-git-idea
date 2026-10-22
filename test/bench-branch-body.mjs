@@ -59,7 +59,7 @@ for (let i = 3; i < 12; i += 1) {
 const hover = timePasses(20)
 const skips = memoSkips - before
 
-console.log('  源文件        ' + String(process.env.GP_SRC || 'client.js'))
+console.log('  源文件        ' + String(process.env.GP_SRC || 'dist/client.js'))
 console.log('  分支数        ' + COUNT)
 console.log('  DOM 节点      ' + collect(tree).length)
 console.log('  分支行        ' + branchRowEls.length)

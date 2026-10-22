@@ -15,7 +15,7 @@
  *                        agents 服务，不起进程）→ 2 秒防抖吞掉 goal 续轮间隙后广播；
  *                        浏览器补的那一刷就是 92-chip.js 的 runCompleteRefresh。
  *
- * bridge 版（build.mjs 的 host.js）没有 pkg 层，liveHub 不存在 —— 下面整个 effect
+ * bridge 版（build.mjs 的 dist/host.js）没有 pkg 层，liveHub 不存在 —— 下面整个 effect
  * 用 typeof 守卫安静不启用，两种构建共用这一个片段。
  *
  * 两条刻意的取舍：

@@ -25,7 +25,7 @@ import fs from 'node:fs'
  * porcelain 的答复按用例给罐头，解析断言因此逐字节确定，不赌本机 git 的版本与
  * 措辞（prunable 的原因原文各版本不一样，真实 git 反而钉不住）。 */
 
-const body = fs.readFileSync(process.env.GP_SRC || new URL('../host.js', import.meta.url).pathname, 'utf8')
+const body = fs.readFileSync(process.env.GP_SRC || new URL('../dist/host.js', import.meta.url).pathname, 'utf8')
 
 /* ── 罐头 shell：配置探测一律空 ok；worktree list 按“当前用例”答复，并记账 ── */
 let porcelainText = ''

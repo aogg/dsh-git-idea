@@ -286,12 +286,13 @@ git config --global user.email "你的邮箱"
 源码按功能拆片段，构建就是按顺序拼接，没有转译、打包或压缩。改代码改 `src/`。
 
 ```sh
-node build-package.mjs          # 正式包：lib/index.js + client/client.js
-node build.mjs                  # 动态桥：host.js + client.js
+node build-package.mjs          # 正式包：dist/lib/index.js + dist/client/client.js
+node build.mjs                  # 动态桥：dist/host.js + dist/client.js
+node test/build-suites.mjs      # 胶合套件：dist/test/ 下的 gp*-test 与基准
 node test/run-all.mjs           # 全部断言（1327 条）
 node build.mjs --check && node build-package.mjs --check   # 产物是否最新
-node test/bench.mjs             # 基准：200 条提交的历史列表
-node test/bench-branch.mjs      # 基准：300 个分支的切换器
+node dist/test/bench.mjs        # 基准：200 条提交的历史列表
+node dist/test/bench-branch.mjs # 基准：300 个分支的切换器
 ```
 
 `test/run-all.mjs` 跑断言前先检查三样东西是否落后于源码：动态桥产物、正式包产物、每个套件文件。
@@ -303,16 +304,20 @@ node test/bench-branch.mjs      # 基准：300 个分支的切换器
 ```
 package.json          npm / DSH manifest（dsh.bundle patch + dsh.client web）
 cordis.patch.yml      bundle 层插入的插件行
-lib/index.js          构建产物：Host 半侧（ESM，插件对象 + 同源 RPC 路由）
-client/client.js      构建产物：Client 半侧（__ModuleLoader__ bundle）
+dist/                 全部构建产物（gitignore 不入库，先构建再测试/部署）
+  dist/lib/index.js   构建产物：Host 半侧（ESM，插件对象 + 同源 RPC 路由）→ exports["."]
+  dist/client/client.js
+                      构建产物：Client 半侧（__ModuleLoader__ bundle）→ exports["./client"]
+  dist/host.js、dist/client.js
+                      构建产物：动态桥读取的两个半侧（旧运行方式，保留）
+  dist/test/          胶合好的断言套件与基准（源是 test/ 里的 body + harness）
 src/host/*.js         Host 源码片段（17 个）
 src/client/*.js       Client 源码片段（29 个）
 src/pkg/*.js          正式包的 prelude / postlude
 build-package.mjs     正式包构建
 build.mjs             动态桥构建
-host.js client.js     构建产物：动态桥读取的两个半侧（旧运行方式，保留）
 docs/                 README 的图与文档（功能列表、联动插件）
-test/                 断言套件与性能基准
+test/                 断言套件源（body / harness）、手写套件与性能基准源
 ```
 
 Host 与 Client 的片段各自共享一个作用域：一个片段可以用它上面片段定义的东西，反之不行。

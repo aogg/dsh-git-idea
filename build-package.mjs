@@ -2,12 +2,14 @@
 /* Build the publishable package halves from the very same fragments the
    dynamic bridge loads.
 
-   build.mjs renders host.js / client.js as function bodies for the bridge.
-   Here each body is wrapped — a real ESM module on the Host side, a
+   build.mjs renders dist/host.js / dist/client.js as function bodies for the
+   bridge. Here each body is wrapped — a real ESM module on the Host side, a
    __ModuleLoader__ classic script on the Client side — with the preludes under
    src/pkg/ supplying the two things only the bridge used to provide: the
    \`harness\` shim and \`host.call\`. Edit src/, then run this, then run
-   build.mjs; both artifacts must stay current. */
+   build.mjs; both artifacts must stay current. Like every build product they
+   land under dist/ (dist/lib/index.js and dist/client/client.js), and
+   package.json's exports point there. */
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -25,15 +27,15 @@ function partsOf(out) {
    then the shared body fragments, then the postlude that exports the result. */
 export const PACKAGE_TARGETS = [
   {
-    out: 'lib/index.js',
+    out: 'dist/lib/index.js',
     pre: 'src/pkg/host-pre.js',
-    parts: partsOf('host.js'),
+    parts: partsOf('dist/host.js'),
     post: 'src/pkg/host-post.js',
   },
   {
-    out: 'client/client.js',
+    out: 'dist/client/client.js',
     pre: 'src/pkg/client-pre.js',
-    parts: partsOf('client.js'),
+    parts: partsOf('dist/client.js'),
     post: 'src/pkg/client-post.js',
   },
 ]

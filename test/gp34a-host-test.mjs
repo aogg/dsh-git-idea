@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import { spawn } from 'node:child_process'
-const body = fs.readFileSync(process.env.GP_SRC || new URL('../host.js', import.meta.url).pathname, 'utf8')
+const body = fs.readFileSync(process.env.GP_SRC || new URL('../dist/host.js', import.meta.url).pathname, 'utf8')
 
 function runShell(spec) {
   return new Promise((res) => {
@@ -1079,7 +1079,7 @@ check('源码里也没有 registerTool / defineTool 的调用',
 /* 同一条源码还有第二份产物：正式包的 lib/index.js，前面挂着 pkg/host-pre.js 那个
    harness 垫片。垫片里曾经有 defineTool / registerTool 两项，撤工具时一起撤了 ——
    谁把它加回去，这里也要红，不然「不注册工具」只对桥那一半成立。 */
-const pkgBody = fs.readFileSync(new URL('../lib/index.js', import.meta.url).pathname, 'utf8')
+const pkgBody = fs.readFileSync(new URL('../dist/lib/index.js', import.meta.url).pathname, 'utf8')
 check('正式包那一半（lib/index.js）也没有注册工具',
   pkgBody.indexOf('registerTool(') < 0 && pkgBody.indexOf('defineTool(') < 0)
 

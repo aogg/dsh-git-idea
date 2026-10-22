@@ -23,7 +23,7 @@ import { spawn } from 'node:child_process'
  * 定时器全部走 ctx.get('timer') 桩（79-live-watch.js 的 liveTimers 优先取服务），
  * 测试手动开火，不真等 10 秒。 */
 
-const body = fs.readFileSync(process.env.GP_SRC || new URL('../host.js', import.meta.url).pathname, 'utf8')
+const body = fs.readFileSync(process.env.GP_SRC || new URL('../dist/host.js', import.meta.url).pathname, 'utf8')
 
 const HOME = '/tmp/gp54-home'
 const GLOBAL = HOME + '/.gitconfig'

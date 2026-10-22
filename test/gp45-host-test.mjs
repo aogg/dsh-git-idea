@@ -12,7 +12,7 @@ import { spawn } from 'node:child_process'
  *   4. 和别的写命令同一个口径：sandboxDenied / noGit 自报，不让人把「被沙箱拒了」
  *      「机器上没有 git」读成仓库的毛病。 */
 
-const body = fs.readFileSync(process.env.GP_SRC || new URL('../host.js', import.meta.url).pathname, 'utf8')
+const body = fs.readFileSync(process.env.GP_SRC || new URL('../dist/host.js', import.meta.url).pathname, 'utf8')
 
 function runShell(spec) {
   return new Promise((res) => {

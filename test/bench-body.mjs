@@ -91,7 +91,7 @@ const scrolledRows = byClass(scrolled, 'dsh-git-crow')
 const pads = collect(scrolled).filter((n) => n.props && n.props.style && typeof n.props.style.height === 'string' && n.type === 'div' && n.props.style.height !== '26px')
 
 const row = (label, m) => console.log('  ' + label.padEnd(14) + String(m.open.toFixed(1)).padStart(7) + 'ms' + String(m.nodes).padStart(7) + String(m.rows).padStart(7) + String(m.paths).padStart(7) + String(m.pass.toFixed(3)).padStart(9) + 'ms')
-console.log('  源文件          ' + String(process.env.GP_SRC || 'client.js'))
+console.log('  源文件          ' + String(process.env.GP_SRC || 'dist/client.js'))
 console.log('  ' + ''.padEnd(14) + '首次打开'.padStart(9) + '节点'.padStart(6) + '提交行'.padStart(6) + '路径'.padStart(6) + '单遍渲染'.padStart(11))
 row('无高度信息', full)
 row('600px 视口', win)

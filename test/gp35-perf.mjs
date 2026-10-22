@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import { spawn } from 'node:child_process'
-const body = fs.readFileSync('/home/mayou/.dsh/dsh-git-idea/host.js', 'utf8')
+const body = fs.readFileSync('new URL('../dist/host.js', import.meta.url).pathname', 'utf8')
 function runShell(spec) {
   return new Promise((res) => {
     const c = spawn('sh', ['-c', spec.command], { cwd: spec.workdir, env: process.env })

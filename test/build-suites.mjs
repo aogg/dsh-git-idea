@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* The six gp3x suites are one shared harness plus a body, and the benchmarks are
+/* The gp3x suites are one shared harness plus a body, and the benchmarks are
    the same shape. This glues them, with the newline the earlier by-hand
    concatenation happened to get away with not having.
 
@@ -7,12 +7,19 @@
    the `.part` and the `-body`, and `--check` says whether the artifact on disk
    still matches them. run-all.mjs asks both before it trusts a green run — a
    body edited without re-gluing would otherwise leave the suite asserting what
-   the body said last time, and nothing inside a suite can see that. */
+   the body said last time, and nothing inside a suite can see that.
+
+   Like every build product the glued suites land under dist/ — dist/test/ —
+   so the tracked test/ tree holds sources (bodies, harness) only. A suite at
+   dist/test/ keeps reading the bridge client half one directory up, exactly
+   as a suite at test/ used to read it at the root. */
 
 import fs from 'node:fs'
 import path from 'node:path'
 
 const HERE = path.dirname(new URL(import.meta.url).pathname)
+/* One level up from test/, beside dist/host.js and dist/client.js. */
+const DIST_TEST = path.join(HERE, '..', 'dist', 'test')
 
 export const SUITES = [
   ['gp37-body.mjs', 'gp37-logpanel-test.mjs'],
@@ -51,11 +58,14 @@ export function buildAll(write) {
   const report = []
   for (const [body, out] of SUITES) {
     const next = render(body)
-    const file = path.join(HERE, out)
+    const file = path.join(DIST_TEST, out)
     const current = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null
     const stale = current !== next
-    if (write && stale) fs.writeFileSync(file, next)
-    report.push({ out: out, stale: stale, bytes: Buffer.byteLength(next) })
+    if (write && stale) {
+      fs.mkdirSync(path.dirname(file), { recursive: true })
+      fs.writeFileSync(file, next)
+    }
+    report.push({ out: 'dist/test/' + out, stale: stale, bytes: Buffer.byteLength(next) })
   }
   return report
 }

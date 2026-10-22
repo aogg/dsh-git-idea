@@ -21,7 +21,7 @@ import { spawn } from 'node:child_process'
  * 身份全在仓库 local config 里：reword 的「失败回原位」一节故意把 local 身份清空
  * —— rebase 的 exec `git commit --amend` 没有身份必然失败，正好当那把刀。 */
 
-const body = fs.readFileSync(process.env.GP_SRC || new URL('../host.js', import.meta.url).pathname, 'utf8')
+const body = fs.readFileSync(process.env.GP_SRC || new URL('../dist/host.js', import.meta.url).pathname, 'utf8')
 
 const HOME = '/tmp/gp58-home'
 const GLOBAL = HOME + '/.gitconfig'

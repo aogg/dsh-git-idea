@@ -23,7 +23,7 @@ if (typeof process.getuid !== 'function' || process.getuid() !== 0) {
   process.exit(0)
 }
 
-const body = fs.readFileSync(process.env.GP_SRC || new URL('../host.js', import.meta.url).pathname, 'utf8')
+const body = fs.readFileSync(process.env.GP_SRC || new URL('../dist/host.js', import.meta.url).pathname, 'utf8')
 
 /* 每个场景一个 body 实例：readCache 是模块级 Map，同一个实例里第二次同样的读会命中
  * 缓存、根本不跑脚本 —— 幂等必须靠新实例（fresh 缓存）让脚本真的再跑一遍来验证。

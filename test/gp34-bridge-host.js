@@ -3,12 +3,12 @@ return {
     /* ── the source bridge, not the plugin itself ──
 
        The real Host half sits in a file beside the deployment's own settings
-       (<DSH_HOME>/dsh-git-idea/host.js) and is evaluated here. A dynamic
+       (<DSH_HOME>/dsh-git-idea/dist/host.js) and is evaluated here. A dynamic
        Package is immutable, so every change means submitting the whole thing
        again through the model — and this plugin is far past the size where that
        is a copy rather than a regeneration. The deployment already has a
        mechanism for a plugin that lives in files: a real package ships its Host
-       half as lib/ and its Client half as client/client.js. This bridge is that
+       half as dist/lib/ and its Client half as dist/client/client.js. This bridge is that
        layout, loaded by hand, until the plugin moves into a profile bundle.
 
        Everything the evaluated source registers — tools, RPC handlers, effects
@@ -80,8 +80,8 @@ return {
 
     async function readSource(name) {
       const dir = await sourceDir()
-      const text = await readOne(dir + '/' + name)
-      if (text.length === 0) throw new Error('cannot read ' + dir + '/' + name)
+      const text = await readOne(dir + '/dist/' + name)
+      if (text.length === 0) throw new Error('cannot read ' + dir + '/dist/' + name)
       return text
     }
 

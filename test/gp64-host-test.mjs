@@ -25,7 +25,7 @@ import { spawn } from 'node:child_process'
  *
  * 定时器走 timer 服务桩（liveTimers 优先取服务），手动开火，不真等。 */
 
-const body = fs.readFileSync(process.env.GP_SRC || new URL('../host.js', import.meta.url).pathname, 'utf8')
+const body = fs.readFileSync(process.env.GP_SRC || new URL('../dist/host.js', import.meta.url).pathname, 'utf8')
 
 const HOME = '/tmp/gp64-home'
 const GLOBAL = HOME + '/.gitconfig'

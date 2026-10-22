@@ -3,16 +3,18 @@
   "version": "0.2.6",
   "description": "A git plugin for DSH modelled on IDEA's VCS: a git icon beside the permission mode in the composer with the branch and pending-change count, a branch switcher on hover, an IDEA-style VCS panel on click, and a config tab with project and global scopes. Registers no model tools.",
   "type": "module",
-  "main": "lib/index.js",
+  "main": "dist/lib/index.js",
   "exports": {
-    ".": "./lib/index.js",
-    "./client": "./client/client.js",
+    ".": "./dist/lib/index.js",
+    "./client": "./dist/client/client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
   "files": [
-    "lib",
-    "client",
+    "dist/host.js",
+    "dist/client.js",
+    "dist/lib",
+    "dist/client",
     "docs",
     "cordis.patch.yml",
     "README.md",

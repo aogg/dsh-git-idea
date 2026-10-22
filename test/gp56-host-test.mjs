@@ -18,7 +18,7 @@ import { spawn } from 'node:child_process'
  * 跑测试这个人的真配置；sessions 桩只答 header.cwd —— 正好是 repoFrom 缺省那一半
  * 要的东西（沙箱策略没有 sandboxPolicy 服务时本来就取部署默认，与 gp49 一致）。 */
 
-const body = fs.readFileSync(process.env.GP_SRC || new URL('../host.js', import.meta.url).pathname, 'utf8')
+const body = fs.readFileSync(process.env.GP_SRC || new URL('../dist/host.js', import.meta.url).pathname, 'utf8')
 
 const HOME = '/tmp/gp56-home'
 const GLOBAL = HOME + '/.gitconfig'

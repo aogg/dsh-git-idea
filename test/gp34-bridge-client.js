@@ -2,7 +2,7 @@ return {
   apply(ctx) {
     /* The Client half of the bridge: the real UI source is fetched from the Host
        bridge and evaluated here. Same reasoning as the Host half — and the same
-       end state, where client/client.js is a file the browser loads. */
+       end state, where dist/client/client.js is a file the browser loads. */
 
     const loading = (async function () {
       const reply = await host.call('dsh-git-idea/source', { half: 'client' })

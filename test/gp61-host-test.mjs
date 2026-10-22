@@ -28,7 +28,7 @@ import { spawn } from 'node:child_process'
  * 这两个是脚本仅有的外部命令，其余全算 shell 内建；spawn 写死绝对 /bin/sh，
  * 可执行解析不过 PATH）—— linked 退成 broken-gitlink，main 不受影响。 */
 
-const body = fs.readFileSync(process.env.GP_SRC || new URL('../host.js', import.meta.url).pathname, 'utf8')
+const body = fs.readFileSync(process.env.GP_SRC || new URL('../dist/host.js', import.meta.url).pathname, 'utf8')
 
 const HOME = '/tmp/gp61-home'
 const DSH = HOME + '/.dsh'

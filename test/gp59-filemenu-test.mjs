@@ -199,7 +199,7 @@ console.log('=== Host：diff local 模式 / 三条新 RPC ===')
 let hostBody = process.env.GP_SRC || null
 if (hostBody === null) {
   const built = await import(ROOT + 'build.mjs')
-  hostBody = built.render(built.TARGETS.find((t) => t.out === 'host.js'))
+  hostBody = built.render(built.TARGETS.find((t) => t.out === 'dist/host.js'))
 } else {
   hostBody = fs.readFileSync(hostBody, 'utf8')
 }
