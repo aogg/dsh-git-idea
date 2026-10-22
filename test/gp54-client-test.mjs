@@ -214,7 +214,7 @@ function makeWorld54(config) {
   }
 }
 
-const CLIENT_SRC = fs.readFileSync(process.env.GP_SRC || new URL('../client.js', import.meta.url).pathname, 'utf8')
+const CLIENT_SRC = fs.readFileSync(process.env.GP_SRC || new URL('../dist/client.js', import.meta.url).pathname, 'utf8')
 const w = makeWorld54({})
 
 let failed = 0
