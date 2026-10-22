@@ -154,8 +154,8 @@ tree = await clickText56(tree, '扫描忽略项')
 ok('扫描只发编辑目标这一个仓库（repos=[/tmp/ws]，不再是整份清单）',
   callsOf56(mark56, 'git/ignored-scan').length === 1 && Array.isArray(lastArgs('git/ignored-scan').repos)
   && lastArgs('git/ignored-scan').repos.length === 1 && lastArgs('git/ignored-scan').repos[0] === '/tmp/ws')
-ok('扫完只有这一个仓库：仓库组头一行、工作树一行报 2 项',
-  collect(tree).filter((n) => hasClass56(n, 'dsh-git-ign-repo-head')).length === 1
+ok('扫完不再有仓库层折叠头：工作树一行直接上屏报 2 项',
+  collect(tree).filter((n) => hasClass56(n, 'dsh-git-ign-repo-head')).length === 0
   && collect(tree).some((n) => hasClass56(n, 'dsh-git-ign-wt') && textOf(n).indexOf('2 项') >= 0))
 const wtRow56 = collect(tree).find((n) => hasClass56(n, 'dsh-git-ign-wt'))
 wtRow56.props.onClick()
