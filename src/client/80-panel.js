@@ -1961,8 +1961,12 @@
         setPathFilter('')
       }
 
-      const applyRepo = function (next) {
-        rememberRepo(sessionId, next)
+      /* viaAdoption：收养路径（后端账落地那一面的 effect）专用。账是 adoptHostRepo
+         刚从后端搬来的，内存、快速通道、后端三处已经一致，再走 rememberRepo 只会
+         多发一次同值 save —— 与「收养不回写后端」的规矩（10-state.js adoptHostRepo
+         那段注释）对着干。这里只做面板这侧的整套重置与换仓。 */
+      const applyRepo = function (next, viaAdoption) {
+        if (viaAdoption !== true) rememberRepo(sessionId, next)
         setAppliedRepo(next)
         setStatus(null)
         panelBox.status = null
@@ -1991,14 +1995,15 @@
 
       /* 生效仓库的后端账落地（10-state.js 的 adoptHostRepo 发的 applied 信号）：
          本页还没亲手点过仓库时，面板跟着换到后端记的那个 —— 等价于「带着上次的选择
-         打开面板」，所以走 applyRepo 整套重置，与单击同一套路径。本页亲手点过
-         （liveRepoChosen）或已一致时一个字节不动。 */
+         打开面板」，所以走 applyRepo 整套重置，与单击同一套路径；只有「记」那一步
+         省掉（viaAdoption）—— 账本来就是从后端来的，回写一次同值纯属冗余。本页亲手
+         点过（liveRepoChosen）或已一致时一个字节不动。 */
       const appliedVersion = useRepoApplied()
       React.useEffect(function () {
         const next = sessionRepo(sessionId)
         if (next.length === 0 || next === appliedRepo) return
         if (appliedRepo.length > 0 && liveRepoChosen(sessionId) === true) return
-        applyRepo(next)
+        applyRepo(next, true)
       }, [appliedVersion, sessionId, appliedRepo])
 
       const bump = bumpData
@@ -3229,8 +3234,14 @@
          优先 → 唯一远端 → 都不满足就不猜）：猜得出就给「推送并设为上游」的确认
          按钮；猜不出把出路说成一句话（与 ctxPush 的两句提示同款话术），不开天窗、
          也不发请求。 */
+      /* 猜远端的数据源：refs 就是当前生效仓库的那份读数 —— 确认的仓库与它一致时
+         直接用（顶栏 ↑ 与横幅这条，repoRefs 只在多选时才有账，单选下拿 repoRefs
+         认账会把「推送并设为上游」的按钮饿没）；只有跨仓库的确认（分支行右键推送
+         别的仓库分支）才去 repoRefs 按仓庘认账，没读过就认输（guessNote 说破）。 */
       const pushConfirmData = pushConfirm === null ? null
-        : (text(pushConfirm.repo).length > 0 ? (repoRefs[pushConfirm.repo] !== undefined ? repoRefs[pushConfirm.repo] : null) : refs)
+        : (text(pushConfirm.repo).length > 0 && pushConfirm.repo !== appliedRepo
+            ? (repoRefs[pushConfirm.repo] !== undefined ? repoRefs[pushConfirm.repo] : null)
+            : refs)
       const pushGuessRemote = pushConfirm !== null && pushConfirm.setUpstream === null ? guessPushRemote(pushConfirmData) : ''
       const pushGuessNote = (function () {
         if (pushConfirm === null || pushConfirm.setUpstream !== null) return ''
