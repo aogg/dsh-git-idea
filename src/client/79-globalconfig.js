@@ -306,6 +306,147 @@
         problem.length > 0 ? h('div', { className: 'dsh-git-set-row dsh-git-error' }, problem) : null)
     }
 
+    /* ── worktree 的目录映射编辑器：列表态 + 编辑态 ──
+
+        「配置 → 全局配置」的 worktree 组专用（不像快捷命令编辑器那样还有历史页
+        ⚡ 菜单那一处使用）。结构照 QuickCommandsEditor 同一副骨架：列表态 + 编辑
+        态、删除两段式（第一次点把按钮换成「确认删除」）、上限 50 条 —— 超出的那次
+        新增不保存并把原因说在编辑器里（Host 归一化里的截断只是兜底）。配置读写
+        走 usePluginConfig / savePluginConfig，那一层已有 400ms 去抖，这里不另开炉灶。
+        条目的形状清洗不在客户端做（20-prefs.js 里 worktreeDirMappings 一格的说明）：
+        这里只拦「两条都填了」，空半条的条目保存不了；Host 那边 normalizeWorktreeDirMappings
+        收尾。 */
+    const WORKTREE_DIR_MAPPINGS_MAX = 50
+    let worktreeDirMappingSeq = 0
+    function worktreeDirMappingId() {
+      worktreeDirMappingSeq += 1
+      return 'wdm-' + String(Date.now()) + '-' + String(worktreeDirMappingSeq)
+    }
+    function WorktreeDirMappingsEditor(props) {
+      const plugin = usePluginConfig()
+      const mappings = plugin != null && Array.isArray(plugin.worktreeDirMappings) ? plugin.worktreeDirMappings : []
+      const [mode, setMode] = React.useState('list')
+      const [draft, setDraft] = React.useState({ id: null, from: '', to: '' })
+      const [problem, setProblem] = React.useState('')
+      const [armDel, setArmDel] = React.useState('')
+
+      const startNew = function () {
+        setDraft({ id: null, from: '', to: '' })
+        setProblem('')
+        setArmDel('')
+        setMode('edit')
+      }
+      const startEdit = function (one) {
+        setDraft({ id: one.id, from: text(one.from), to: text(one.to) })
+        setProblem('')
+        setArmDel('')
+        setMode('edit')
+      }
+      const backToList = function () {
+        setProblem('')
+        setArmDel('')
+        setMode('list')
+      }
+
+      const save = function () {
+        const from = draft.from.trim()
+        const to = draft.to.trim()
+        if (from.length === 0 || to.length === 0) { setProblem('原目录和替换目录都要填'); return }
+        const list = mappings.slice()
+        let at = -1
+        for (let i = 0; i < list.length; i += 1) if (list[i].id === draft.id) { at = i; break }
+        if (at < 0) {
+          if (list.length >= WORKTREE_DIR_MAPPINGS_MAX) {
+            setProblem('最多 ' + String(WORKTREE_DIR_MAPPINGS_MAX) + ' 条 —— 先删掉几条再新增，这条没有保存')
+            return
+          }
+          list.push({ id: worktreeDirMappingId(), from: from, to: to })
+        } else {
+          list[at] = { id: draft.id, from: from, to: to }
+        }
+        savePluginConfig(Object.assign({}, plugin, { worktreeDirMappings: list }))
+        setProblem('')
+        setMode('list')
+      }
+
+      /* 删除也走两段式（QuickCommandsEditor 同款）：第一次点把按钮换成「确认删除」，
+         配置只在第二次点时写。 */
+      const drop = function (one) {
+        if (armDel !== one.id) { setArmDel(one.id); return }
+        const next = []
+        for (let i = 0; i < mappings.length; i += 1) if (mappings[i].id !== one.id) next.push(mappings[i])
+        savePluginConfig(Object.assign({}, plugin, { worktreeDirMappings: next }))
+        setArmDel('')
+      }
+
+      if (mode === 'edit') {
+        return h('div', { className: 'dsh-git-qc-box' },
+          h('div', { key: 'h', className: 'dsh-git-qc-head' }, draft.id == null ? '新建目录映射' : '编辑目录映射'),
+          h('label', { key: 'f', className: 'dsh-git-qc-field' },
+            h('span', { key: 'k', className: 'dsh-git-qc-k' }, '原目录（另一台机器上的前缀）'),
+            clearable('wdmf', h('input', {
+              className: 'dsh-git-input', placeholder: '例：D:/code/www/gs/zuodian', autoFocus: true,
+              value: draft.from,
+              onChange: function (event) {
+                setDraft({ id: draft.id, from: event.target.value, to: draft.to })
+              },
+            }), draft.from.length > 0, function () {
+              setDraft({ id: draft.id, from: '', to: draft.to })
+            })),
+          h('label', { key: 't', className: 'dsh-git-qc-field' },
+            h('span', { key: 'k', className: 'dsh-git-qc-k' }, '替换目录（这台机器上的路径）'),
+            clearable('wdmt', h('input', {
+              className: 'dsh-git-input', placeholder: '例：/code/www/gs/zuodian',
+              value: draft.to,
+              onChange: function (event) {
+                setDraft({ id: draft.id, from: draft.from, to: event.target.value })
+              },
+            }), draft.to.length > 0, function () {
+              setDraft({ id: draft.id, from: draft.from, to: '' })
+            })),
+          h('div', { key: 'x', className: 'dsh-git-qc-hint' },
+            '识别 worktree 的主目录时，路径以原目录开头的那一段整段替换成替换目录（前缀匹配，D:/… 与 D:\\… 两种写法都认；从上到下第一条配上的生效）。'),
+          problem.length > 0 ? h('div', { key: 'er', className: 'dsh-git-error' }, problem) : null,
+          h('div', { key: 'a', className: 'dsh-git-qc-actions' },
+            h('button', { key: 'ok', type: 'button', className: 'dsh-git-btn dsh-git-primary', onClick: save }, '保存'),
+            h('button', { key: 'no', type: 'button', className: 'dsh-git-btn', onClick: backToList }, '取消')))
+      }
+
+      const rows = []
+      if (mappings.length === 0) {
+        rows.push(h('div', { key: 'none', className: 'dsh-git-menu-dim dsh-git-qc-empty' },
+          '还没有目录映射。worktree 从别的机器整棵拷来（如在 Windows 上建好拿到这台 Linux 用）',
+          h('br'), '而 .git 里记的还是那台机器的路径时，配一条：',
+          h('br'), 'D:/code/www/gs/zuodian → /code/www/gs/zuodian'))
+      } else {
+        for (let i = 0; i < mappings.length; i += 1) {
+          const one = mappings[i]
+          rows.push(h('div', { key: one.id, className: 'dsh-git-wdm-row' },
+            h('span', { key: 'f', className: 'dsh-git-wdm-from', title: text(one.from) }, text(one.from)),
+            h('span', { key: 'a', className: 'dsh-git-qc-k' }, '→'),
+            h('span', { key: 't', className: 'dsh-git-wdm-to', title: text(one.to) + '\n' + '路径以 ' + text(one.from) + ' 开头的那一段替换成 ' + text(one.to) }, text(one.to)),
+            h('button', {
+              key: 'e', type: 'button', className: 'dsh-git-btn', title: '编辑这条目录映射',
+              onClick: function (event) { stopEvent(event); startEdit(one) },
+            }, '编辑'),
+            h('button', {
+              key: 'd', type: 'button',
+              className: 'dsh-git-btn' + (armDel === one.id ? ' dsh-git-danger' : ''),
+              title: armDel === one.id ? '再点一次确认删除' : '删除这条目录映射',
+              onClick: function (event) { stopEvent(event); drop(one) },
+            }, armDel === one.id ? '确认删除' : '删除')))
+        }
+      }
+      return h('div', { className: 'dsh-git-qc-box' },
+        h('div', { key: 'h', className: 'dsh-git-qc-head' },
+          '目录映射' + (mappings.length > 0
+            ? '（' + String(mappings.length) + '/' + String(WORKTREE_DIR_MAPPINGS_MAX) + '）' : '')),
+        rows,
+        h('div', { key: 'a', className: 'dsh-git-qc-actions' },
+          h('button', { key: 'new', type: 'button', className: 'dsh-git-btn', onClick: startNew }, '新增'),
+          h('span', { key: 'n', className: 'dsh-git-menu-dim' }, '保存在插件配置里，识别 worktree 主目录时套用')))
+    }
+
     /* ── 全局配置这一档的整页 ──
 
        老设置页 GitSettingsSection 的正文，去掉页首大标题（作用域切换那排已经说了
@@ -413,6 +554,14 @@
         h('div', { className: 'dsh-git-set-hint' },
           '自定义命令模板，历史页的 ⚡ 按钮一键执行；{branch}、{hash} 这类变量按当前分支和选中的提交代值。与那个菜单共用同一份（也保存在上面那个 json 里）。'),
         h(QuickCommandsEditor, { key: 'qc', initial: 'list' }),
+
+        /* worktree 组（本组现在只有「目录映射」一项，组名留给以后的 worktree 全局
+            设置）：它描述的是「这台机器上目录长什么样」（别的机器的路径在本机叫
+            什么），跟插件与机器走而不是跟某个项目走，所以放全局档。 */
+        h('div', { className: 'dsh-git-set-group' }, 'worktree'),
+        h('div', { className: 'dsh-git-set-hint' },
+          'worktree 的 .git 链接文件里记着主仓库的目录路径；整棵目录树从别的机器拷来时（如在 Windows 上建好、拿到这台 Linux 机器用），里面记的还是那台机器的路径（D:/code/…），这台机器的 git 读不动它。下面的「目录映射」类似虚拟机挂载的目录映射：识别 worktree 的主目录时，路径以「原目录」开头的那一段整段替换成「替换目录」（前缀匹配替换，D:/… 与 D:\\… 两种写法都认），换算出的主仓库就能被面板认出、打开。'),
+        h(WorktreeDirMappingsEditor, { key: 'wdm' }),
 
         h(GitToolchainGroup),
 

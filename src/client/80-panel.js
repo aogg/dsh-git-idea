@@ -1256,7 +1256,8 @@
           h('span', { className: 'dsh-git-set-label' }, '主目录'),
           wtMainDir.length > 0
             ? h('span', { className: 'dsh-git-set-hint dsh-git-set-url', title: wtMainDir },
-              wtMainDir + '（' + (wtSnapNow.mainSource === 'config' ? '手动配置' : '自动找到') + (wtMainOk ? '' : ' · 目录不在了') + '）')
+              wtMainDir + '（' + (wtSnapNow.mainSource === 'config' ? '手动配置'
+                : (wtSnapNow.mainMapped === true ? '目录映射找到' : '自动找到')) + (wtMainOk ? '' : ' · 目录不在了') + '）')
             : h('span', { className: 'dsh-git-set-hint' }, '读不到：gitlink 配不上一个存在的目录（在下面配一个现存的目录即可）')),
         h('div', { className: 'dsh-git-set-row' },
           h('span', { className: 'dsh-git-set-label' }, '配置主目录'),

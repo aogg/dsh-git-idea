@@ -101,18 +101,75 @@ async function worktreesSnapshot(input) {
    配置（70-config.js 的 worktreeMains，按 worktree 绝对路径一钩一份），下次读数
    的 mainSource 就是 'config'，git 那头死活都不影响面板认路。
 
+   同一个洞还有第二种来路（session-f8763151 抓到的）：整棵目录树从别的机器拷来
+   —— 在 Windows 上建好的 worktree 拿到 Linux 机器上用 —— gitlink 里记的主目录是
+   **那台机器的路径**（`gitdir: D:/code/www/gs/…/.git/worktrees/x`），文件在、字也
+   对，只是这台机器上没有 D: 盘。读者比谁都知道目录搬到了哪（类似虚拟机挂载的
+   目录映射：宿主的 D:\\code 挂成了客机的 /code），所以全局配置（70-config.js 的
+   worktreeDirMappings，配置页「全局配置 → worktree」组编辑）允许他把它写成规则：
+   识别主目录时，候选路径以「原目录」开头的那一段整段替换成「替换目录」——下面
+   的 mapWorktreeDir 就是那条规则的全部。范围只到「识别」：主目录候选、身份判定
+   与显示；.git 文件本身一个字节不改（Linux 的 git 依旧读不动它，面板照旧落说明页
+   —— 但说明页上的主目录已经是本机真在的那份，跟着「打开这个目录」就能用），
+   git 调用也照旧路由到被探测的目录。
+
    边界（one directory, no discovery，62-panel.js 的教条）：只看 target 这**一个**
    目录，绝不向上找父目录 —— git rev-parse 在非仓库目录里会替你找爸爸，答出另一个
    项目的分支，所以 git 那一半全部用 `-C <target>` 显式钉死；gitlink 的文本解析也
    只匹配 `^(.*)/\.git/worktrees/[^/]+$` 这一种形状，配不上就 null，不猜。 */
 
+/* 配置里的目录映射（70-config.js 的 normalizeWorktreeDirMappings 已经洗过一遍形状：
+   数组、{id,from,to}、非空、不超限）。这里再守一次「非空字符串」的底 —— readWtMain
+   吃的是 readConfigFile 的缓存，这份函数对任何输入都得答一份能安全遍历的清单，
+   而不是假设上游永远干净（normalizeConfig 自己的老规矩：Host 是最后一道关卡）。 */
+function worktreeDirMappingsOf(config) {
+  const list = config != null && Array.isArray(config.worktreeDirMappings) ? config.worktreeDirMappings : []
+  const out = []
+  for (let i = 0; i < list.length; i += 1) {
+    const one = list[i]
+    if (one == null || typeof one !== 'object') continue
+    const from = isStr(one.from) ? one.from.trim() : ''
+    const to = isStr(one.to) ? one.to.trim() : ''
+    if (from.length === 0 || to.length === 0) continue
+    out.push({ from: from, to: to })
+  }
+  return out
+}
+
+/* 目录映射的前缀替换：path 以某条映射的 from 开头（按整段：要么恰好等于整条
+   路径，要么后面紧跟一个分隔符 —— /data 不会配上 /database）就把那一段换成 to，
+   命中第一条就停（清单的顺序就是优先级）；一条都配不上就原样送回。
+
+   Windows 的两种分隔符写法（gitdir 里的 D:/code/… 与 D:\\code\\…）在这里归一成
+   同一种再比：\\ 与 / 都是路径分隔符，别的字符照原样（包括大小写 —— 项目里没有
+   大小写不敏感的路径工具先例，D:/ 与 d:/ 就是两个目录，读者配哪个算哪个）。
+   替换侧的 to 只去尾部多余的分隔符、分隔符不做归一：它是这台机器上的路径，
+   读者怎么写的就怎么用（UNC 的 \\\\server\\share 若真被写进来，替他把 \\ 换成 /
+   反而是改了他的地址）。 */
+function mapWorktreeDir(path, mappings) {
+  if (!isStr(path) || path.length === 0 || mappings.length === 0) return path
+  const slashes = path.replace(/\\/g, '/')
+  for (let i = 0; i < mappings.length; i += 1) {
+    const from = mappings[i].from.replace(/\\/g, '/').replace(/\/+$/, '')
+    if (from.length === 0) continue
+    if (slashes !== from && slashes.indexOf(from + '/') !== 0) continue
+    const to = mappings[i].to.replace(/[\/\\]+$/, '')
+    return to + slashes.slice(from.length)
+  }
+  return path
+}
+
 /* 一次 spawn 答完所有问题（62-panel.js pathShell 同款的多路复用 stdout 标记风格；
    通道一次只跑一个处理函数，两趟便宜的不如一趟全的）。分段：
      K:   目标存在性（dir/file/none，口径同 pathShell）
      GT:  .git 的类型（dir=目录 / file=gitlink / none=没有）
-     G:   gitlink 文件的第一行原文（只有 GT:file 才有）
-     AM:  从 gitlink 文本解出的主目录候选（`^(.*)/\.git/worktrees/[^/]+$` 第 1 组）
-     AC:  [ -e "$AM/.git" ] 的答案（broken-gitlink 时 mainOk 的依据）
+     G:   gitlink 文件的第一行原文（只有 GT:file 才有；一个字节不改，Windows 的
+          D:\ 反斜杠写法也照原样发回）
+     AM:  从 gitlink 文本解出的主目录候选（`^(.*)/\.git/worktrees/[^/]+$` 第 1 组。
+          反斜杠分隔符在解析前先归一成斜杠 —— Windows 的两种写法都得能配上目录
+          映射，见函数体里那行循环的注释；G: 行不受影响）
+     AC:  [ -e "$AM/.git" ] 的答案（broken-gitlink 时 mainOk 的依据；目录映射换过
+          前缀的候选不在这行里 —— 它的存在性由 readWtMain 的补问回答）
      MC:  [ -e "<配置里记的主目录>/.git" ] 的答案（只在配置里真有值时才发这一行）
      N:   机器上没有 git（PANEL_NO_GIT 同一个标记字）
      GD:  `git rev-parse --absolute-git-dir` 的答案；GRC: 带出它的退出码
@@ -146,6 +203,11 @@ function wtMainProbeCommand(target, configured) {
     '  q=\'\'',
     '  case "$gl" in',
     '    \'gitdir: \'*) p=${gl#gitdir: }',
+    /* 反斜杠也是分隔符（Windows 的 gitdir 可能整条是 D:\code\… 的写法）：
+       逐个换成 / 再走下面的解析 —— 纯 shell 内建（case 的方括号模式认字面
+       反斜杠），不给探针添任何外部命令（「机器上没有 git」那节的夹具只给
+       head/cat）。归一只喂给 AM 的解析，上面 G: 行发的仍是文件里的原文。 */
+    '      while :; do case "$p" in *[\\\\]*) p="${p%%[\\\\]*}/${p#*[\\\\]}" ;; *) break ;; esac; done',
     '      case "$p" in */*) q=${p%/*} ;; esac',
     '    ;;',
     '  esac',
@@ -201,20 +263,25 @@ function wtMainProbeCommand(target, configured) {
        主目录=它自己）；commonDir 以 /.git 结尾 → 'linked'（mainDir auto = 去掉
        尾巴的那段）；否则 → 'bare'（mainDir auto=null）；
      · .git 是文件但 git 读不动（命令不存在 / rev-parse 失败）→ 'broken-gitlink'
-       （mainDir auto = gitlink 文本配得上的第 1 组，配不上=null）；
+       （mainDir auto = gitlink 文本配得上的第 1 组，配不上=null；这一组先过一遍
+       目录映射 —— gitlink 记的别机路径换成本机路径再当候选，见下面那段）；
      · 目录在、里面没有 .git → 'plain'。
    绝不向上找父目录；mainDir = 配置里的 ?? 自动找到的，mainSource 相应取
    'config'/'auto'，两边都没有就 null。 */
 async function readWtMain(input, repo) {
   const target = repo === undefined || repo === null ? sessionWorkdir(input) : repo
   const empty = { kind: 'missing', gitlink: '', gitdir: '', commonDir: '', toplevel: '',
-    mainDir: null, mainSource: null, configured: null, mainOk: false, worktrees: [], gitMissing: false, stderr: '' }
+    mainDir: null, mainSource: null, configured: null, mainOk: false, mainMapped: false,
+    worktrees: [], gitMissing: false, stderr: '' }
   if (!isStr(target) || target.length === 0) {
     return Object.assign({ ok: false, error: 'no-path', repo: null }, empty)
   }
   const config = await readConfigFile()
   const raw = config != null && config.worktreeMains != null ? config.worktreeMains[repoKeyOf(target)] : undefined
   const configured = isStr(raw) && raw.trim().length > 0 ? raw.trim() : null
+  /* 目录映射（全局配置 worktree 组）在读 gitlink 之前就取好：候选解出来那一刻就
+     要拿它换算，与 worktreeMains 的「配置值 ?? 自动值」同一次读里各答各的账。 */
+  const dirMappings = worktreeDirMappingsOf(config)
   /* cwd 是会话自己的工作区，不是被探测的路径 —— 目标不存在时 spawn 本身会先死，
      62-panel.js probeShell 的同一条规矩。 */
   const probe = await probeShell(input, wtMainProbeCommand(target, configured))
@@ -265,13 +332,35 @@ async function readWtMain(input, repo) {
   let kind = 'plain'
   let autoMain = null
   let autoOk = false
+  /* 主目录候选是否经过了目录映射换算（答复的 mainMapped）：只有「映射真的换了
+     前缀、且换算结果被 auto 那一档采用」才置真 —— 客户端据此把「自动找到」说成
+     「目录映射找到」，读者才追得到这个路径是哪来的。 */
+  let mainViaMapping = false
   if (dirKind === 'file') kind = 'file'
   else if (dirKind !== 'dir') kind = 'missing'
   else if (gitType === 'dir') { kind = 'main'; autoMain = target; autoOk = true }
   else if (gitType === 'file') {
     if (!gitReadable) {
       kind = 'broken-gitlink'
-      if (autoFromGitlink.length > 0) { autoMain = autoFromGitlink; autoOk = autoFromGitlinkOk }
+      /* 目录映射正是在这一格干活：gitlink 记的是别的机器的路径（Windows 的
+         D:/… 整棵拷来 Linux），前缀能配上就换成本机路径。换算候选的存在性不在
+         AM/AC 那两行里（探针生成时还不知道映射会换出什么），补一次一行的
+         probeShell 现场问 —— 与 saveWorktreeMain 验 add 的 `[ -e <它>/.git ]`
+         同一句形状。只在这里发：git 读得动的那几个 kind 里主目录是 git 自己答的
+         本机路径，映射无事可做；没配映射、或前缀配不上的读者一次都不多跑。 */
+      const mappedFromGitlink = mapWorktreeDir(autoFromGitlink, dirMappings)
+      if (autoFromGitlink.length > 0) {
+        if (mappedFromGitlink === autoFromGitlink) {
+          autoMain = autoFromGitlink
+          autoOk = autoFromGitlinkOk
+        } else {
+          const mappedCheck = await probeShell(input,
+            'if [ -e ' + shq(mappedFromGitlink) + '/.git ]; then echo repo; else echo gone; fi')
+          autoMain = mappedFromGitlink
+          autoOk = mappedCheck.stdout.trim() === 'repo'
+          mainViaMapping = true
+        }
+      }
     } else if (commonDir.length > 0 && commonDir === gitdir) {
       /* 子模块：gitlink 指向的 modules 目录就是它唯一的版本库，commonDir 与
          gitdir 重合 —— 它自己就是「主目录」。 */
@@ -288,6 +377,10 @@ async function readWtMain(input, repo) {
   let mainOk = false
   if (configured !== null) { mainDir = configured; mainSource = 'config'; mainOk = configuredOk }
   else if (autoMain !== null) { mainDir = autoMain; mainSource = 'auto'; mainOk = autoOk }
+  /* worktreeMains 里「读者亲自纠正过的答案」永远压过目录映射换算的那份：一条是
+     对着这个 worktree 手写的，一条是对着一台机器配的通用规则，撞车时具体的那条赢
+     —— 与 configured 压过 auto 同一层级的道理。 */
+  const mainMapped = configured === null && mainViaMapping
 
   /* worktrees 只在 kind 为 linked/main 且 git 读得动时解析（broken-gitlink 恒空，
      其余 kind 根本没跑 git）；main 按自动找到的主目录标（配置里改过的不参与 ——
@@ -312,6 +405,9 @@ async function readWtMain(input, repo) {
   return Object.assign({ ok: true, repo: target }, empty, {
     kind: kind, gitlink: gitlink, gitdir: gitdir, commonDir: commonDir, toplevel: toplevel,
     mainDir: mainDir, mainSource: mainSource, configured: configured, mainOk: mainOk,
+    /* mainMapped：主目录候选经过目录映射换算而来（mainSource 仍是 'auto' —— 映射
+       是「怎么自动找到」的一部分，不是读者对这个 worktree 的手动答案）。 */
+    mainMapped: mainMapped,
     worktrees: worktrees, gitMissing: gitMissing, stderr: probe.stderr.slice(0, 400),
   })
 }

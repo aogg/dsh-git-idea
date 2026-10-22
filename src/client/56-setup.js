@@ -121,13 +121,21 @@
       const configured = text(snap.configured)
       const gitlink = text(snap.gitlink)
       const broken = kind === 'broken-gitlink'
+      /* 目录映射命中的 broken（host 65-worktree.js 的 mainMapped）：.git 记的是别的
+         机器的目录，主目录是按全局配置「worktree → 目录映射」换算到本机的 —— 这时
+         「多半被删了或搬走了」不是事实，话得换成「另一台机器的目录已换算」，
+         出路（打开主目录）也已经摆在下面。 */
+      const viaMapping = snap.mainMapped === true
       return h('div', { className: 'dsh-git-setup-sub' },
         h('div', { className: 'dsh-git-setup-h' }, '这是一个 worktree（链接工作区）'),
         h('div', { className: 'dsh-git-hint' },
           broken
-            ? '这个目录的 .git 是一个链接文件' + (gitlink.length > 0 ? '（' + gitlink + '）' : '')
-              + '，它指向的主仓库读不到 —— 多半被删了或搬走了。下面的主目录配置告诉面板这个工作区属于谁；'
-              + '配置之后历史、变更、提交都照常可用，读的是配置里那个主仓库的版本库。'
+            ? (viaMapping
+              ? '这个目录的 .git 是一个链接文件' + (gitlink.length > 0 ? '（' + gitlink + '）' : '')
+                + '，里面记的是另一台机器的目录路径 —— 面板按全局配置「worktree → 目录映射」把它换算成了本机路径，主目录在下面；点「打开这个目录」即可照常使用。'
+              : '这个目录的 .git 是一个链接文件' + (gitlink.length > 0 ? '（' + gitlink + '）' : '')
+                + '，它指向的主仓库读不到 —— 多半被删了或搬走了。下面的主目录配置告诉面板这个工作区属于谁；'
+                + '配置之后历史、变更、提交都照常可用，读的是配置里那个主仓库的版本库。')
             : '这个目录的 .git 是一个链接文件' + (gitlink.length > 0 ? '（' + gitlink + '）' : '')
               + '，它自己不是独立仓库 —— 读写的都是下面这个主仓库的版本库。'),
         h('div', { className: 'dsh-git-set-row' },

@@ -105,14 +105,20 @@
         const mainDir = text(wtMainNow.mainDir)
         const hasMain = mainDir.length > 0
         const fromConfig = wtMainNow.mainSource === 'config'
+        /* mainMapped（host 65-worktree.js 的目录映射）：主目录是 gitlink 里那台别的
+           机器的路径按映射规则换算来的 —— 来源说「目录映射」而不是「自动找到」，
+           读者才追得到这个路径是哪来的（去全局配置的 worktree 组看/改规则）。 */
+        const viaMapping = wtMainNow.mainMapped === true
         const mainOk = wtMainNow.mainOk === true
         const gitlink = text(wtMainNow.gitlink)
         /* kind 含义的一句话（说明页 WorktreeMainSetup 同一文案的短版）。 */
         const kindSaid = wtMainKind === 'linked'
           ? '本目录是链接工作区：.git 是一个链接文件（' + (gitlink.length > 0 ? gitlink : 'gitlink') + '），读写的都是主仓库那头的版本库'
-          : '主仓库那头读不到（多半被删了或搬走了）：.git 还指着老地方'
+          : (viaMapping && hasMain
+            ? '主仓库那头 git 读不到：.git 记的是另一台机器的目录（' + (gitlink.length > 0 ? gitlink : 'gitlink') + '），主目录已按全局配置的「目录映射」换算到本机'
+            : '主仓库那头读不到（多半被删了或搬走了）：.git 还指着老地方')
         const tip = [
-          hasMain ? '主目录：' + mainDir + (fromConfig ? '（手动配置）' : '（自动找到）') : '主目录读不到：gitlink 配不上一个存在的目录',
+          hasMain ? '主目录：' + mainDir + (fromConfig ? '（手动配置）' : (viaMapping ? '（目录映射找到）' : '（自动找到）')) : '主目录读不到：gitlink 配不上一个存在的目录',
           kindSaid,
         ]
         if (hasMain && mainOk !== true) tip.push('这个主目录现在不存在（或里面没有 .git）—— 用「配置…」把正确路径告诉面板')
@@ -128,7 +134,7 @@
             h('span', { className: 'dsh-git-tname' }, hasMain ? repoBaseName(mainDir) : '主目录读不到'),
             h('span', { className: 'dsh-git-tsub' + (hasMain ? '' : ' dsh-git-tsub-none') },
               hasMain
-                ? (fromConfig ? '手动配置' : '自动找到') + (mainOk ? '' : ' · 目录不在了')
+                ? (fromConfig ? '手动配置' : (viaMapping ? '目录映射' : '自动找到')) + (mainOk ? '' : ' · 目录不在了')
                 : (wtMainKind === 'broken-gitlink' ? '主目录读不到' : 'bare：没有工作区可言'))),
           h('span', { key: 'r', className: 'dsh-git-wt-right' },
             hasMain && typeof props.onOpenMain === 'function'

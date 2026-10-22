@@ -61,6 +61,16 @@ function normalizeConfig(raw) {
        首帧快速通道：后端答复落地前后端为准。客户端 20-prefs.js 照 repos 的先例
        原样搬运，设置页一次整份保存不至于把这份记忆抹掉。 */
     appliedRepos: {},
+    /* worktree 的目录映射：[{id,from,to}]（65-worktree.js 识别主目录时套用）。
+       一整棵目录树从别的机器拷来时（Windows 上建好的 worktree 拿到 Linux 用），
+       .git 链接文件里记的主仓库路径是**那台机器**的（D:/code/…），这台机器的
+       git 与文件系统都读不动它 —— worktree 于是被当成 broken-gitlink。这份映射
+       就是读者替面板做的「虚拟机挂载」式翻译：识别主目录时，路径以 from 开头的
+       那一段整段换成 to（前缀匹配，D:/… 与 D:\\… 两种写法都认）。跟 repos 同一个
+       理由放这份配置而不是浏览器 localStorage：它描述的是「这台机器上目录长什么样」，
+       跟着部署走；数组形状（含稳定 id）参考 quickCommands，编辑器在客户端
+       79-globalconfig.js 的「worktree」组。 */
+    worktreeDirMappings: [],
   }
   if (raw == null || typeof raw !== 'object') return out
   if (isStr(raw.initBranch)) out.initBranch = raw.initBranch.trim().slice(0, 120)
@@ -76,6 +86,7 @@ function normalizeConfig(raw) {
   out.drafts = normalizeDrafts(raw.drafts)
   out.worktreeMains = normalizeWorktreeMains(raw.worktreeMains)
   out.appliedRepos = normalizeAppliedRepos(raw.appliedRepos)
+  out.worktreeDirMappings = normalizeWorktreeDirMappings(raw.worktreeDirMappings)
   return out
 }
 
@@ -177,6 +188,35 @@ function normalizeAppliedRepos(raw) {
     if (repo.charAt(0) !== '/' || repo.length > APPLIED_PATH_MAX) continue
     out[workspace] = repo
     kept += 1
+  }
+  return out
+}
+
+/* worktree 的目录映射清单：[{id,from,to}]。与 quickCommands 是同一条规矩的两半
+   （quickCommands 同款注释在前面）：id 是客户端起的稳定串，这里只负责「形状对、
+   不超限」—— from / to 为空的条目丢掉（映射一条腿谈不上替换），超过 50 条的截断。
+   Host 是这份文件的最后一道关卡，客户端归一化拦得住的这里也得拦得住。
+   与 worktreeMains 那批「绝对路径、以 / 开头」的清洗**刻意不同**：from 记的正是
+   别的机器的路径（Windows 的 D:/code/…），盘符开头不是错误；两边共同的口径只有
+   去首尾空白与长度 —— 4096 与 WT_MAIN_PATH_MAX 同款，是磁盘路径的边界，超长的
+   整条丢掉（quickCommands 的 name/command 是「截断」，这里不学它：路径截半截
+   会得到一个恰好匹配别处的前缀，比没有更害人）。 */
+const WORKTREE_DIR_MAPPINGS_MAX = 50
+const DIR_MAPPING_PATH_MAX = 4096
+
+function normalizeWorktreeDirMappings(raw) {
+  if (!Array.isArray(raw)) return []
+  const out = []
+  for (let i = 0; i < raw.length && out.length < WORKTREE_DIR_MAPPINGS_MAX; i += 1) {
+    const one = raw[i]
+    if (one == null || typeof one !== 'object') continue
+    const from = isStr(one.from) ? one.from.trim() : ''
+    const to = isStr(one.to) ? one.to.trim() : ''
+    if (from.length === 0 || to.length === 0) continue
+    if (from.length > DIR_MAPPING_PATH_MAX || to.length > DIR_MAPPING_PATH_MAX) continue
+    const id = isStr(one.id) && one.id.trim().length > 0 ? one.id.trim().slice(0, 200)
+      : (from + '-' + String(Date.now()))
+    out.push({ id: id, from: from, to: to })
   }
   return out
 }

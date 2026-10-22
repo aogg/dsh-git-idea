@@ -100,6 +100,13 @@
          生效仓库就全没了。原样搬运、不做清洗 —— 清洗是 Host 那边 normalizeAppliedRepos
          的职责。 */
       appliedRepos: {},
+      /* worktree 的目录映射（host 65-worktree.js 识别主目录时套用，编辑器在
+         79-globalconfig.js 的「worktree」组）。与 repos 同一条先例：配置页保存的是
+         **整份**配置，客户端的归一化把它丢了的话，读者在配置页改一次 git 路径，
+         手工配好的目录映射就全没了。原样搬运、不做清洗 —— 清洗是 Host 那边
+         normalizeWorktreeDirMappings 的职责（quickCommands 那种「两边都归一化」
+         是编辑器要当场数条数校验的特例，这里的编辑器只拦「条数」，形状交给 Host）。 */
+      worktreeDirMappings: [],
     }
     let pluginConfig = Object.assign({}, PLUGIN_CONFIG_DEFAULTS)
     let pluginConfigPath = ''
@@ -137,6 +144,10 @@
       out.worktreeMains = raw.worktreeMains != null && typeof raw.worktreeMains === 'object' && !Array.isArray(raw.worktreeMains) ? raw.worktreeMains : {}
       /* appliedRepos 同 repos/drafts/worktreeMains 一条先例：原样搬运，Host 那边负责清洗。 */
       out.appliedRepos = raw.appliedRepos != null && typeof raw.appliedRepos === 'object' && !Array.isArray(raw.appliedRepos) ? raw.appliedRepos : {}
+      /* worktreeDirMappings 是数组款的原样搬运（repos 一族是对象款）：条目形状与
+         清洗都在 Host（normalizeWorktreeDirMappings），这里只守住「不是数组就当
+         没有配置」的底。 */
+      out.worktreeDirMappings = Array.isArray(raw.worktreeDirMappings) ? raw.worktreeDirMappings : []
       return out
     }
 

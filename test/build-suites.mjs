@@ -37,6 +37,7 @@ export const SUITES = [
   ['gp60-body.mjs', 'gp60-client-test.mjs'],
   ['gp61-body.mjs', 'gp61-client-test.mjs'],
   ['gp62-body.mjs', 'gp62-client-test.mjs'],
+  ['gp63-body.mjs', 'gp63-client-test.mjs'],
   ['bench-body.mjs', 'bench.mjs'],
   ['bench-branch-body.mjs', 'bench-branch.mjs'],
 ]

@@ -718,10 +718,15 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-qc-vars{display:flex;flex-direction:column;gap:2px;padding:6px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;background:var(--dsw-alias-bg-base)}
 .dsh-git-qc-varrow{display:flex;gap:8px;font-size:11px;line-height:16px}
 .dsh-git-qc-varname{flex:none;width:180px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-.dsh-git-qc-row{display:flex;align-items:center;gap:8px;padding:3px 0}
+/* 行的声明与下面 qc 那三行共用同一组选择器（分组而不是复制，25-worktree.js 的
+   wt-row 与 repo-box 同一条先例）—— 类名另起 dsh-git-wdm- 前缀：测试按类名认
+   控件，目录映射的行与快捷命令的行各自可数。 */
+.dsh-git-wdm-row,.dsh-git-qc-row{display:flex;align-items:center;gap:8px;padding:3px 0}
 .dsh-git-qc-name{flex:none;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
 .dsh-git-qc-cmd{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:var(--dsw-alias-label-secondary)}
-.dsh-git-qc-row .dsh-git-btn{flex:none}
+.dsh-git-wdm-row .dsh-git-btn,.dsh-git-qc-row .dsh-git-btn{flex:none}
+.dsh-git-wdm-from{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:var(--dsw-alias-label-secondary)}
+.dsh-git-wdm-to{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
 .dsh-git-qc-empty{padding:6px 2px;font-size:11px;line-height:18px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dsw-alias-label-secondary)}
 .dsh-git-qc-inrow{display:flex;align-items:center;gap:8px}
 .dsh-git-qc-inhint{flex:none;width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--dsw-alias-label-secondary)}
