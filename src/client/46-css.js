@@ -444,6 +444,14 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-bs-busy{opacity:.6}
 .dsh-git-bs-ico{display:inline-flex;align-items:center;justify-content:center;flex:none;width:16px;color:var(--dsw-alias-brand-primary)}
 .dsh-git-bs-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 名字的中间截断（IDEA 的折法）：head 管前缀、tail 管最后一段，两段各自省略。
+   shrink 1000:1 让 head 先折、tail 在 head 压到 0 之后才从左侧截尾 —— 宽度够时
+   head+tail 完整显示，紧凑时 feature/…my-branch，极窄时只剩 …my-branch（比只留
+   头部强：最后一段通常才是认分支的那一段）。tail 的 rtl + 末尾 LRM（渲染处
+   branchNameSpan 里的 \u200E）让省略号长在左边、中性字符不被 rtl 挪位。 */
+.dsh-git-bs-name-mid{display:flex;min-width:0}
+.dsh-git-bs-name-mid .dsh-git-bs-name-l{flex:0 1000 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.dsh-git-bs-name-mid .dsh-git-bs-name-r{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:left}
 .dsh-git-bs-up{flex:none;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--dsw-alias-label-secondary)}
 .dsh-git-bs-ab{flex:none;font-size:11px;font-weight:600}
 /* 收藏：一个按钮，指的是高亮那一行。选中态用 warn 色，和别处的「已收藏」一致。 */

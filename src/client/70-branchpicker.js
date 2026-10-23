@@ -1,3 +1,37 @@
+    /* ── 长分支名的中间截断 ──
+
+       只留头部的省略号会把「这是哪个分支」抹掉：feature/very-long-one 与
+       feature/very-long-two 折完长得一模一样。IDEA 的折法是掐中间留两头
+       （feature/very-lo…my-branch），前缀和结尾同时看得见。拆点取最后一个
+       `/`：前缀整段做 head，最后一段做 tail。名字里没有 `/`、最后一段为空、
+       或最后一段太长（超过全名的约 45% —— 掐掉中间也省不出几个字符，折了
+       反而两头都残）时拆不出有意义的两段，返回 null 退回普通的尾部截断；
+       短名字（≤24 字符）折不折都读得全，同样返回 null。 */
+    function nameParts(name) {
+      const raw = text(name)
+      if (raw.length <= 24) return null
+      const at = raw.lastIndexOf('/')
+      if (at < 0) return null
+      const tail = raw.slice(at + 1)
+      /* 乘 100 再比，不写 0.45：这里避免小数运算，整数乘法一眼能对。 */
+      if (tail.length === 0 || tail.length * 100 > raw.length * 45) return null
+      return { head: raw.slice(0, at + 1), tail: tail }
+    }
+
+    /* 分支名那一格：拆得动就画 head+tail 两段（.dsh-git-bs-name-mid，头段尾部
+       省略、尾段左侧省略 —— 宽度够时整名可见，挤了先折头段，极窄时仍留着
+       「…最后一段」认得出分支）；拆不动保持单个文本节点的老画法。行的 props
+       不因此多出任何字段，memo 的重绘边界照旧。 */
+    function branchNameSpan(key, name) {
+      const parts = nameParts(name)
+      if (parts === null) return h('span', { key: key, className: 'dsh-git-bs-name' }, text(name))
+      return h('span', { key: key, className: 'dsh-git-bs-name dsh-git-bs-name-mid' },
+        h('span', { key: 'l', className: 'dsh-git-bs-name-l' }, parts.head),
+        /* tail 倒着省略（rtl），末尾补一个 LRM（\u200E）：rtl 行里「-」「.」
+           这类中性字符会被挪到左边去，这个零宽记号把它们按从左到右钉回原位。 */
+        h('span', { key: 'r', className: 'dsh-git-bs-name-r' }, parts.tail + '\u200E'))
+    }
+
     /* One branch row. Its own component so that a hover, a keystroke in the
        filter or a new keyboard highlight repaints the rows whose state actually
        changed instead of the whole list. */
@@ -10,7 +44,12 @@
       const upstream = text(row.upstream)
       const where = text(props.where)
       const when = branchRelative(row.committedAt)
+      /* title 第一行放全名：名字在行内折掉中段之后，完整名字只剩这里读得到
+         —— 远端行用完整 ref（带远端前缀，row.ref 只有远端行有），本地行用
+         短名。 */
+      const full = typeof row.ref === 'string' && row.ref.length > 0 ? row.ref : text(row.name)
       const tip = []
+      if (full.length > 0) tip.push(full)
       if (text(row.subject).length > 0) tip.push(text(row.subject))
       if (when.length > 0) tip.push(when)
       tip.push(trackTitle(ahead, behind))
@@ -27,7 +66,7 @@
            个样，不再有「只有当前分支换个铅笔」那种例外。 */
         h('span', { key: 'c', className: 'dsh-git-bs-cur', title: isCurrent ? '当前分支' : '' }, isCurrent ? '★' : ''),
         h('span', { key: 'i', className: 'dsh-git-bs-ico' }, h(BranchIcon, { size: 13 })),
-        h('span', { key: 'n', className: 'dsh-git-bs-name' }, name),
+        branchNameSpan('n', name),
         behind > 0 ? h('span', { key: 'b', className: 'dsh-git-bs-ab dsh-git-ab-in', title: '落后上游 ' + String(behind) + ' 个提交 —— 需要拉取' }, '↓' + (behind > 99 ? '99+' : String(behind))) : null,
         ahead > 0 ? h('span', { key: 'a', className: 'dsh-git-bs-ab dsh-git-ab-out', title: '领先上游 ' + String(ahead) + ' 个提交 —— 需要推送' }, '↑' + (ahead > 99 ? '99+' : String(ahead))) : null,
         upstream.length > 0 ? h('span', { key: 'u', className: 'dsh-git-bs-up' }, upstream)
@@ -179,7 +218,7 @@
             onClick: function () { if (props.busy !== true) props.onPick(row) },
           },
             h('span', { key: 'i', className: 'dsh-git-bs-ico' }, h(BranchIcon, { size: 13 })),
-            h('span', { key: 'n', className: 'dsh-git-bs-name' }, row.branch)))
+            branchNameSpan('n', row.branch)))
         }
       }
       return h('div', { className: 'dsh-git-picklist' },
@@ -956,7 +995,8 @@
             onPointerLeave: function () { flyCloseSoon() },
           },
             h('div', { key: 'h', className: 'dsh-git-bs-fly-head' },
-              h('span', { key: 'n', className: 'dsh-git-bs-name' }, flyName),
+              /* 这格只有 198px 宽，名字照折 —— 全名放 title 里。 */
+              h('span', { key: 'n', className: 'dsh-git-bs-name', title: flyName }, flyName),
               foundRemote === true && typeof foundRow.ref === 'string' && foundRow.ref.length > 0
                 ? h('span', { key: 'w', className: 'dsh-git-bs-up' }, foundRow.ref)
                 : null,
