@@ -116,29 +116,33 @@
 
       /* 悬停卡片的浮层定位：老 CSS（.dsh-git-switch-hover）的 bottom:100% +
          margin-bottom:8px + left:8px 换成视口坐标的同一句几何 —— 底边钉在锚点
-         （输入框卡片）上沿之上 8px、左缘从锚点左缘 +8 出发；宽度 456 的上限从
-         「卡片宽 - 16」改成按视口算，主对话被 better-sidebar 压窄也不压卡片，两端
-         收进视口 8px。锚点量不到（没有布局的极端环境）时贴视口左下，至少完整可见。 */
+         （输入框卡片）上沿之上 8px、左缘从锚点左缘 +8 出发。宽度不再由 JS 钉死：
+         left（锚点左缘 +8）和 right（视口右缘收 8px）双锚点把这张绝对定位的卡
+         夹成 shrink-to-fit，用出来的宽 = min(内容自然宽, 左右锚点之间的可用宽,
+         maxWidth) —— 最长分支名完整看得下（上限与 CSS 的 92vw/880px 同源），窄
+         视口先收到可用宽；minWidth 只保住老 456 的观感地板，视口不够时地板跟着
+         缩（280 兜底），绝不把卡推出视口。到上限才轮到行内的中间截断兜底。锚点
+         量不到（没有布局的极端环境）时贴视口左下（left=8），右缘仍有 right:8px
+         兜着，至少完整可见。 */
       let switchStyle = hoverCap !== null ? { maxHeight: hoverCap + 'px' } : undefined
       if (floated === true) {
         const probeNow = probeBox.node
         const view = gitFloatViewportOf(probeNow != null ? probeNow : chipNode)
         const anchorBox = probeNow != null ? panelAnchorBox(probeNow) : null
         const style = Object.assign(
-          { position: 'absolute', margin: '0px', right: 'auto', bottom: 'auto' },
+          { position: 'absolute', margin: '0px', bottom: 'auto' },
           switchStyle !== null && switchStyle !== undefined ? switchStyle : {})
         if (view != null) {
-          const width = Math.min(456, Math.max(view.vw - 16, 280))
-          style.width = Math.round(width) + 'px'
+          style.width = 'auto'
+          style.maxWidth = Math.round(Math.min(view.vw - 16, 880)) + 'px'
+          style.minWidth = Math.round(Math.min(456, Math.max(view.vw - 16, 280))) + 'px'
           let left = 8
           if (anchorBox != null && isFinite(parseFloat(anchorBox.left))) {
             left = parseFloat(anchorBox.left) + 8
-            if (left + width > view.vw - 8) left = view.vw - 8 - width
             if (left < 8) left = 8
-          } else if (anchorBox == null) {
-            left = (view.vw - width) / 2
           }
           style.left = String(Math.round(left)) + 'px'
+          style.right = '8px'
           const anchorTop = anchorBox != null && isFinite(parseFloat(anchorBox.top))
             ? parseFloat(anchorBox.top) : NaN
           style.bottom = String(Math.round(isFinite(anchorTop)

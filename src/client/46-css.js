@@ -398,13 +398,15 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-branch-chip{display:inline-flex;align-items:center;gap:4px;max-width:220px;flex:none;padding:2px 8px;border-radius:999px;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-primary);font-size:11px;line-height:16px;cursor:pointer;font-family:inherit}
 .dsh-git-branch-chip:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dsh-git-branch-chip-on{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}
-.dsh-git-switch{position:absolute;z-index:40;width:456px;display:flex;flex-direction:column;overflow:visible;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1);box-shadow:var(--dsw-elevation-soft);color:var(--dsw-alias-label-primary);font-size:12px}
+/* 弹窗宽度跟内容走（width:max-content）：最长的那行分支名完整看得下，
+   92vw/880px 是上限，到顶才轮到行内的中间截断兜底。 */
+.dsh-git-switch{position:absolute;z-index:40;width:max-content;max-width:min(92vw,880px);display:flex;flex-direction:column;overflow:visible;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1);box-shadow:var(--dsw-elevation-soft);color:var(--dsw-alias-label-primary);font-size:12px}
 /* Hung off the header box, not off the chip: the header spans the whole panel, so
    the card starts at the panel's own left margin however the header wraps. It is
    also capped to that box, or a panel dragged to its 420px minimum would push the
    card past its own right edge. */
-.dsh-git-switch-panel{top:calc(100% + 6px);left:8px;max-width:calc(100% - 16px)}
-.dsh-git-switch-hover{left:8px;bottom:100%;margin-bottom:8px;max-width:calc(100% - 16px)}
+.dsh-git-switch-panel{top:calc(100% + 6px);left:8px;min-width:min(456px,calc(100% - 16px));max-width:calc(100% - 16px)}
+.dsh-git-switch-hover{left:8px;bottom:100%;margin-bottom:8px;min-width:min(456px,calc(100% - 16px));max-width:calc(100% - 16px)}
 /* 悬停卡片被钳住时（.dsh-git-switch-cap，maxHeight 由 94-popover.js 实测写入）：
    卡片是 bottom:100% 从下往上长的，收的是它自己的顶。头部行和建行脚不缩，
    分支列表吃掉余下的高度自己滚 —— 列表本来就是滚动容器（max-height:330 放开，
