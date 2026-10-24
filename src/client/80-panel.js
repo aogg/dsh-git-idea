@@ -132,7 +132,7 @@
        两档共用同一套 dsh-git-set-* 排版（沿袭自原先那页设置页的样式），双栏也是
        共用的一对类（dsh-git-set-cols / dsh-git-set-col，46-css.js）。 */
 
-    /* ── 右键菜单（ContextMenu）：提交行与分支行共用的一块浮层 ──
+    /* ── 右键菜单（ContextMenu）：提交行 / 分支行 / 顶栏 ↑ 的推送菜单共用的一块浮层 ──
 
        与 ⚡ 下拉不同，它锚的是**光标**而不是触发按钮，所以没有「触发按钮也算
        里面」这回事：点在菜单外（document 捕获阶段的 pointerdown）、Escape、滚动、
@@ -165,6 +165,35 @@
         className: 'dsh-git-menu', ref: function (node) { box.node = node },
         style: { position: 'fixed', left: String(props.x) + 'px', top: String(props.y) + 'px', right: 'auto' },
       }, props.children)
+    }
+
+    /* ── 右键菜单里的二级子菜单（悬停父项，在它右侧展开）──
+
+       本体是 position:fixed 的光标锚浮层，子菜单 absolute 挂在父项右侧就够 ——
+       画法抄分支卡那批（46-css.js 的 dsh-git-menu-fly 对照 dsh-git-bs-fly，悬停
+       高亮同一枚 --dsw-alias-interactive-bg-hover）。父项与子菜单包进同一个
+       relative 的格子，onMouseLeave 挂在格子上：从父项斜着走进子菜单的路径整段
+       都在格子里，不会半路收掉。开合是格子自己的 state —— 菜单一关整个浮层卸载，
+       state 跟着没了，面板不用再记一份；菜单开着时右键另一行，pointerdown 先把
+       旧菜单整个关掉（useOutsideDismiss）再开新的，同样是崭新的格子。悬停即开
+       不加延时：右键菜单拢共几项，不是分支卡那种几百行的长列表，误触面很小。 */
+    function MenuSub(props) {
+      const [open, setOpen] = React.useState(false)
+      return h('div', {
+        className: 'dsh-git-menu-sub',
+        onMouseEnter: function () { if (props.disabled !== true) setOpen(true) },
+        onMouseLeave: function () { setOpen(false) },
+      },
+        h('button', {
+          type: 'button',
+          className: 'dsh-git-menu-item dsh-git-menu-item-sub'
+            + (open === true ? ' dsh-git-menu-item-on' : ''),
+          disabled: props.disabled === true,
+          title: props.title,
+        },
+          h('span', { className: 'dsh-git-menu-item-label' }, props.label),
+          h('span', { className: 'dsh-git-menu-sub-caret' }, h(Icon, { name: 'right', size: 10 }))),
+        open === true ? h('div', { className: 'dsh-git-menu-fly' }, props.children) : null)
     }
 
     /* ── 远程签出的二选一确认框（qc-overlay 里那块 qc-box）──
@@ -1661,21 +1690,24 @@
       const [upstreamPick, setUpstreamPick] = React.useState(null)
       /* ── 推送确认弹窗（两段式推送的第一段；PushConfirmBox 渲染）──
 
-         用户主动发起的推送（顶栏 ↑、分支行右键「推送」、右栏「推送并设为上游」）
-         都改成两段式：先开这个框列出将推的提交，点「推送」才发真正的 git/push。
-         null 关着；非 null 是 { branch, repo, setUpstream, note, preview, loading,
-         running, error }：branch/repo 是要推的分支与它的仓库（空串 = 生效仓库的
-         当前分支）；setUpstream 非 null = 这次推的是 push -u（右键推送 / 横幅在
-         打开前就把远端挑好了，顶栏 ↑ 要等预览答复才知道有没有上游）；note 是成功
-         后上成功条的话（顶栏 ↑ 与老路一致不上条）；preview / loading / running /
-         error 是框自己的读与推。92-chip.js 的「所有会话完成自动推送」是后台自动化，
-         不开这个框 —— 两段式只管人点的推送。
+         走两段式的推送（顶栏 ↑ 右键菜单与分支行右键推送子菜单里的「显示待推送
+         列表」、右栏「推送并设为上游」）先开这个框列出将推的提交，点「推送」才发
+         真正的 git/push；「直接推送 / 强制推送」不再过这道框（顶栏 ↑ 左键与分支行
+         右键的子菜单直达）。null 关着；非 null 是 { branch, repo, setUpstream,
+         note, preview, loading, running, error }：branch/repo 是要推的分支与它的
+         仓库（空串 = 生效仓库的当前分支）；setUpstream 非 null = 这次推的是
+         push -u（分支行右键 / 横幅在打开前就把远端挑好了，顶栏 ↑ 的菜单项要等预览
+         答复才知道有没有上游）；note 是成功后上成功条的话（顶栏 ↑ 的菜单项与老路
+         一致不上条）；preview / loading / running / error 是框自己的读与推。
+         92-chip.js 的「所有会话完成自动推送」是后台自动化，不开这个框 ——
+         两段式只管人点的推送。
 
-         pushBox.resolve 挂着 openPushConfirm 那个 promise 的出口：顶栏 ↑ 的
-         runSync 链靠它在弹窗收起的那一刻熄灯 —— ↑ 的转圈因此跨满整个弹窗生命期
-         （转着就点不动，顺手挡住了「弹窗开着再点一次 ↑」）；其余入口没人等这个
-         promise，接住丢掉即可。挂箱不挂 state：resolve 要在关闭动作的那一帧被
-         找到，而不是跟着某次渲染走（panelBox.refreshDone 同一个道理）。 */
+         pushBox.resolve 挂着 openPushConfirm 那个 promise 的出口：顶栏 ↑ 菜单
+         「显示待推送列表」的 runSync 链靠它在弹窗收起的那一刻熄灯 —— ↑ 的转圈
+         因此跨满整个弹窗生命期（转着就点不动，顺手挡住了「弹窗开着再点一次」）；
+         其余入口没人等这个 promise，接住丢掉即可。挂箱不挂 state：resolve 要在
+         关闭动作的那一帧被找到，而不是跟着某次渲染走（panelBox.refreshDone
+         同一个道理）。 */
       const [pushConfirm, setPushConfirm] = React.useState(null)
       /* 「编辑提交消息…」的对话框（reword）：null 关着；非 null 是 { hash, head,
          message, loaded, running, error } —— head 是菜单体检答复里那份 HEAD（reword
@@ -3220,19 +3252,21 @@
         })
       }
 
-      /* 推送：有上游 → 按上游的远端 -u 重申着推（无害）；无上游 → 远端取 origin
-         （若存在）否则仓库唯一远端，同样 -u 推送并把上游绑过去（与「修改跟踪分支…」
-         呼应）。仓库没有远端、或多远端而分支没有上游时，不发请求 —— 这两件事
-         菜单替读者猜不出来，提示条把出路（「修改跟踪分支…」）指给他。远端清单从
-         树同源的那份 refs 数据里拿，不为这一次推送新发请求。 */
+      /* 推送（子菜单「显示待推送列表」这条确认路）：有上游 → 按上游的远端 -u 重申
+         着推（无害）；无上游 → 远端取 origin（若存在）否则仓库唯一远端，同样 -u
+         推送并把上游绑过去（与「修改跟踪分支…」呼应）。仓库没有远端、或多远端而
+         分支没有上游时，不发请求 —— 这两件事菜单替读者猜不出来，提示条把出路
+         （「修改跟踪分支…」）指给他。远端清单从树同源的那份 refs 数据里拿，不为
+         这一次推送新发请求。直接推（不弹框）走 ctxPushDirect，在下面。 */
       /* ── 两段式推送：先弹确认框，点「推送」才真推 ──
 
-         四个入口都汇到 openPushConfirm：顶栏 ↑（当前分支、生效仓库）、分支行右键
-         「推送」的两条路（有上游按上游的远端 -u 重申；无上游挑好远端 -u 绑定）、
-         右栏横幅「推送并设为上游」。打开前就知道远端的入口把 setUpstream 带着进来
+         三个入口都汇到 openPushConfirm：顶栏 ↑ 右键菜单的「显示待推送列表」（当前
+         分支、生效仓库）、分支行右键推送子菜单的「显示待推送列表」（ctxPush 的
+         两条路原样：有上游按上游的远端 -u 重申；无上游挑好远端 -u 绑定）、右栏
+         横幅「推送并设为上游」。打开前就知道远端的入口把 setUpstream 带着进来
          （PushConfirmBox 直接说将执行什么）；顶栏 ↑ 不带 —— 有没有上游要等预览
-         答复。返回的 promise 在弹窗收起时才落定：顶栏 ↑ 的 runSync 链等它熄灯，
-         其余入口没人等。
+         答复。返回的 promise 在弹窗收起时才落定：顶栏 ↑ 菜单项的 runSync 链等它
+         熄灯，其余入口没人等。
 
          「没有上游」时框里按 ctxPush 原来那套规矩现猜远端（guessPushRemote：origin
          优先 → 唯一远端 → 都不满足就不猜）：猜得出就给「推送并设为上游」的确认
@@ -3489,9 +3523,10 @@
           })
       }
 
-      /* 推送：两段式之后这里不再直接推。远端挑好就开确认框（openPushConfirm），
-          真正的推送在读者点「推送」之后由 pushConfirmRun 发 —— 命令与从前一次
-          不差，只是隔了一道确认。 */
+      /* 推送（子菜单「显示待推送列表」的确认路）：这里不直接推。远端挑好就开确认
+          框（openPushConfirm），真正的推送在读者点「推送」之后由 pushConfirmRun
+          发 —— 命令与从前一次不差，只是隔了一道确认。不弹框的「直接推送 / 强制
+          推送」走下面的 ctxPushDirect。 */
       const ctxPush = function (name, repo) {
         const data = text(repo).length > 0 ? repoRefs[repo] : refs
         const upstream = upstreamOfBranch(name, repo)
@@ -3520,6 +3555,44 @@
           return
         }
         openPushConfirm(name, repo, { remote: chosen, branch: name }, '已推送 ' + name + ' 并绑定上游 ' + chosen + '/' + name)
+      }
+
+      /* ── 分支行右键「直接推送 / 强制推送」（不弹确认框的那条新路）──
+
+         确认框（ctxPush → openPushConfirm）管「推之前先看一眼」；这里管「我知道
+         要推什么，别拦我」。远端按 ctxPush 的同一套规矩挑：先取上游
+         （upstreamOfBranch）斜杠前的那段 —— 分支跟着谁就推给谁；没有上游按
+         guessPushRemote 现猜（origin 优先 → 仓库唯一远端）；都挑不出沿用 ctxPush
+         的两句原话 setError，不发请求。推的是 git/push 带 {remote, branch}
+         （Host 拼成 refspec 推送，不带 -u —— 改上游绑定是「显示待推送列表」那条
+         确认路的专属，直接推不顺手改别人的跟踪关系）。走 ctxRun：仓库落在右键
+         那一行自己的仓库上（多选分组里各是各的），失败错误条直接可见 —— 与拉取/
+         变基这些菜单动作同一条规矩。 */
+      const ctxPushDirect = function (name, repo, force) {
+        const upstream = upstreamOfBranch(name, repo)
+        if (upstream === null) {
+          setError('读不到分支数据，无法判断 ' + name + ' 的上游 —— 等分支列表读出来再推')
+          return
+        }
+        const data = text(repo).length > 0 ? repoRefs[repo] : refs
+        let remote = ''
+        if (upstream.length > 0) {
+          const slash = upstream.indexOf('/')
+          remote = slash > 0 ? upstream.slice(0, slash) : upstream
+        } else {
+          remote = guessPushRemote(data)
+        }
+        if (remote.length === 0) {
+          const remotes = data != null && data.ok === true && Array.isArray(data.remote) ? data.remote : []
+          setError(remotes.length === 0
+            ? '这个仓库没有配置远端，无法推送 ' + name
+            : '该分支没有上游，仓库有多个远端，请先用「修改跟踪分支…」指定远端')
+          return
+        }
+        const payload = force === true
+          ? { remote: remote, branch: name, force: true }
+          : { remote: remote, branch: name }
+        ctxRun('git/push', payload, repo, '推送失败')
       }
 
       /* ── 多选的清空与修剪 ──
@@ -3947,6 +4020,9 @@
           disabled: opts.disabled === true,
           title: running ? title + '（运行中…）' : title,
           onClick: onClick,
+          /* 右键菜单（目前只有 ↑ 用）：与左键同走 options 一格递进来，没给的键是
+             undefined —— React 视同没有这个 handler，其余四键一字不变。 */
+          onContextMenu: opts.onContextMenu,
         }, parts)
       }
 
@@ -3975,20 +4051,30 @@
         tool('rebase', '↷', 'rebase 更新：先 fetch 再把当前分支变基到上游（git pull --rebase，无视 pull.rebase 配置）',
           function () { runSync('rebase', function () { return runOp('git/pull', { rebase: true }, 'pull') }) },
           { disabled: !repoOk || syncRunningKey('rebase'), running: syncRunningKey('rebase') }),
-        /* 两段式：↑ 先开推送确认框（openPushConfirm 的 promise 在弹窗收起时才落定，
-            runSync 链因此把 ↑ 的转圈与再点保护跨满整个弹窗生命期）。detached 时
-            没有分支名可确认，预览也无从谈起 —— 照旧直接推，git 自己的原话
-            （You are not currently on a branch）上错误条，行为一字不变。 */
-        tool('push', '↑', 'push：推送当前分支（先弹确认框列出要推的提交）', function () {
-          runSync('push', function () {
-            if (currentName.length === 0) return runOp('git/push', null, 'push')
-            /* repo 必须带上生效仓库：留空会让确认框的推送回落到会话工作区 ——
-               工作区嵌套仓库时（外层 dsh 仓库无远端），refspec 天书就是这么来的
-               （读分支用的是嵌套真仓库、推送却跑去了外层）。 */
-            return openPushConfirm(currentName, appliedRepo, null, '')
-          })
+        /* ↑ 单击 = 直接推当前分支（git push，推哪、跟谁由分支自己的 upstream 与
+            git 的 push.default 说了算），确认框不再是左键的第一站 —— 想先看一眼
+            将推哪些提交的，右键选「显示待推送列表」。detached（游离 HEAD）没有
+            分支名可确认，照旧直接推，git 自己的原话（You are not currently on a
+            branch）上错误条 —— 与旧路同一句。runSync 照旧：转圈、再点保护、失败
+            上错误条（runOp 的 syncKey 路），强推只是多带 force:true。右键在光标处
+            弹 kind='push' 的上下文菜单（ctxPushItems），与提交/分支行共用同一块
+            ContextMenu 浮层 —— 光标锚定、点外/Esc/滚动/resize 关闭全是白拿的。 */
+        tool('push', '↑', 'push：推送当前分支（右键：直接推送 / 强制推送 / 显示待推送列表）', function () {
+          runSync('push', function () { return runOp('git/push', null, 'push') })
         },
-          { disabled: !repoOk || syncRunningKey('push'), running: syncRunningKey('push'), badge: ahead }))
+          { disabled: !repoOk || syncRunningKey('push'), running: syncRunningKey('push'), badge: ahead,
+            onContextMenu: function (event) {
+              /* 拦掉浏览器自带菜单的规矩与提交行/分支行同一条（preventDefault +
+                 stopPropagation）；仓库没读出来时左键本来就是禁的，右键也不开菜单。 */
+              event.preventDefault()
+              event.stopPropagation()
+              if (repoOk !== true) return
+              setCtxMenu({
+                kind: 'push',
+                x: event != null && typeof event.clientX === 'number' ? event.clientX : 0,
+                y: event != null && typeof event.clientY === 'number' ? event.clientY : 0,
+              })
+            } }))
 
       const branchTitle = (currentName.length > 0 ? currentName : 'HEAD')
         + (ahead > 0 ? ' · 领先 ' + String(ahead) : '')
@@ -4973,6 +5059,55 @@
         }
         return ''
       })()
+      /* ── 顶栏 ↑ 的右键菜单内容（kind === 'push'）──
+
+         左键已经直接推，右键把「怎么推」的三个变体摆在光标处：直接推送与左键同一条
+         runSync 路（git push，进「命令」页、失败上错误条、↑ 转圈照旧）；强制推送
+         是同一目标多带 force:true（Host 拼 --force-with-lease，远端被人先推过时
+         拒绝）；两段式确认框收进「显示待推送列表」—— 想先看清单的人从这里进，
+         框自己的行为（预览、推送中锁框、失败留框内）一字不变。detached 时
+         currentName 是空串，确认框列不出「哪个分支的哪些提交」，这一项置灰并把
+         原因写在 title 里。禁用条件与 ↑ 按钮自己对齐（repoOk / 正在推）。 */
+      const pushSyncGuard = !repoOk || syncRunningKey('push')
+      const ctxPushItems = ctxMenu === null || ctxMenu.kind !== 'push' ? [] : [
+        h('button', {
+          key: 'direct', type: 'button', className: 'dsh-git-menu-item',
+          title: 'git push：推送当前分支（与左键单击同一条路）',
+          disabled: pushSyncGuard,
+          onClick: function (event) {
+            stopEvent(event)
+            setCtxMenu(null)
+            runSync('push', function () { return runOp('git/push', null, 'push') })
+          },
+        }, '直接推送'),
+        h('button', {
+          key: 'force', type: 'button', className: 'dsh-git-menu-item',
+          title: 'git push --force-with-lease：覆盖远端，但远端在本地不知情时又被人推过就拒绝 —— 比裸 --force 诚实',
+          disabled: pushSyncGuard,
+          onClick: function (event) {
+            stopEvent(event)
+            setCtxMenu(null)
+            runSync('push', function () { return runOp('git/push', { force: true }, 'push') })
+          },
+        }, '强制推送'),
+        h('button', {
+          key: 'list', type: 'button', className: 'dsh-git-menu-item',
+          title: currentName.length === 0
+            ? '游离 HEAD 没有分支名，列不出待推送的提交'
+            : '先弹确认框列出要推的提交，点「推送」才真推',
+          disabled: currentName.length === 0 || pushSyncGuard,
+          onClick: function (event) {
+            stopEvent(event)
+            setCtxMenu(null)
+            runSync('push', function () {
+              /* repo 必须带上生效仓库：留空会让确认框的推送回落到会话工作区 ——
+                 工作区嵌套仓库时（外层 dsh 仓库无远端），refspec 天书就是这么来的
+                 （读分支用的是嵌套真仓库、推送却跑去了外层）。 */
+              return openPushConfirm(currentName, appliedRepo, null, '')
+            })
+          },
+        }, '显示待推送列表'),
+      ]
       const ctxCommitItems = ctxMenu === null ? [] : ctxMenu.kind === 'commit' ? [
         h('button', {
           key: 'pick', type: 'button', className: 'dsh-git-menu-item', disabled: !canAct,
@@ -5068,7 +5203,9 @@
             })
           },
         }, '复制 Hash'),
-      ] : [
+      /* 只认 kind === 'branch'：kind='push' 的菜单在 ctxPushItems 里，别让分支
+         这串兜底把它的空 ctxMenu.name 拼进 title（那一串会先求值再被丢掉）。 */
+      ] : ctxMenu.kind === 'branch' ? [
         /* ── 分支行右键菜单（PhpStorm 的分栏顺序：动作在上，元信息居中，破坏性在下）──
 
            本地（含 HEAD 组的行）：签出 → 新建分支… → 拉取 → 变基 → 推送 →
@@ -5145,18 +5282,46 @@
             else ctxRun('git/sequence', { op: 'rebase', action: 'start', targets: [ctxMenu.name] }, ctxMenu.repo, '变基失败')
           },
         }, '变基'),
-        ctxMenu.remote === true ? null : h('button', {
-          key: 'push', type: 'button', className: 'dsh-git-menu-item',
-          title: 'git push -u <远端> ' + ctxMenu.name
-            + '：有上游按上游的远端推；没有上游绑 origin（或唯一远端）推'
-            + ' —— 先弹确认框列出要推的提交，点「推送」才真推',
-          disabled: busy === true,
-          onClick: function (event) {
-            stopEvent(event)
-            setCtxMenu(null)
-            ctxPush(ctxMenu.name, ctxMenu.repo)
-          },
-        }, '推送'),
+        /* 推送（本地行）：父项悬停展开右侧子菜单（MenuSub），三个变体 —— 直接
+            推送 / 强制推送（都不弹框，ctxPushDirect 按上游或 origin/唯一远端挑好
+            目标就发）；显示待推送列表（ctxPush 的老路：确认框照旧留着 -u / 设上游
+            那套路数）。远端行没有这一项 —— 推送是本地分支才有的事。 */
+        ctxMenu.remote === true ? null : h(MenuSub, {
+          key: 'push', label: '推送', disabled: busy === true,
+          title: '推送：悬停展开 —— 直接推送 / 强制推送 / 显示待推送列表',
+        },
+          h('button', {
+            key: 'direct', type: 'button', className: 'dsh-git-menu-item',
+            title: 'git push <远端> ' + ctxMenu.name + '：不弹确认框直接推 —— '
+              + '远端取这个分支的上游（没有上游猜 origin 或仓库唯一远端）',
+            disabled: busy === true,
+            onClick: function (event) {
+              stopEvent(event)
+              setCtxMenu(null)
+              ctxPushDirect(ctxMenu.name, ctxMenu.repo, false)
+            },
+          }, '直接推送'),
+          h('button', {
+            key: 'force', type: 'button', className: 'dsh-git-menu-item',
+            title: 'git push --force-with-lease <远端> ' + ctxMenu.name + '：覆盖远端，'
+              + '但远端在本地不知情时又被人推过就拒绝 —— 比裸 --force 诚实',
+            disabled: busy === true,
+            onClick: function (event) {
+              stopEvent(event)
+              setCtxMenu(null)
+              ctxPushDirect(ctxMenu.name, ctxMenu.repo, true)
+            },
+          }, '强制推送'),
+          h('button', {
+            key: 'list', type: 'button', className: 'dsh-git-menu-item',
+            title: '先弹确认框列出要推的提交（有上游按上游 -u 重申，没有上游挑远端 -u 绑定），点「推送」才真推',
+            disabled: busy === true,
+            onClick: function (event) {
+              stopEvent(event)
+              setCtxMenu(null)
+              ctxPush(ctxMenu.name, ctxMenu.repo)
+            },
+          }, '显示待推送列表')),
         /* 合并到当前分支（本地行）：把右键的这个分支合入当前分支。快进与否由 git
             按默认规矩定；--no-ff 款总是造一条合并提交 —— 分叉在图上一眼看得出来
             处，代价是多一条提交，两个决定都摆出来让读者挑。已站在这个分支上时
@@ -5256,7 +5421,7 @@
                   disabled: ctxMenu.name === currentName || ctxBusy === true || busy === true,
                   onClick: function (event) { stopEvent(event); setCtxArm(ctxMenu.name); setCtxForce('') },
                 }, '删除分支'),
-      ]
+      ] : []
 
       /* ── 文件右键菜单的内容（kind === 'file'）──
 
@@ -5535,13 +5700,15 @@
               }))
           : null,
         /* 右键菜单：光标锚的浮层（position:fixed）。挂在面板根部 —— 与 ⚡ 的下拉
-            不同它不属于任何一格，开关只随 ctxMenu。内容按种类二选一：提交行菜单
-            （ctxCommitItems）与文件/目录行菜单（ctxFileItems，61-filemenu.js 造）。 */
+            不同它不属于任何一格，开关只随 ctxMenu。内容按种类三选一：提交行菜单
+            （ctxCommitItems）、顶栏 ↑ 的推送菜单（ctxPushItems）与文件/目录行菜单
+            （ctxFileItems，61-filemenu.js 造）。 */
         ctxMenu !== null
           ? h(ContextMenu, {
               key: 'ctx', open: true, x: ctxPos.left, y: ctxPos.top,
               onClose: function () { setCtxMenu(null) },
-            }, ctxMenu.kind === 'file' ? ctxFileItems : ctxCommitItems)
+            }, ctxMenu.kind === 'file' ? ctxFileItems
+              : ctxMenu.kind === 'push' ? ctxPushItems : ctxCommitItems)
           : null)
     }
 

@@ -524,6 +524,13 @@ onRpc('git/pull', async function (input) {
 onRpc('git/push-preview', function (input) { return pushPreviewSnapshot(input) })
 
 onRpc('git/push', async function (input) {
+  /* force === true → --force-with-lease 插在 argv 头部（普通 / refspec / -u 三条
+     路都认）。选 --force-with-lease 而不是裸 --force：它带着「我出发时看到的远端
+     现状」去推，远端在这之后又被人推过（别人的新提交上来了）就当场拒绝 —— 强推
+     会覆盖远端历史，覆盖必须是一次知情的决定；租约让这次决定撞上新事实时停下来
+     重看一眼，比裸 --force 一把梭诚实。 */
+  const forced = input != null && input.force === true
+  const argv = forced ? ['push', '--force-with-lease'] : ['push']
   if (input != null && input.setUpstream === true) {
     const remote = input != null && isStr(input.remote) && input.remote.trim().length > 0 ? input.remote.trim() : ''
     const branch = input != null && isStr(input.branch) ? input.branch.trim() : ''
@@ -548,9 +555,33 @@ onRpc('git/push', async function (input) {
         stderr: '本地没有分支 ' + branch + ' —— 它可能已被删除、或只在远端存在，也可能当前打开的不是项目所在仓库。请在分支列表右键它选「签出」建本地分支后再推。',
       }
     }
-    return panelMutate(input, ['push', '-u', remote, branch], { net: true, spawn: NET_SPAWN, desc: '推送' })
+    return panelMutate(input, forced ? ['push', '--force-with-lease', '-u', remote, branch] : ['push', '-u', remote, branch], { net: true, spawn: NET_SPAWN, desc: '推送' })
   }
-  return panelMutate(input, ['push'], { net: true, spawn: NET_SPAWN, desc: '推送' })
+  /* refspec 推送（分支行右键「直接推送 / 强制推送」）：setUpstream 不是 true、但
+     remote 与 branch 都给了 → `git push <remote> <branch>` —— 推哪个分支、推给谁
+     都说死了，不碰上游绑定（-u 是「显示待推送列表」那条确认路的专属，直接推不顺
+     手改别人的跟踪关系）。两个名字各过一遍 cleanRefHalf（-u 路同一把刀）：非法给
+     bad-value 的人话，不甩 refspec 天书。只给了 remote / branch 中的一个也进这里
+     挡下来 —— 剩下那个被悄悄丢掉、请求退化成「推当前分支」比拒绝更骗人。本地没有
+     这个分支的预检沿用 -u 路那条 show-ref：refspec 的第一参数就是分支名，缺了它
+     git 报的还是 `src refspec ... does not match any` 那句天书 —— 2026-10-15 的
+     事故同一课，探针答得出来的失败先用人话说。 */
+  if (input != null && (input.remote != null || input.branch != null)) {
+    const remote = isStr(input.remote) ? cleanRefHalf(input.remote) : ''
+    const branch = isStr(input.branch) ? cleanRefHalf(input.branch) : ''
+    if (remote === null || branch === null || remote.length === 0 || branch.length === 0) {
+      return { ok: false, error: 'bad-value', stderr: '按远端推送需要合法的远端名与分支名：两者都要给、不能为空、不能以 - 开头、不能含控制字符' }
+    }
+    const probe = await git(argsFor(input), ['show-ref', '--verify', '--quiet', 'refs/heads/' + branch], null, {})
+    if (probe.exitCode === 1) {
+      return {
+        ok: false, error: 'branch-missing', repo: probe.cwd,
+        stderr: '本地没有分支 ' + branch + ' —— 它可能已被删除、或只在远端存在，也可能当前打开的不是项目所在仓库。请在分支列表右键它选「签出」建本地分支后再推。',
+      }
+    }
+    return panelMutate(input, argv.concat([remote, branch]), { net: true, spawn: NET_SPAWN, desc: '推送' })
+  }
+  return panelMutate(input, argv, { net: true, spawn: NET_SPAWN, desc: '推送' })
 })
 
 /* cherry-pick, revert, merge and rebase share one entry point because they also

@@ -718,6 +718,17 @@ textarea.dsh-git-input{resize:vertical}
 /* 快捷命令那行：名字 + 代值预览各占一行 —— 一行塞下两条信息时预览先被挤没。 */
 .dsh-git-menu-cmd{flex-direction:column;align-items:flex-start;gap:1px}
 .dsh-git-menu-cmd .dsh-git-menu-dim{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 右键菜单的二级子菜单（80-panel.js 的 MenuSub，分支行右键「推送」在用）：父项与
+    子菜单包在同一个 relative 的格里，子菜单 absolute 挂父项右侧 —— 画法抄分支卡
+    那批 dsh-git-bs-fly（-6px 的左探让父项与子菜单视觉上连成一片，同款观感）；
+    悬停高亮与菜单项 hover 同一枚 interactive-bg-hover，开着的父项用 -on 保持住。
+    越界收进视口从简：菜单本体在光标处开，一般离右缘有距离。 */
+.dsh-git-menu-sub{position:relative;display:flex;flex-direction:column}
+.dsh-git-menu-item-sub{flex:none}
+.dsh-git-menu-item-on{background:var(--dsw-alias-interactive-bg-hover)}
+.dsh-git-menu-item-label{flex:none}
+.dsh-git-menu-sub-caret{display:inline-flex;flex:none;margin-left:auto;color:var(--dsw-alias-label-secondary)}
+.dsh-git-menu-fly{position:absolute;left:calc(100% - 6px);top:-4px;z-index:1;min-width:170px;padding:4px;display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1);box-shadow:var(--dsw-elevation-soft);color:var(--dsw-alias-label-primary);font-size:12px}
 
 /* Ctrl+点击挑进多选的提交行：左缘一道强调条 —— 选中行是整行底色，多选得在选中之外
     另有可区分的记号（两者可同时在一行上）。整行底色与 .dsh-git-crow-sel 同一个：
