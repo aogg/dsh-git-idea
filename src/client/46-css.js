@@ -56,6 +56,20 @@
 .dsh-git-lf-flag{flex:none;padding:1px 5px;border:0;border-radius:4px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;line-height:18px;cursor:pointer}
 .dsh-git-lf-flag:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dsh-git-lf-flag.dsh-git-lf-on{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);font-weight:600}
+/* 分支范围的浮动下拉（80-panel.js 的 BranchScopeSelect）：原生 select 的下拉列表
+    宽度跟着触发器走，长分支名在列表里也一样读不全 —— 列表换成 position:fixed 的
+    面板，坐标由打开时的 getBoundingClientRect 算（js 管定位，这里只管样子）。
+    宽度 max-content 自适应最宽的分支名，92vw/560px 封顶再省略号；高度沿用现有
+    列表滚动容器的 330px 档（分支卡 body 同款），内部自己滚。画法照 dsh-git-menu
+    （border-l1 + 圆角 8 + layer-1 + elevation-soft，12px 字号），行 hover 与键盘
+    高亮同 var(--dsw-alias-interactive-bg-hover)，当前选中项另给 ✓ 记号。 */
+.dsh-git-lfsel-btn{appearance:none;-webkit-appearance:none;-moz-appearance:none;border:0;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:11px;font-family:inherit;padding:0;flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;cursor:pointer;outline:none}
+.dsh-git-lfsel{position:fixed;z-index:45;width:max-content;max-width:min(92vw,560px);padding:4px;display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1);box-shadow:var(--dsw-elevation-soft);color:var(--dsw-alias-label-primary);font-size:12px}
+.dsh-git-lfsel-list{position:relative;display:flex;flex-direction:column;overflow-y:auto;max-height:330px}
+.dsh-git-lfsel-item{display:flex;align-items:center;gap:4px;width:100%;box-sizing:border-box;padding:5px 8px;border:0;border-radius:5px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:16px;text-align:left;cursor:pointer;white-space:nowrap;overflow:hidden}
+.dsh-git-lfsel-item:hover,.dsh-git-lfsel-item-hl{background:var(--dsw-alias-interactive-bg-hover)}
+.dsh-git-lfsel-mark{display:inline-block;flex:none;width:13px;color:var(--dsw-alias-brand-primary);font-size:11px;line-height:16px}
+.dsh-git-lfsel-name{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
 .dsh-git-lclear{flex:none;padding:1px 6px;border:0;border-radius:4px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;cursor:pointer}
 .dsh-git-lclear:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .dsh-git-count{position:absolute;right:8px;top:5px;flex:none;font-size:11px;line-height:26px}

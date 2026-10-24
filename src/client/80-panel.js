@@ -196,6 +196,217 @@
         open === true ? h('div', { className: 'dsh-git-menu-fly' }, props.children) : null)
     }
 
+    /* ── 日志工具条的「分支范围」筛选：触发器 + 浮动下拉面板 ──
+
+       之前是原生 <select>，它的下拉列表宽度跟着触发器走 —— 触发器再放宽，列表里
+       的长分支名照样被截成省略号。现在列表是 position:fixed 的浮动面板：宽度
+       max-content 自适应最宽的分支名（46-css.js 的 .dsh-git-lfsel，92vw/560px
+       封顶再省略号），不再受触发器宽度限制；触发器保持原来「分支：值 + caret + ×」
+       的窄样子（宽度仍由调用方用 lfWidth 量给 style）。
+
+       定位抄 ContextMenu：打开时量触发器的视口坐标，面板放在正下方 4px，左右钳进
+       视口（8px 边距），下方放不下且上方放得下才翻到上方；面板自身的宽高要挂载后
+       才量得到，所以 clamp 用的都是实际值，useLayoutEffect 赶在上屏前改完，看不见
+       0,0 的那一帧。面板根节点在宽度拖拽动画那阵带着 translateX，fixed 后代的包含
+       块会变成面板根 —— 那时坐标换成相对面板的，与 ctxMenuPos 同一套换法。
+
+       关闭也抄 ContextMenu 的全套：点外面（useOutsideDismiss，触发按钮也算里面，
+       否则点它会先关后开）、Esc、document 捕获阶段的滚动（面板自己列表内的滚动
+       目标在面板里，不算滚走）与 window resize。选中即关。键盘：↑/↓ 循环移高亮、
+       Enter 选中并关闭，高亮初始落在当前选中项并滚进可视区；键盘事件接在触发器与
+       面板两处（行按钮不抢焦点，指针路径不受影响），Esc 由 useOutsideDismiss 管。
+
+       选中语义一字不改地交给 props.onPick（原 select onChange 的那套：换范围必清
+       选中提交），× 的清除走 props.onClear。 */
+    function BranchScopeSelect(props) {
+      const [open, setOpen] = React.useState(false)
+      const [highlight, setHighlight] = React.useState(-1)
+      const [place, setPlace] = React.useState({ left: 0, top: 0 })
+      const [trigger] = React.useState(function () { return { node: null } })
+      const [box] = React.useState(function () { return { node: null } })
+      const [listBox] = React.useState(function () { return { node: null } })
+      useOutsideDismiss(open, function () { setOpen(false) }, [box, trigger])
+      /* 滚动与 resize 都算「面板离开了它该在的位置」，一并关掉；面板自己列表内的
+          滚动目标在面板里，照 ContextMenu 的判法放行 —— 长列表才读得下去。 */
+      React.useEffect(function () {
+        if (open !== true) return undefined
+        const doc = panelNode != null ? panelNode.ownerDocument : null
+        if (doc == null || typeof doc.addEventListener !== 'function') return undefined
+        const gone = function (event) {
+          const target = event != null && event.target != null ? event.target : null
+          const self = box.node
+          if (self != null && typeof self.contains === 'function' && target != null
+            && typeof target.nodeType === 'number' && self.contains(target) === true) return
+          setOpen(false)
+        }
+        doc.addEventListener('scroll', gone, true)
+        const view = doc.defaultView
+        if (view != null && typeof view.addEventListener === 'function') view.addEventListener('resize', gone)
+        return function () {
+          doc.removeEventListener('scroll', gone, true)
+          if (view != null && typeof view.removeEventListener === 'function') view.removeEventListener('resize', gone)
+        }
+      }, [open])
+      /* 打开即定位：打开那一次渲染后面板已挂载（ref 已落），量触发器与面板的实际
+          宽高再算坐标；量不到 DOM（测试环境）就停在 0,0，不炸。 */
+      useLayoutEffect(function () {
+        if (open !== true) return undefined
+        const node = trigger.node
+        if (node == null || typeof node.getBoundingClientRect !== 'function') return undefined
+        const rect = node.getBoundingClientRect()
+        let left = parseFloat(rect.left)
+        let top = parseFloat(rect.bottom) + 4
+        const panel = box.node
+        const width = panel != null && typeof panel.offsetWidth === 'number' ? panel.offsetWidth : 0
+        const height = panel != null && typeof panel.offsetHeight === 'number' ? panel.offsetHeight : 0
+        const doc = node.ownerDocument
+        const view = doc != null ? doc.defaultView : null
+        if (view != null && typeof view.innerWidth === 'number') {
+          /* 靠右越界的收回来（8px 边距）；面板比视口还宽时钳到左缘同一条线上。 */
+          const vw = parseFloat(view.innerWidth)
+          if (left + width > vw - 8) left = vw - 8 - width
+          if (left < 8) left = 8
+          /* 下方装不下而上方装得下才翻上去 —— 上方只是「更多空」时不翻，免得
+             面板明明放得下还跳到头顶去。两头都装不下时留在下方，列表自己滚。 */
+          const vh = parseFloat(view.innerHeight)
+          if (top + height > vh - 8) {
+            const above = parseFloat(rect.top) - 4 - height
+            if (above >= 8) top = above
+          }
+        }
+        /* 面板根带 transform（宽度拖拽动画那阵）时 fixed 坐标换成相对面板的
+            （同 ctxMenuPos）。getComputedStyle 在没有布局的环境可能拿不到 ——
+            量不到就按没 transform 处理，跟 ctxMenuPos 的兜底一致。 */
+        let shifted = false
+        const root = panelNode
+        if (root != null && typeof root.getBoundingClientRect === 'function'
+          && view != null && typeof view.getComputedStyle === 'function') {
+          try {
+            shifted = view.getComputedStyle(root).transform !== 'none'
+          } catch (error) {
+            shifted = false
+          }
+        }
+        if (shifted === true) {
+          const rootRect = root.getBoundingClientRect()
+          left -= parseFloat(rootRect.left)
+          top -= parseFloat(rootRect.top)
+        }
+        setPlace(function (previous) {
+          if (previous.left === left && previous.top === top) return previous
+          return { left: left, top: top }
+        })
+        return undefined
+      }, [open])
+      /* 高亮行滚进可视区：打开（高亮 = 当前选中项）与 ↑/↓ 挪动都要。手算 scrollTop
+          而不用 scrollIntoView —— 后者会把整条祖先链一起滚，外层文档跟着动，工具条
+          就被顶出视野了。列表是 position:relative（.dsh-git-lfsel-list），行的
+          offsetTop 才是相对列表自己的。 */
+      React.useEffect(function () {
+        if (open !== true || highlight < 0) return undefined
+        const list = listBox.node
+        if (list == null || list.children == null) return undefined
+        const row = list.children[highlight]
+        if (row == null || typeof row.offsetTop !== 'number' || typeof list.scrollTop !== 'number') return undefined
+        const top = row.offsetTop
+        const bottom = top + row.offsetHeight
+        if (top < list.scrollTop) list.scrollTop = top
+        else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight
+        return undefined
+      }, [open, highlight])
+      const close = function () { setOpen(false) }
+      const pickAt = function (at) {
+        const option = props.options[at]
+        close()
+        if (option != null) props.onPick(option.value)
+      }
+      const moveBy = function (delta) {
+        setHighlight(function (previous) {
+          const count = props.options.length
+          if (count === 0) return -1
+          return ((previous < 0 ? 0 : previous) + delta + count) % count
+        })
+      }
+      const onKey = function (event) {
+        if (open !== true) return
+        const key = event != null ? event.key : null
+        if (key === 'ArrowDown' || key === 'ArrowUp') {
+          if (typeof event.preventDefault === 'function') event.preventDefault()
+          moveBy(key === 'ArrowDown' ? 1 : -1)
+        } else if (key === 'Enter') {
+          if (typeof event.preventDefault === 'function') event.preventDefault()
+          if (highlight >= 0) pickAt(highlight)
+        }
+      }
+      const toggle = function () {
+        if (open === true) { close(); return }
+        let at = 0
+        for (let i = 0; i < props.options.length; i += 1) {
+          if (props.options[i].value === props.value) { at = i; break }
+        }
+        setHighlight(at)
+        setOpen(true)
+      }
+      const rows = props.options.map(function (option, at) {
+        const picked = option.value === props.value
+        /* 行里放完整名（props.options 的 label 是给触发器的短标签，title 才是全名
+            —— 不截断正是这个面板存在的理由）；没有全名的（例如当前分支还没读到）
+            退回短标签。超宽的行由面板的 max-width 兜底，省略号 + title 收尾。 */
+        const full = option.title != null && option.title.length > 0 ? option.title : option.label
+        return h('button', {
+          key: 'o:' + option.value, type: 'button',
+          className: 'dsh-git-lfsel-item'
+            + (picked === true ? ' dsh-git-lfsel-item-on' : '')
+            + (at === highlight ? ' dsh-git-lfsel-item-hl' : ''),
+          title: option.title,
+          onClick: function (event) { stopEvent(event); pickAt(at) },
+          /* 悬停即接管高亮：指针与键盘共用一份高亮，Enter 选中的才是眼睛看着的那行。 */
+          onMouseEnter: function () { setHighlight(at) },
+        },
+          h('span', { key: 'm', className: 'dsh-git-lfsel-mark' }, picked === true ? '✓' : ''),
+          h('span', { key: 'n', className: 'dsh-git-lfsel-name' }, full))
+      })
+      return h('label', { className: 'dsh-git-lf dsh-git-lf-on', title: props.hint },
+        h('span', { className: 'dsh-git-lf-k' }, '分支：'),
+        h('button', {
+          type: 'button', className: 'dsh-git-lfsel-btn',
+          style: props.widthStyle,
+          title: props.title,
+          ref: function (node) { trigger.node = node },
+          onClick: toggle,
+          onKeyDown: onKey,
+        }, props.label),
+        h('span', { className: 'dsh-git-lf-caret' }, h(Icon, { name: 'down', size: 10 })),
+        /* × 与旧 select 时代同款（stopEvent + preventDefault）：preventDefault 拦的是
+            label 把点击转发给触发器那一下 —— 不拦的话 × 一下面板又被打开。 */
+        props.scoped === true ? h('button', {
+          type: 'button', className: 'dsh-git-lf-x', title: '清除分支筛选',
+          onClick: function (event) {
+            stopEvent(event)
+            if (event != null && typeof event.preventDefault === 'function') event.preventDefault()
+            props.onClear()
+          },
+        }, '×') : null,
+        open === true
+          ? h('div', {
+              key: 'panel', className: 'dsh-git-lfsel',
+              style: { left: String(place.left) + 'px', top: String(place.top) + 'px' },
+              ref: function (node) { box.node = node },
+              onKeyDown: onKey,
+              /* 面板垫在 label 里，点面板空白处的那下点击会被 label 按规矩转发给
+                  触发器，面板就被自己关掉了 —— 一律 preventDefault 掉这个转发。 */
+              onClick: function (event) {
+                stopEvent(event)
+                if (event != null && typeof event.preventDefault === 'function') event.preventDefault()
+              },
+            },
+              h('div', {
+                key: 'list', className: 'dsh-git-lfsel-list',
+                ref: function (node) { listBox.node = node },
+              }, rows))
+          : null)
+    }
+
     /* ── 远程签出的二选一确认框（qc-overlay 里那块 qc-box）──
 
        右键「远程」组的分支点「签出」、本地同名分支已存在时开它。两个出口都切到
@@ -3907,11 +4118,11 @@
 
       const currentBranch = graph != null && graph.ok === true ? text(graph.currentBranch) : (refs != null && refs.ok === true && refs.current.length > 0 ? refs.current[0] : '')
       const branchValue = allRefs ? '@all' : (activeRef.length > 0 ? activeRef : '@current')
-      /* Short labels: this select now sits inside an inline "分支：…" trigger, so
+      /* Short labels: the branch trigger sits inside an inline "分支：…" cell, so
          "当前分支（main）" would be the widest thing in the toolbar. */
-      /* A native select cannot ellipsize — it cuts the glyph in half — so a long
-         branch name is shortened in the label itself, with the full name in the
-         option's title. */
+      /* 触发器里只放短标签（原生 select 时代留下的习惯：太长的名字会被裁半截字形，
+         不如主动收短）；完整名在 title 里，也在浮动下拉面板的行里 —— 分支列表
+         显示全名正是 BranchScopeSelect（本文件上方）要解决的问题。 */
       const shortRef = function (name) { return name.length > 12 ? name.slice(0, 11) + '…' : name }
       const branchOptions = [
         { value: '@current', label: '当前' + (currentBranch.length > 0 ? ' ' + shortRef(currentBranch) : ''), title: currentBranch },
@@ -4125,9 +4336,10 @@
          showing: with the arrow suppressed that left "作者：mays" floating in a
          112px box with the caret and the × parked at the far end. Sizing the
          control to the label it currently displays keeps the three together.
-         cap 是每条控件自己的上限：作者/时间还是 132；分支范围单独放宽到 300 ——
-         分支名动辄二十几个字符，132px 只装得下一个省略号，而原生下拉弹层的宽度
-         跟着 select 走，弹层里一样读不全。 */
+         cap 是每条控件自己的上限：作者/时间还是 132；分支范围也是从这套量出来
+         （触发器给 300）—— 但它的下拉列表已经是浮动面板（BranchScopeSelect），
+         宽度自适应最宽的分支名，不再受触发器宽度限制；300 现在只管触发器关着时
+         那个短标签，长名靠省略号 + title 兜住。 */
       const labelWidth = function (label, cap) {
         let w = 0
         for (let i = 0; i < label.length; i += 1) w += label.charCodeAt(i) > 0x2e80 ? 11.5 : 6.3
@@ -4179,32 +4391,31 @@
         }
       }
       const branchScoped = allRefs || activeRef.length > 0
-      const branchFilter = h('label', {
-        key: 'f:branch', className: 'dsh-git-lf dsh-git-lf-on', title: '分支范围：历史只显示这个分支能到达的提交',
-      },
-        h('span', { key: 'k', className: 'dsh-git-lf-k' }, '分支：'),
-        h('select', {
-          key: 's', className: 'dsh-git-lf-select',
-          /* 分支范围单独放宽（见 labelWidth 的 cap）：作者/时间仍是 132。关着时长名
-             以省略号收尾（CSS 的 text-overflow:ellipsis），悬停这里能看到完整名。 */
-          style: lfWidth(branchLabel, 300), value: branchValue,
-          title: branchFull != null && branchFull.length > 0 ? branchFull : '当前分支',
-          onChange: function (event) {
-            const next = event.target.value
-            setSelectedKey(null)
-            if (next === '@all') { setAllRefs(true); setActiveRef('') }
-            else if (next === '@current') { setAllRefs(false); setActiveRef('') }
-            else { setAllRefs(false); setActiveRef(next) }
-          },
-        }, branchOptions.map(function (option) {
-          return h('option', { key: option.value, value: option.value, title: option.title }, option.label)
-        })),
-        lfCaret,
-        /* × returns the graph to its default scope — the current branch — rather
-           than to "everything": that is the view the panel opens with. */
-        branchScoped ? lfClear('x', '分支', function () {
+      /* 分支范围的触发器 + 浮动下拉面板（本文件上方的 BranchScopeSelect）。选中
+          语义与旧 select 的 onChange 一字不改：换范围必清选中提交 —— 历史都换一套
+          了，旧的高亮没有继续成立的意义。× 回到默认范围（当前分支），照旧。 */
+      const pickBranchScope = function (next) {
+        setSelectedKey(null)
+        if (next === '@all') { setAllRefs(true); setActiveRef('') }
+        else if (next === '@current') { setAllRefs(false); setActiveRef('') }
+        else { setAllRefs(false); setActiveRef(next) }
+      }
+      const branchFilter = h(BranchScopeSelect, {
+        key: 'f:branch',
+        options: branchOptions,
+        value: branchValue,
+        scoped: branchScoped,
+        label: branchLabel,
+        title: branchFull != null && branchFull.length > 0 ? branchFull : '当前分支',
+        /* 触发器的宽度仍是 lfWidth 那套（cap 300 只管关着时的短标签，见 labelWidth
+            的注释）；面板自己的宽度走 CSS 的 max-content，不吃这个数。 */
+        widthStyle: lfWidth(branchLabel, 300),
+        hint: '分支范围：历史只显示这个分支能到达的提交',
+        onPick: pickBranchScope,
+        onClear: function () {
           setSelectedKey(null); setAllRefs(false); setActiveRef('')
-        }) : null)
+        },
+      })
 
       const authorOn = author.length > 0
       const authorFilter = h('label', {

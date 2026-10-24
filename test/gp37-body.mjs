@@ -35,7 +35,9 @@ ok('分支筛选一直显示「分支：」', textOf(byClass(t, 'dsh-git-lf')[0]
 ok('未设置时只显示字段名（作者/时间/路径）', byClass(t, 'dsh-git-lf').slice(1).map(textOf).join('|').indexOf('：') < 0)
 ok('分支触发器用短标签（当前 main）', textOf(byClass(t, 'dsh-git-lf')[0]).indexOf('当前 main') > 0
   && textOf(byClass(t, 'dsh-git-lf')[0]).indexOf('当前分支（') < 0)
-ok('筛选用的是无边框 select/input', byClass(t, 'dsh-git-lf-select').length === 3 && byClass(t, 'dsh-git-lf-input').length === 1)
+ok('作者/时间还是无边框 select、路径是 input，分支换成了浮动面板的触发器',
+  byClass(t, 'dsh-git-lf-select').length === 2 && byClass(t, 'dsh-git-lf-input').length === 1
+  && byClass(t, 'dsh-git-lfsel-btn').length === 1)
 /* 只看中间栏这条工具栏：面板头部那组同步按钮也是 .dsh-git-tool */
 const toolBar = byClass(t, 'dsh-git-tools')[0]
 console.log('  这条工具栏里的 .dsh-git-tool:', JSON.stringify(byClass(toolBar, 'dsh-git-tool').map((b) => b.props.title)))
@@ -65,14 +67,16 @@ ok('搜索框不再是越大越好（上限收到 260 以内）', searchMax > 0 
 ok('下拉不再写死宽度（改为按当前显示的值量宽）', selectRule.indexOf('max-width') < 0)
 ok('下拉关着时长名以省略号收尾（cap 放宽后靠它兜住）', selectRule.indexOf('text-overflow:ellipsis') >= 0)
 
-/* 具体到数字：把四个筛选都设上，量几个控件自己的宽度之和 */
+/* 具体到数字：把四个筛选都设上，量几个控件自己的宽度之和。
+   分支范围不再是 select（浮动面板的触发器是 dsh-git-lfsel-btn），select 只剩
+   作者/时间两个，下标整体前移。 */
 const setFilter = async (i, value) => {
   byClass(t, 'dsh-git-lf-select')[i].props.onChange({ target: { value: value } })
   await wait(10)
   t = await settle('pop')
 }
-await setFilter(1, 'mays@example.com')
-await setFilter(2, 'week')
+await setFilter(0, 'mays@example.com')
+await setFilter(1, 'week')
 byClass(t, 'dsh-git-lf-input')[0].props.onChange({ target: { value: 'src/main/java' } })
 await wait(5)
 t = await settle('pop')
@@ -80,24 +84,26 @@ byClass(t, 'dsh-git-lf-input')[0].props.onKeyDown({ key: 'Enter', preventDefault
 await wait(10)
 t = await settle('pop')
 const trigW = byClass(t, 'dsh-git-lf-select').map((s) => Number(String(s.props.style.width).replace('px', '')))
+const brW = Number(String(byClass(t, 'dsh-git-lfsel-btn')[0].props.style.width).replace('px', ''))
 const pathW = Number(String(byClass(t, 'dsh-git-lf-input')[0].props.style.width).replace('px', ''))
-console.log('  触发器宽度:', JSON.stringify(trigW), ' 路径框:', pathW, ' 合计:', trigW.reduce((a, b) => a + b, 0) + pathW)
-ok('四个筛选控件宽度之和 < 320px（选了条件也不会把行撑爆）', trigW.reduce((a, b) => a + b, 0) + pathW < 320)
+console.log('  触发器宽度:', JSON.stringify(trigW), ' 分支触发器:', brW, ' 路径框:', pathW,
+  ' 合计:', trigW.reduce((a, b) => a + b, 0) + brW + pathW)
+ok('四个筛选控件宽度之和 < 320px（选了条件也不会把行撑爆）', trigW.reduce((a, b) => a + b, 0) + brW + pathW < 320)
 ok('短值的下拉会缩到贴合文字（mays 不再是 112px 空框）', (function () {
-  const authorSel = byClass(t, 'dsh-git-lf-select')[1]
+  const authorSel = byClass(t, 'dsh-git-lf-select')[0]
   return Number(String(authorSel.props.style.width).replace('px', '')) < 60
 })())
-ok('作者/时间的下拉仍以 132 封顶（放宽只属于分支范围）', trigW[1] <= 132 && trigW[2] <= 132)
-ok('分支范围这一格在分支自己的 cap（300）之内', trigW[0] <= 300)
+ok('作者/时间的下拉仍以 132 封顶（放宽只属于分支范围）', trigW[0] <= 132 && trigW[1] <= 132)
+ok('分支触发器这一格在分支自己的 cap（300）之内', brW <= 300)
 /* 工具栏一行要装下的东西：⚡ 一个 26px 键 + 分隔线 + 搜索框最小宽
    + 四个触发器的标签前缀 + 它们各自的控件 + 条数预留的位置 + 间距 */
 const chrome = 1 * 26 + 3 + 7 + 80 + (22 * 4) + 80 + 12 * 3
-console.log('  固定部分:', chrome, 'px  控件:', trigW.reduce((a, b) => a + b, 0) + pathW, 'px')
-ok('筛选全设上也只要 ~600px 出头（常见宽度下仍是一行）', chrome + trigW.reduce((a, b) => a + b, 0) + pathW < 660)
+console.log('  固定部分:', chrome, 'px  控件:', trigW.reduce((a, b) => a + b, 0) + brW + pathW, 'px')
+ok('筛选全设上也只要 ~600px 出头（常见宽度下仍是一行）', chrome + trigW.reduce((a, b) => a + b, 0) + brW + pathW < 660)
 
 /* 收工：把筛选清掉，后面的用例假设没有筛选 */
-await setFilter(1, '')
-await setFilter(2, 'all')
+await setFilter(0, '')
+await setFilter(1, 'all')
 byClass(t, 'dsh-git-lf-input')[0].props.onChange({ target: { value: '' } })
 await wait(5)
 t = await settle('pop')
@@ -178,7 +184,8 @@ ok('点三角之后选中的还是标题行', String(groupRow(t, '本地').props
 
 console.log('')
 console.log('== 每个筛选自己带 × 清除 ==')
-const clearBranch = byClass(t, 'dsh-git-lf')[0].props.children.filter((c) => c != null && c.type === 'button')[0]
+/* 分支那格的第一个 button 现在是触发器本身（浮动面板的开关），× 要按类名找。 */
+const clearBranch = byClass(byClass(t, 'dsh-git-lf')[0], 'dsh-git-lf-x')[0]
 ok('分支筛选上有 ×', clearBranch !== undefined)
 if (clearBranch !== undefined) {
   clearBranch.props.onClick({ stopPropagation() {} })
@@ -190,14 +197,14 @@ if (clearBranch !== undefined) {
 
 console.log('')
 console.log('== 作者 / 时间 / 路径三个触发器都会进 history 查询 ==')
-const authorSelect = byClass(t, 'dsh-git-lf-select')[1]
+const authorSelect = byClass(t, 'dsh-git-lf-select')[0]
 authorSelect.props.onChange({ target: { value: 'mays@example.com' } })
 await wait(15)
 t = await settle('pop')
 ok('选作者后 history 带上 author', lastGraph().args.author === 'mays@example.com')
 ok('作者触发器变成「作者：」前缀', textOf(byClass(t, 'dsh-git-lf')[1]).indexOf('作者：') === 0)
 
-const dateSelect = byClass(t, 'dsh-git-lf-select')[2]
+const dateSelect = byClass(t, 'dsh-git-lf-select')[1]
 dateSelect.props.onChange({ target: { value: 'week' } })
 await wait(15)
 t = await settle('pop')
@@ -243,10 +250,11 @@ ok('× 之后 history 不再带 search', lastGraph().args.search === undefined)
 ok('× 之后搜索框空了', byClass(t, 'dsh-git-logsearch-input')[0].props.value === '')
 
 console.log('')
-console.log('== 分支范围筛选单独放宽：cap 300，关着时 title 给全名 ==')
-/* 分支名动辄二十几个字符，132px 只装得下一个省略号，原生下拉的弹层宽度还跟着
-   select 走。分支筛选的上限单独放宽到 300，作者/时间仍以 132 封顶 —— 用一个长
-   中文名把「破得了 132、破不了 300」和 title 全名一起钉住。 */
+console.log('== 分支范围：触发器 cap 300、关着时 title 给全名，列表是浮动面板 ==')
+/* 分支名动辄二十几个字符，132px 只装得下一个省略号 —— 下拉列表已经换成浮动面板
+   （BranchScopeSelect），宽度自适应最宽的分支名；触发器沿用 lfWidth 那套
+   （cap 300），作者/时间仍以 132 封顶 —— 用一个长中文名把「破得了 132、
+   破不了 300」和触发器上的 title 全名一起钉住。 */
 const wideSavedCall = host.call
 const longBranch = '这是个相当长的中文分支名字用例'
 host.call = function (method, args) {
@@ -265,12 +273,13 @@ await wait(15)
 const wideSettled = await settle('pop')
 host.call = wideSavedCall
 const wideSelects = byClass(wideSettled, 'dsh-git-lf-select')
-const wideW = Number(String(wideSelects[0].props.style.width).replace('px', ''))
-console.log('  长分支名下:', wideW + 'px  title:', JSON.stringify(wideSelects[0].props.title))
+const wideTrigger = byClass(wideSettled, 'dsh-git-lfsel-btn')[0]
+const wideW = Number(String(wideTrigger.props.style.width).replace('px', ''))
+console.log('  长分支名下:', wideW + 'px  title:', JSON.stringify(wideTrigger.props.title))
 ok('长分支名撑破 132（旧上限装不下它）', wideW > 132)
-ok('但仍在分支自己的 300 之内', wideW <= 300)
-ok('select 的 title 是完整分支名（关着也能悬停读全名）', wideSelects[0].props.title === longBranch)
-ok('作者/时间在这里仍是 132 封顶', wideSelects.slice(1)
+ok('但触发器仍在分支自己的 300 之内', wideW <= 300)
+ok('触发器的 title 是完整分支名（关着也能悬停读全名）', wideTrigger.props.title === longBranch)
+ok('作者/时间在这里仍是 132 封顶', wideSelects
   .every((s) => Number(String(s.props.style.width).replace('px', '')) <= 132))
 /* 重挂过后 t 必须跟着换新树：旧树上的 handler 还攥着旧 fiber 的 setter，
    对它触发事件只会把状态写进一棵已经没人渲染的死树。 */
@@ -370,12 +379,12 @@ fresh = await settle('pop')
 
 console.log('')
 console.log('== 重新读历史：选中的还在就保留，不在了就清空 ==')
-byClass(fresh, 'dsh-git-lf-select')[1].props.onChange({ target: { value: 'mays@example.com' } })
+byClass(fresh, 'dsh-git-lf-select')[0].props.onChange({ target: { value: 'mays@example.com' } })
 await wait(15)
 fresh = await settle('pop')
 ok('筛选导致重读后，选中的提交还在', crowSel().length === 1 && textOf(crowSel()[0]).indexOf('second commit') >= 0)
 graphCommits = graphCommits.filter((c) => c.hash !== 'bbb222')
-byClass(fresh, 'dsh-git-lf-select')[1].props.onChange({ target: { value: '' } })
+byClass(fresh, 'dsh-git-lf-select')[0].props.onChange({ target: { value: '' } })
 await wait(15)
 fresh = await settle('pop')
 ok('选中那行被筛掉后，没有自动改选别的', crowSel().length === 0)
