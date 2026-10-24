@@ -301,8 +301,11 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-set{display:flex;flex-direction:column;gap:14px;padding:4px 2px;max-width:660px}
 .dsh-git-set-h{font-size:14px;font-weight:600}
 /* 面板的「配置」页（80-panel.js）住在面板正文里：设置页那套排版照搬，外层改成
-   「占满正文、自己滚」—— 面板的高度是钳出来的，内容超出时滚，不把面板撑变形。 */
-.dsh-git-config{flex:1;min-height:0;overflow:auto;padding:10px 12px}
+   「占满正文、自己滚」—— 面板的高度是钳出来的，内容超出时滚，不把面板撑变形。
+   max-width:none：主体改成左右双栏（dsh-git-set-cols）之后要吃满面板正文宽，
+   不再沿用 .dsh-git-set 的 660px 单列上限 —— 基础规则本身不动，只在配置页这一档
+   放开。 */
+.dsh-git-config{flex:1;min-height:0;overflow:auto;padding:10px 12px;max-width:none}
 /* 「配置」页顶部的作用域切换（80-panel.js GitConfigPane）：项目配置 / 全局配置。
    记号用头部视图切换同一套 .dsh-git-cview，只是这一排自己占一行、贴左，不再
    margin-left:auto 挤到行尾。 */
@@ -329,23 +332,45 @@ textarea.dsh-git-input{resize:vertical}
     提交哈希同一习惯。 */
 .dsh-git-set-url{flex:1 1 200px;min-width:0;word-break:break-all;font-family:ui-monospace,monospace}
 /* ── 项目档的「仓库」外框（80-panel.js GitConfigPane）──
-    受切换仓库影响的三组（提交身份 / 远端 / 换行符）收进「仓库」一组内：外框只是
-    一道描边、底色不填 —— 里面的仓库列表（dsh-git-repo-box）自带 layer-2 浅底，外框
-    再填一层浅底两块就糊在一起了。切换器在外框里当头一块；三个下级组再收进
-    scope-body：左缩进一道竖线，树子级的读法 —— 这三块属于上面选中的那个仓库。
-    组头原本有 margin/padding/border-top 三件套分隔，在外框与 scope-body 的首行
-    （紧贴自己容器的上缘）会画出双线，:first-child 让掉；其余组头照旧，下级组之间
-    的分隔线原样保留。缩进只吃 padding 不吃 min-width，面板拖窄时行照旧换行不破。 */
+    受切换仓库影响的下级组（提交身份 / 远端 / 换行符，链接工作区再加 worktree
+    主目录，末尾还有只读的 git 忽略项）收进「仓库」一组内：外框只是一道描边、
+    底色不填 —— 里面的仓库列表（dsh-git-repo-box）自带 layer-2 浅底，外框再填
+    一层浅底两块就糊在一起了。切换器在外框里当头一块；下级组再收进 scope-body：
+    左缩进一道竖线，树子级的读法 —— 这几块属于上面选中的那个仓库。组头原本有
+    margin/padding/border-top 三件套分隔，在外框、scope-body 与两列各自的列顶
+    （紧贴自己容器的上缘）会画出双线，:first-child 让掉；其余组头照旧，组与组
+    之间的分隔线原样保留。缩进只吃 padding 不吃 min-width，面板拖窄时行照旧
+    换行不破。 */
 .dsh-git-set-scope{display:flex;flex-direction:column;gap:14px;margin-top:6px;padding:10px 10px 12px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px}
+/* scope-body 本体是纵排 flex，margin-top/padding-left/border-left 三件是竖线缩进。
+   项目档给它再挂一个 dsh-git-set-cols —— 那条规则排在本条之后，display/gap 同
+   特异性、后者赢，纵排就换成了 grid；竖线缩进的三件那条规则不设，原样保留。 */
 .dsh-git-set-scope-body{display:flex;flex-direction:column;gap:14px;margin-top:2px;padding-left:12px;border-left:2px solid var(--dsw-alias-border-l2)}
+/* ── 配置页的双栏容器（两档共用）──
+    项目档套在 scope-body 上（80-panel.js），全局档（79-globalconfig.js）直接当
+    .dsh-git-global 的一个孩子。grid + repeat(auto-fit, minmax(360px,1fr))：面板
+    正文放不下两个 360px 的列时 auto-fit 自动叠回单列，窄面板不用 JS 量宽；行距
+    沿用组间 14px 的老节奏，列距放宽到 28px，两列读起来分得开。align-items:start
+    —— 左右两列各按内容收高，矮的一列不留一截空白。列内（dsh-git-set-col）恢复
+    纵排 flex；min-width:0 必须给 —— 不给的话列里的长输入框/长地址会把 grid
+    单元格撑破，双栏就塌回去了。 */
+.dsh-git-set-cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:14px 28px;align-items:start}
+.dsh-git-set-col{display:flex;flex-direction:column;gap:14px;min-width:0}
+/* flush 规则跟着双栏长了一截：两列各自的第一个组头同样贴着列顶，不一起让掉的
+    话列顶会悬一条孤立的分隔线。全局档右列的组（git 位置 / 换行符 / 提交身份）
+    根上还各有组件自己的包装 div，直接子级选择器够不着 —— 「列的首个孩子的第一个
+    组头」这条再往里探一层。 */
 .dsh-git-set-scope > .dsh-git-set-group:first-child,
-.dsh-git-set-scope-body > .dsh-git-set-group:first-child{margin-top:0;padding-top:0;border-top:0}
+.dsh-git-set-scope-body > .dsh-git-set-group:first-child,
+.dsh-git-set-scope-body > .dsh-git-set-col > .dsh-git-set-group:first-child,
+.dsh-git-set-col > .dsh-git-set-group:first-child,
+.dsh-git-set-col > :first-child > .dsh-git-set-group:first-child{margin-top:0;padding-top:0;border-top:0}
 /* 配置页「worktree 主目录」下级组（80-panel.js wtGroupNode）：整组条件渲染，画出来
-   时是 scope-body 里与提交身份/远端/换行符同级的一格 —— 外面再包一层自己的纵列
-   （scope-body 的 gap 对包装层是一个整体），内部节奏与同级组一致（组头 → 说明 →
-   两行）。首组让双线的 :first-child 规则同样适用于这层包装。 */
+   时在 scope-body 左列里与提交身份/换行符同级 —— 外面再包一层自己的纵列（列的
+   gap 对包装层是一个整体），内部节奏与同级组一致（组头 → 说明 → 两行）。首组让
+   双线的 :first-child 规则同样适用于这层包装。 */
 .dsh-git-wtmain{display:flex;flex-direction:column;gap:8px}
-.dsh-git-set-scope-body > .dsh-git-wtmain > .dsh-git-set-group:first-child{margin-top:0;padding-top:0;border-top:0}
+.dsh-git-set-col > .dsh-git-wtmain > .dsh-git-set-group:first-child{margin-top:0;padding-top:0;border-top:0}
 /* ── 配置页「仓库」组内「git 忽略项」分组（80-panel.js GitIgnoredScanGroup）──
     工作树 → 条目 两层的只读清单（单仓库结果里没有仓库这层）。类名另起
     dsh-git-ign- 前缀，不混仓库块 / 工作树块的 dsh-git-repo-box/-row、
