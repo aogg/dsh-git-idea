@@ -646,36 +646,47 @@
       const actions = []
       for (let i = 0; i < actionDefs.length; i += 1) if (hit(actionDefs[i].label) || hit(actionDefs[i].short)) actions.push(actionDefs[i])
 
+      /* 悬停弹出的那张卡（mode:'hover'）不列远端：它是对话输入框上顺手一停的
+         快速切换，分组只有「最近 / 本地」，搜索、收藏与键盘导航都只在这两群里
+         找行（收藏只给已列出的行排序、不自己造行，data.branches 又只装本地
+         分支，所以收藏了远端分支也不会在这里漏出一行）。面板里那张卡
+         （mode:'panel'）照旧收远端，pull 的远端分支选择层（RemotePickList）
+         也不受影响。 */
+      const showRemoteGroups = props.mode !== 'hover'
       /* 「远端」按远端分组：一个远端一组（origin 优先，其余按名字排），组内
          行的画法不变（短名 + 行尾小字写远端名）。Host 那边每条远端分支都在
          （不再因本地同名而剔除），这里照收 —— 两个远端的同名分支各自成行，
          谁也不藏谁。 */
       const remoteBuckets = {}
       const remoteNames = []
-      for (let i = 0; i < remoteAll.length; i += 1) {
-        const one = remoteAll[i]
-        const remoteName = one != null ? text(one.remote) : ''
-        if (remoteName.length === 0) continue
-        if (remoteBuckets[remoteName] === undefined) {
-          remoteBuckets[remoteName] = []
-          remoteNames.push(remoteName)
+      if (showRemoteGroups) {
+        for (let i = 0; i < remoteAll.length; i += 1) {
+          const one = remoteAll[i]
+          const remoteName = one != null ? text(one.remote) : ''
+          if (remoteName.length === 0) continue
+          if (remoteBuckets[remoteName] === undefined) {
+            remoteBuckets[remoteName] = []
+            remoteNames.push(remoteName)
+          }
+          remoteBuckets[remoteName].push(one)
         }
-        remoteBuckets[remoteName].push(one)
+        remoteNames.sort(function (a, b) {
+          if (a === 'origin') return -1
+          if (b === 'origin') return 1
+          return a < b ? -1 : (a > b ? 1 : 0)
+        })
       }
-      remoteNames.sort(function (a, b) {
-        if (a === 'origin') return -1
-        if (b === 'origin') return 1
-        return a < b ? -1 : (a > b ? 1 : 0)
-      })
 
       const groups = []
       if (recentRows.length > 0) groups.push({ id: 'recent', label: '最近', rows: recentRows, remote: false })
       groups.push({ id: 'local', label: '本地', rows: localRows, remote: false })
-      for (let i = 0; i < remoteNames.length; i += 1) {
-        const remoteName = remoteNames[i]
-        const remoteGroupRows = ordered(remoteBuckets[remoteName])
-        if (remoteGroupRows.length > 0) {
-          groups.push({ id: 'remote:' + remoteName, label: '远端 · ' + remoteName, remoteName: remoteName, rows: remoteGroupRows, remote: true })
+      if (showRemoteGroups) {
+        for (let i = 0; i < remoteNames.length; i += 1) {
+          const remoteName = remoteNames[i]
+          const remoteGroupRows = ordered(remoteBuckets[remoteName])
+          if (remoteGroupRows.length > 0) {
+            groups.push({ id: 'remote:' + remoteName, label: '远端 · ' + remoteName, remoteName: remoteName, rows: remoteGroupRows, remote: true })
+          }
         }
       }
 
