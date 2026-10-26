@@ -167,6 +167,8 @@ console.log('=== 两服务可见（ACTIVE）：边沿→防抖→推送，全程
   sesTick.cb()
   check('true→false 边沿：挂上 2 秒防抖', pendingTimeouts(a).length === 1)
   fireTimeout(pendingTimeouts(a)[0])
+  /* 完成那一拍先作废宿主读缓存再推送（gp67），作废是异步的 —— 等推送落地再断言。 */
+  await until(() => pushes.some((p) => p.kind === 'session-complete' && p.sessionId === 'session-gp64'), 'session-complete 推送')
   const done = pushes.filter((p) => p.kind === 'session-complete' && p.sessionId === 'session-gp64')
   check('防抖到点：推 session-complete', done.length === 1)
   check('可见时全程没有「看不到」日志', a.logged.length === 0)
@@ -222,6 +224,7 @@ console.log('=== 服务迟到（PENDING→ACTIVE）：下一拍自动恢复 + �
   sesTick.cb()
   check('边沿重新有效：挂上防抖', pendingTimeouts(a).length === 1)
   fireTimeout(pendingTimeouts(a)[0])
+  await until(() => pushes.some((p) => p.kind === 'session-complete' && p.sessionId === 'session-gp64'), 'session-complete 推送')
   check('迟到到位后 session-complete 照推', pushes.some((p) => p.kind === 'session-complete' && p.sessionId === 'session-gp64'))
   check('「重新看到 agents」一条', backLogs(a, 'agents').length === 1)
   check('「看不到」没有新增', missingLogs(a, 'sessions').length === 1 && missingLogs(a, 'agents').length === 1)

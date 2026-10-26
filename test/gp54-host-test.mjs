@@ -210,6 +210,9 @@ console.log('=== 会话完成：true→false 边沿 + 2s 防抖 ===')
   intervalOf(a, 1500).cb()
   check('再次 idle：重新挂起 2 秒防抖', liveTimeouts(a).length === 1)
   fireTimeout(liveTimeouts(a)[0])
+  /* 完成那一拍现在先作废宿主读缓存再推送（gp67：关着下次打开必是新账），作废是
+   * 异步的 —— 推送晚几个微任务落地，等它到了再断言。 */
+  await until(() => livePushes(pushes, 'session-complete').length === 1, 'session-complete 推送')
   check('防抖到点 → 推送 {kind:"session-complete", sessionId:"sa"}',
     livePushes(pushes, 'session-complete').length === 1 && livePushes(pushes, 'session-complete')[0].sessionId === 'sa')
   intervalOf(a, 1500).cb()
