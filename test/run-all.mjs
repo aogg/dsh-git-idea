@@ -52,6 +52,7 @@ const COUNTING = [
   'gp62-client-test.mjs',
   'gp63-client-test.mjs',
   'gp67-client-test.mjs',
+  'gp74-client-test.mjs',
 ]
 /* Suites that report by exit code and print their own lines. */
 const PROSE = ['gp34a-host-test.mjs', 'gp34d-config-test.mjs', 'gp34e-bridge-test.mjs', 'gp45-host-test.mjs', 'gp48-safedir-host-test.mjs', 'gp49-host-test.mjs', 'gp50-host-test.mjs', 'gp51-host-test.mjs', 'gp53-host-test.mjs', 'gp54-host-test.mjs', 'gp54-client-test.mjs', 'gp55-filesave-host-test.mjs', 'gp56-host-test.mjs', 'gp57-host-test.mjs', 'gp58-host-test.mjs', 'gp61-host-test.mjs', 'gp62-host-test.mjs', 'gp63-host-test.mjs', 'gp64-host-test.mjs', 'gp66-host-test.mjs', 'gp67-host-test.mjs', 'gp68-token-host-test.mjs']
