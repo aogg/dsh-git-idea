@@ -67,5 +67,62 @@
         }
       })
     }, 'dsh-git-idea live watch push')
+
+    /* ── 全局兜底的崩溃上报 ──
+
+        面板树里的错由护栏（94-popover.js 的 GitCrashBoundary）当场圈住；这里接的是
+        溅到 window 上的那部分：error 与 unhandledrejection。只认插件自己的错 ——
+        按堆栈/消息自证身份过滤（含 'dsh-git' 才算，比如报错文本里带着本插件的
+        路由、前缀、键名），宿主与别的插件的错一个字节都不劫持。护栏报过的
+        （__dshGitIdeaSeen 记号）不再重复报。浏览器之外（单测、桥）安静跳过。 */
+    ctx.effect(function () {
+      if (typeof window === 'undefined' || window == null || typeof window.addEventListener !== 'function') return undefined
+      const report = function (how, failure) {
+        if (failure == null) return
+        try { if (failure.__dshGitIdeaSeen === true) return } catch (error) { return }
+        const message = failure.message !== undefined ? String(failure.message) : String(failure)
+        const stackText = typeof failure.stack === 'string' ? failure.stack : ''
+        if (diagLooksOurs(message + '\n' + stackText) !== true) return
+        try { failure.__dshGitIdeaSeen = true } catch (error) { /* 冻结对象也不碍事 */ }
+        diagLog('crash', { message: message, stack: stackText, detail: how })
+        crashToast('Git 插件报错', message, stackText)
+      }
+      const onError = function (event) { report('window error', event != null ? event.error : null) }
+      const onRejection = function (event) { report('unhandledrejection', event != null ? event.reason : null) }
+      window.addEventListener('error', onError)
+      window.addEventListener('unhandledrejection', onRejection)
+      return function () {
+        window.removeEventListener('error', onError)
+        window.removeEventListener('unhandledrejection', onRejection)
+      }
+    }, 'dsh-git-idea crash watch')
+
+    /* 页面藏着/正在卸载：把日志环落盘、把待发队列冲一遍 —— 最后一批不等到期。
+       visibilitychange 与 pagehide 各挂一次，随插件生命周期拆。 */
+    ctx.effect(function () {
+      if (typeof window === 'undefined' || window == null || typeof window.addEventListener !== 'function') return undefined
+      const onHide = function () {
+        if (typeof document !== 'undefined' && document != null && document.visibilityState === 'visible') return
+        diagFlushNow()
+      }
+      window.addEventListener('pagehide', diagFlushNow)
+      if (typeof document !== 'undefined' && document != null && typeof document.addEventListener === 'function') {
+        document.addEventListener('visibilitychange', onHide)
+        return function () {
+          window.removeEventListener('pagehide', diagFlushNow)
+          document.removeEventListener('visibilitychange', onHide)
+        }
+      }
+      return function () {
+        window.removeEventListener('pagehide', diagFlushNow)
+      }
+    }, 'dsh-git-idea telemetry flush hooks')
+
+    /* 控制台翻账的口子：window.__dshGitIdeaLogs() 吐出环形缓冲的副本。 */
+    ctx.effect(function () {
+      if (typeof window === 'undefined' || window == null) return undefined
+      try { window.__dshGitIdeaLogs = diagDump } catch (error) { /* 只是个便利口子 */ }
+      return undefined
+    }, 'dsh-git-idea diag dump handle')
   },
 }

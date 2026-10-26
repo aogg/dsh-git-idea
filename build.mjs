@@ -47,6 +47,8 @@ export const TARGETS = [
     out: 'dist/client.js',
     parts: [
       'src/client/00-plugin.js',
+      'src/client/02-toast.js',
+      'src/client/05-telemetry.js',
       'src/client/10-state.js',
       'src/client/12-window.js',
       'src/client/14-geometry.js',

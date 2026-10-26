@@ -200,6 +200,12 @@ export function apply(ctx, config) {
     scope.effect(function () {
       return scope.webServer.register({ kind: 'exact', path: RPC_PATH, handler: rpcRoute })
     }, 'dsh-git-idea rpc route')
+    /* 客户端日志落盘（host-pre.js 的 clientLogRoute）：浏览器那半把生命周期账
+       批量 POST 过来，追加写 ~/.dsh/logs/dsh-git-idea-client.log。没有 webServer
+       的环境与 rpc 同一批待遇：日志只留在浏览器本地环里，面板照常工作。 */
+    scope.effect(function () {
+      return scope.webServer.register({ kind: 'exact', path: CLIENT_LOG_PATH, handler: clientLogRoute })
+    }, 'dsh-git-idea client log route')
     /* 实时通道：registerUpgrade 是这个 webServer 才有的座位，没有就退化为纯轮询
        （面板照常工作，只是没有推送）。卸载时按座位的规矩收拾干净：停心跳、给每条
        连接发 close 并断开、清空集合、把 liveHub.send 还原成 no-op —— 下一次 apply

@@ -517,7 +517,9 @@
           ? '正在切到 ' + switching + '…'
           : (isRepo ? title + ' · 悬停可直接切换分支' : title),
         ref: function (node) { chipNode = node },
-        onClick: function () { clearHoverTimer(); setSwitchMode(null); setOpen(!isOpen) },
+        /* togglePanelOpen（10-state.js）：open 位卡死、根节点已不在文档里时先复位
+           再重开（watchdog-recovery），别让「再也打不开」从这里开始。 */
+        onClick: function () { clearHoverTimer(); setSwitchMode(null); togglePanelOpen('chip') },
         /* Hover rather than right-click: the chip already names the branch, so
            hovering it to change it is the shortest path, and a context menu would
            hide a frequent action behind a gesture nothing else here uses. Outside

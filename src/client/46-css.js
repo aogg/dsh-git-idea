@@ -859,6 +859,19 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-mrg-foot{flex:none;display:flex;align-items:center;gap:6px;padding:6px 8px;border-top:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2)}
 .dsh-git-mrg-note{flex:none;padding:4px 10px;white-space:pre-wrap;cursor:pointer}
 .dsh-git-mrg-confirm{width:min(460px,100%)}
+/* 崩溃提示 toast（02-toast.js）：右上角定点层、可堆叠（新的在上）、5 秒自动收。
+    压过一切常驻面（浮层 95、应用对话框 100+ 都不够它高——崩溃说明必须看得见）。
+    堆栈详情悬停才展开：正文先说一句人话，想看的人自然会把手放上去。 */
+.dsh-git-toasts{position:fixed;top:12px;right:12px;z-index:130;display:flex;flex-direction:column;align-items:flex-end;gap:8px;pointer-events:none;font-family:inherit}
+.dsh-git-toast{pointer-events:auto;width:min(340px,calc(100vw - 24px));box-sizing:border-box;padding:8px 10px;border:1px solid var(--dsw-alias-border-l1);border-left:3px solid var(--dsw-alias-state-error-primary);border-radius:10px;background:var(--dsw-alias-bg-layer-1);box-shadow:var(--dsw-elevation-soft);color:var(--dsw-alias-label-primary);font-size:12px;line-height:18px}
+.dsh-git-toast-head{display:flex;align-items:center;gap:8px;margin-bottom:2px}
+.dsh-git-toast-title{flex:1;min-width:0;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsh-git-toast-x{flex:none;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;padding:0;border:0;border-radius:4px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer;font:inherit;font-size:13px;line-height:1}
+.dsh-git-toast-x:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.dsh-git-toast-msg{color:var(--dsw-alias-label-secondary);word-break:break-word;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.dsh-git-toast:hover .dsh-git-toast-msg{-webkit-line-clamp:unset}
+.dsh-git-toast-stack{display:none;margin:6px 0 0;padding:6px;max-height:180px;overflow:auto;border-radius:6px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-secondary);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:16px;white-space:pre-wrap;word-break:break-all}
+.dsh-git-toast:hover .dsh-git-toast-stack{display:block}
 `)
     }, 'dsh-git-idea panel styles')
 

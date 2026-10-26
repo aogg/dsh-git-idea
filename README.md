@@ -186,6 +186,14 @@ git config --global user.email "你的邮箱"
 
 ![不是一个 Git 仓库时的说明页](docs/setup-page.png)
 
+### 诊断与日志
+
+面板「开了又自己关、再也打不开」这类问题有账可查：
+
+- **看门狗**：面板 open 状态位是 `true`、根节点却已不在文档里（React 树崩了、或 body 级浮层被人摘走）时，点击 chip 不再空转 —— 先复位状态、重建浮层，再重新打开。打开中的面板也会被巡检：根节点消失即自动修复。每次自愈记一条 `watchdog-recovery`。
+- **崩溃 toast**：面板树里抛错时，右上角弹一条 toast 说明原因（含堆栈，悬停展开）；5 秒自动收，悬停期间不收，`×` 可点关，多条可堆叠。它不依赖面板活着 —— 面板崩的恰恰是那棵 React 树。全局兜底监听只认自带 `dsh-git` 记号的错，宿主与别的插件的报错不受影响。
+- **生命周期日志**：`open`（谁开的）/ `close`（为什么关：user-toggle / outside-click / esc / crash / programmatic）/ `crash`（message + stack）/ `watchdog-recovery`，带时间戳。落三处：内存环形缓冲（200 条）与浏览器 localStorage（键 `dsh.git-idea.client-log`，刷新后还在）；控制台（crash 走 `error`、watchdog 走 `warn`，控制台输入 `__dshGitIdeaLogs()` 可翻整本）；批量 POST 到宿主 `/api/dsh-git-idea/client-log`（跟随 dsh 本身端口、同源、攒批事件驱动地发、双闸限频，不轮询），宿主追加写 `~/.dsh/logs/dsh-git-idea-client.log`（5MB 一转），刷新页面日志也不丢。宿主不在线（老版宿主、未重启）时安静退回本地环，接口上线后续传。
+
 ---
 
 ## 设置

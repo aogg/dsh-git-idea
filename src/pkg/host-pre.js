@@ -12,6 +12,10 @@
 /* node:crypto 只有真包这一半用得上（WebSocket 握手的 Sec-WebSocket-Accept），而
    import 只能放在拼接后的文件头 —— host-post.js 在文件中部，放 import 是语法错误。 */
 import crypto from 'node:crypto'
+/* 客户端日志落盘（/api/dsh-git-idea/client-log → ~/.dsh/logs/…）用得到的三样。 */
+import fsp from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 
 /* 面板到浏览器的实时推送（77-cmdrec.js 的 cmdlog-start / cmdlog-exit）汇聚在这个
    对象上：body 片段只认它。默认是一个 no-op —— bridge 版没有 pkg 层，liveSend 里
@@ -96,6 +100,80 @@ async function rpcRoute(request, response) {
   try {
     const value = await handler(body.payload)
     sendJson(response, 200, { ok: true, value: value === undefined ? null : value })
+  } catch (error) {
+    sendJson(response, 200, { ok: false, error: detail(error) })
+  }
+}
+
+/* ── 客户端日志的宿主落点（/api/dsh-git-idea/client-log）──
+ *
+ * 浏览器那半（05-telemetry.js）把生命周期账（open/close/crash/watchdog）批量 POST
+ * 过来，这里逐条洗成单行、追加写 ~/.dsh/logs/dsh-git-idea-client.log —— 刷新页面
+ * 日志也不丢。与 rpcRoute 同一道门：只收 POST、必须同源（这个端口机器上任何页面都
+ * 够得着）；单请求体沿用 1MB 上限，事件最多收 200 条，字段逐条截断 —— 一条日志
+ * 永远不许变成一次磁盘写入事故。文件 5MB 一转（.1 覆盖旧的），封顶防膨胀。
+ */
+const CLIENT_LOG_PATH = '/api/dsh-git-idea/client-log'
+const CLIENT_LOG_FILE = path.join(os.homedir(), '.dsh', 'logs', 'dsh-git-idea-client.log')
+const CLIENT_LOG_MAX_BYTES = 5 * 1024 * 1024
+const CLIENT_LOG_EVENTS_MAX = 200
+
+function clientLogField(value, cap) {
+  if (value === undefined || value === null) return ''
+  const raw = typeof value === 'string' ? value : String(value)
+  const cleaned = raw.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim()
+  return cleaned.length > cap ? cleaned.slice(0, cap) + '…' : cleaned
+}
+
+function clientLogLine(event) {
+  if (event == null || typeof event !== 'object') return ''
+  const at = clientLogField(event.t, 40) || new Date().toISOString()
+  const kind = clientLogField(event.kind, 40) || 'unknown'
+  const reason = clientLogField(event.reason !== undefined ? event.reason : event.source, 80)
+  const message = clientLogField(event.message, 2000)
+  const stackText = clientLogField(event.stack, 4000)
+  const extra = clientLogField(event.detail, 300)
+  let line = at + '\t' + kind
+  if (reason.length > 0) line += '\t' + reason
+  if (message.length > 0) line += '\t' + message
+  if (extra.length > 0) line += '\t' + extra
+  if (stackText.length > 0) line += '\t' + stackText
+  return line + '\n'
+}
+
+async function clientLogRoute(request, response) {
+  if (request.method !== 'POST') {
+    sendJson(response, 405, { ok: false, error: 'client-log is POST only' })
+    return
+  }
+  if (!sameOrigin(request)) {
+    sendJson(response, 403, { ok: false, error: 'same-origin requests only' })
+    return
+  }
+  let body
+  try {
+    body = await readJsonBody(request)
+  } catch (error) {
+    sendJson(response, 400, { ok: false, error: detail(error) })
+    return
+  }
+  const events = body != null && Array.isArray(body.events) ? body.events.slice(0, CLIENT_LOG_EVENTS_MAX) : []
+  if (events.length === 0) {
+    sendJson(response, 200, { ok: true, written: 0 })
+    return
+  }
+  try {
+    await fsp.mkdir(path.dirname(CLIENT_LOG_FILE), { recursive: true })
+    try {
+      const stats = await fsp.stat(CLIENT_LOG_FILE)
+      if (stats != null && stats.size > CLIENT_LOG_MAX_BYTES) {
+        await fsp.rename(CLIENT_LOG_FILE, CLIENT_LOG_FILE + '.1')
+      }
+    } catch (error) { /* 还没有这个文件就是最好的状态 */ }
+    let text = ''
+    for (let i = 0; i < events.length; i += 1) text += clientLogLine(events[i])
+    await fsp.appendFile(CLIENT_LOG_FILE, text, 'utf8')
+    sendJson(response, 200, { ok: true, written: events.length })
   } catch (error) {
     sendJson(response, 200, { ok: false, error: detail(error) })
   }

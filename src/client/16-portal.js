@@ -36,10 +36,50 @@
 
     let gitFloatLayerBox = null
 
+    /* ── 浮层被摘走的那支「再也打不开」──
+
+        host 是 body 上的一个普通 div，谁都动得着它：被某个重建视图的插件/框架
+        remove 掉之后，React 树还活着、open 还是 true，createPortal 却一直在往一个
+        游离节点里画 —— 面板「开也没看见」，点图标在 true↔false 之间空转。所以
+        每次 escape 都先问一句 host 还在不在文档里（isConnected），不在就丢掉旧的
+        换新的：任何一次重渲染都能把面板搬回文档。
+
+        「没有人触发重渲染」的场合（open 没变、信号都安静）由 healGitFloat 兜底：
+        看门狗（10-state.js 的 togglePanelOpen、94-popover.js 的 open 巡检）发现
+        根节点不在文档里就喊它一声，bump 一次浮层代数 —— GitPopover 订阅着这个
+        信号，bump 即重渲染，重渲染即自愈。bump 刻意异步（timeout 0）：escape 在
+        渲染期被调用，渲染期不许通知别人的 state。 */
+    let gitFloatEpochN = 0
+    const gitFloatSignal = createSignal(function () { return gitFloatEpochN })
+    const useGitFloatEpoch = gitFloatSignal.use
+
+    function bumpGitFloat() {
+      gitFloatEpochN += 1
+      gitFloatSignal.notify()
+    }
+
+    function gitFloatHostAlive() {
+      if (gitFloatLayerBox === null) return false
+      try {
+        return gitFloatLayerBox.host.isConnected !== false
+      } catch (error) {
+        return true
+      }
+    }
+
+    function healGitFloat() {
+      if (gitFloatLayerBox === null) return
+      if (gitFloatHostAlive() === true) return
+      timerOf().timeout(function () { bumpGitFloat() }, 0)
+    }
+
     /* GitPopover 渲染期问一次的入口。null = 这个环境没有可用的 portal（没有
        document.body、没有 react-dom）：调用方照旧走旧路。层是惰性单例：body 上
        只挂一个，多次渲染、多个会话的弹层共用。 */
     const gitFloatEscape = function () {
+      if (gitFloatLayerBox !== null && gitFloatHostAlive() !== true) {
+        gitFloatLayerBox = null
+      }
       if (gitFloatLayerBox !== null) return gitFloatLayerBox
       if (typeof document === 'undefined' || document == null) return null
       const body = document.body

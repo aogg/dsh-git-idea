@@ -2,9 +2,64 @@
        钳了也是一张压碎的卡，不如维持自然高度（极端矮窗口下保持原行为）。 */
     const SWITCH_MIN_ROOM = 200
 
+    /* ── 面板的崩溃护栏 ──
+
+        open 路径上任何一个渲染或 effect 抛错，React 都会把整棵槽位子树卸掉：屏幕上
+        就是「弹窗自己关了」（close 原因里的 crash 一支），而 open 状态位没人复位 ——
+        chip 再点就在 true↔false 之间空转，从此「再也打不开」。护栏把错误圈在这一层：
+        记 crash 日志、弹 toast（不依赖面板活着）、把 open 复位成 false（下一次点击
+        是一次干净的打开），并在面板已收起后自动重新武装；重武装封顶 3 次，防一个
+        「藏起来也崩」的错误把这里变成无限循环 —— 三次都崩就停在原地等下一次打开。
+        单测的迷你 React 没有类组件：护栏退化为透传，行为与没有护栏一字不差。 */
+    const GitCrashBoundary = (function () {
+      if (typeof React.Component !== 'function') {
+        return function GitCrashBoundaryPass(props) {
+          return props.children != null ? props.children : null
+        }
+      }
+      return class GitCrashBoundary extends React.Component {
+        constructor(props) {
+          super(props)
+          this.state = { crashed: null, retries: 0 }
+        }
+        static getDerivedStateFromError(error) {
+          return { crashed: error == null ? new Error('unknown panel crash') : error }
+        }
+        componentDidCatch(error) {
+          const message = error != null && error.message !== undefined ? String(error.message) : String(error)
+          const stackText = error != null && typeof error.stack === 'string' ? String(error.stack) : ''
+          /* 全局兜底监听（98-register.js）见到这个记号就让路：一次崩溃只报一声。 */
+          try { if (error != null) error.__dshGitIdeaSeen = true } catch (e) { /* 冻结对象也不碍事 */ }
+          diagLog('crash', { message: message, stack: stackText, detail: '面板渲染/副作用抛错，已收起面板' })
+          crashToast('Git 面板异常关闭', message, stackText)
+          setOpen(false, 'crash')
+          this.setState(function (previous) { return { retries: previous.retries + 1 } })
+        }
+        componentDidUpdate(previousProps) {
+          /* 面板已收起（上面的 crash 处理干的）：重新武装，下一次打开按全新挂载走。 */
+          if (this.state.crashed !== null && this.props.active !== true && this.state.retries <= 3) {
+            this.setState({ crashed: null })
+            return
+          }
+          /* 新的一次打开：重试账清零。 */
+          if (this.props.active === true && previousProps.active !== true
+            && (this.state.crashed !== null || this.state.retries !== 0)) {
+            this.setState({ crashed: null, retries: 0 })
+          }
+        }
+        render() {
+          if (this.state.crashed !== null) return null
+          return this.props.children
+        }
+      }
+    })()
+
     function GitPopover(props) {
       const isOpen = useOpen()
       const mode = useSwitchMode()
+      /* 浮层代数：看门狗修浮层时 bump 一下，这里跟着重渲染，把面板搬进（可能的）
+         新 host —— 没有这一条，「无人触发重渲染」的场合就得等读者点两下图标。 */
+      useGitFloatEpoch()
       /* 分支卡片上那个「几个改动」也来自全局那一份读数：同一个数字在面板、chip 和这张
          卡片上必须是同一个。 */
       useTreeVersion()
@@ -81,26 +136,32 @@
           const inChip = chipNode != null && chipNode.contains(target)
           const inCard = switcherNode != null && switcherNode.contains(target)
           /* The panel is the thing on screen whether or not the switcher hangs
-             off it. Gating this on the switcher being open was a real bug: with
-             nothing open, every click inside the panel counted as an outside
-             click and closed it. */
+              off it. Gating this on the switcher being open was a real bug: with
+              nothing open, every click inside the panel counted as an outside
+              click and closed it. */
           const inPanel = panelNode != null && panelNode.contains(target)
-          if (inChip || inCard) return
+          /* 崩溃 toast 也是本插件的面：点它（看堆栈、点 ×）不该把面板一起带走。 */
+          const inToast = toastLayerContains(target)
+          if (inChip || inCard || inToast) return
           if (switchMode !== null) {
             /* Clicking the panel behind the open switcher dismisses the switcher
-               — and only the switcher, because the click did land on the panel. */
+                — and only the switcher, because the click did land on the panel. */
             setSwitchMode(null)
             if (inPanel) return
           }
           if (inPanel) return
-          setOpen(false)
+          /* open 却查无根节点 = 面板树已死或浮层被摘（watchdog 的现场）：这一下
+             不是「点在外面」，把它记成 outside-click 反而会弄脏账、还会把 open
+             复位掉，让看门狗的「先复位再重开」失去诊断机会 —— 让路。 */
+          if (isOpen === true && panelSurfaceAlive() !== true) return
+          setOpen(false, 'outside-click')
         }
         const onKeyDown = function (event) {
           if (event.key !== 'Escape') return
           /* Escape closes the innermost thing first, so dismissing the switcher
-             does not also throw away the panel behind it. */
+              does not also throw away the panel behind it. */
           if (switchMode !== null) { setSwitchMode(null); return }
-          setOpen(false)
+          setOpen(false, 'esc')
         }
         doc.addEventListener('pointerdown', onPointerDown, true)
         doc.addEventListener('keydown', onKeyDown, true)
@@ -189,7 +250,29 @@
           }))
         : null
 
-      if (floated !== true) return h('div', { className: 'dsh-git-layer' }, panelEl, switchEl)
+      /* ── open 巡检（看门狗的第二只眼）──
+
+          打开 300ms 后问一句根节点还在不在文档里：浮层被摘走的场合 open 没变、
+          信号都安静，不会有任何重渲染来救 —— 这里喊 healGitFloat，bump 浮层代数
+          让本组件重渲染，escape 检出旧 host 已游离会换新的。chip 点击那条
+          togglePanelOpen 是第一只眼，管「读者点图标却开不出来」；这只眼管
+          「面板开着开着自己消失」。测试环境没有 document，巡检安静跳过。 */
+      React.useEffect(function () {
+        if (isOpen !== true) return undefined
+        if (typeof document === 'undefined' || document == null) return undefined
+        return timerOf().timeout(function () {
+          if (open !== true) return
+          if (panelSurfaceAlive() === true) return
+          diagLog('watchdog-recovery', { source: 'panel-watch', detail: '打开后面板根节点不在文档里，重建浮层' })
+          healGitFloat()
+        }, 300)
+      }, [isOpen])
+
+      /* 崩溃护栏圈住面板与悬停卡片：树里任何一层抛错都停在护栏这一层 —— 记账、
+         toast、复位 open，而不是把整个槽位子树连锅端。 */
+      const guardedEl = h(GitCrashBoundary, { key: 'guard', active: isOpen }, panelEl, switchEl)
+
+      if (floated !== true) return h('div', { className: 'dsh-git-layer' }, guardedEl)
       /* 浮层路径：面板和卡片搬进 body 级浮层；探针留在槽位里当锚 —— 它必须还在
          主对话的框里，量出来的才是输入框的位置。 */
       return h('div', { className: 'dsh-git-layer' },
@@ -201,5 +284,5 @@
             width: '1px', height: '1px', pointerEvents: 'none',
           },
         }),
-        escape.portal([panelEl, switchEl], escape.host))
+        escape.portal(guardedEl, escape.host))
     }

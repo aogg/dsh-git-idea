@@ -192,15 +192,50 @@
     }
 
     /* Whether the panel is open at all: the composer chip and the panel are two
-       components racing to be the same answer. */
+       components racing to be the same answer. 置位/复位全部经过 setOpen（带原因
+       记账）与 togglePanelOpen（带看门狗），别再裸写 `open = …`。 */
     let open = false
     const openSignal = createSignal(function () { return open })
-    const setOpen = function (next) {
+    const setOpen = function (next, reason, source) {
       if (open === next) return
       open = next
+      /* 生命周期记账（05-telemetry.js）：开记「谁开的」，关记「为什么关」——
+         「弹窗自己关了」这类问题过去连一条账都没有。 */
+      diagLog(next === true ? 'open' : 'close', next === true
+        ? { source: source }
+        : { reason: reason })
       openSignal.notify()
     }
     const useOpen = openSignal.use
+
+    /* 面板的根节点还活着吗。GitPanel 常驻（收起只是藏起来），所以「open 位是 true
+       却查无此节点」只有两种现场：挂它的那棵 React 树已经崩掉卸载（ref 归 null），
+       或者 body 级浮层（16-portal.js 的 .dsh-git-float）被人从文档里摘走了 ——
+       两种都是「点图标再也打不开」的直接原因，看门狗靠这一问认出它们。 */
+    function panelSurfaceAlive() {
+      if (panelNode == null) return false
+      try {
+        return panelNode.isConnected !== false
+      } catch (error) {
+        return true
+      }
+    }
+
+    /* chip 点击的开关，唯一入口。open 位是 true、面板却不在文档里时，直接翻转只会
+       在 true↔false 之间空转 —— 屏幕上永远什么都不出现（「再也打不开」的卡死态）。
+       这里先复位、把浮层修回来（healGitFloat），再走一次干净打开，并记一条
+       watchdog-recovery。 */
+    const togglePanelOpen = function (source) {
+      if (open === true && panelSurfaceAlive() !== true) {
+        diagLog('watchdog-recovery', {
+          source: source,
+          detail: '状态位是 open 但面板根节点已不在文档里，先复位再重新打开',
+        })
+        open = false
+        healGitFloat()
+      }
+      setOpen(open === false, 'user-toggle', source)
+    }
 
     let chipNode = null
     let panelNode = null
