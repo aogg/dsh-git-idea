@@ -1,6 +1,6 @@
 })()
 
-/* ── WebSocket 实时通道（/dsh-git-idea/ws）──
+/* ── WebSocket 实时通道（/api/dsh-git-idea/ws）──
  *
  * client→host 只有 HTTP RPC（一问一答），host→client 原本没有任何通道 —— 面板执行的
  * 命令开始/结束（77-cmdrec.js 的 cmdlog-start / cmdlog-exit）只能等下一轮整读才上屏。
@@ -8,12 +8,15 @@
  * 帧读写：只用到「文本帧 + ping/pong + close」这一小角，不引入任何依赖。
  *
  * 同源校验沿用 RPC 路由（host-pre.js 的 sameOrigin）那道门：这个端口机器上任何页面
- * 都够得着，握手必须先证明自己与页面同源，不符就 destroy。
+ * 都够得着，握手必须先证明自己与页面同源，不符就 destroy。同源之后还有一道 token
+ * 门（host-pre.js 的 tokenMatches）：query 里的 token 必须与宿主半本任生成的那个
+ * 一致（token 只经 ws-info 下发），不符同样 destroy 不回包 —— 顶层自造路径在代理
+ * 链上到不了宿主的教训之外，这条门让「机器上任何页面」也够不着这条通道。
  *
  * 握手 accept、帧编解码与帧读取器是纯函数，经 wsHooks 导出 —— 单元测试不起真端口
  * 就能验（RFC 6455 自带一对已知答案）；这扇小门只服务测试，不承载运行时行为。 */
 
-const WS_PATH = '/dsh-git-idea/ws'
+const WS_PATH = API_BASE + '/ws'
 /* RFC 6455 §1.3：握手里那段固定的魔术串。 */
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 /* 心跳节奏：每 30s 给每条连接 ping 一次；一条 ping 发出去超过 10s 还没等到 pong
@@ -152,11 +155,27 @@ function wsHeartbeat() {
   }
 }
 
-/* 握手 + 收编：写 101、进 liveHub、帧读取器接上（head 是 upgrade 分发可能已经
-   垫好的首批字节，不能丢）。webServer 的 upgrade 分发自己挂着 error 监听，这里
-   听 close 就够 —— 死连接从 Set 里消失。 */
+/* 握手 + 收编：三道门依次是 sameOrigin → token（host-pre.js 的 tokenMatches，
+   不符不给任何回包直接断）→ RFC 6455 协议头；过了才写 101、进 liveHub、帧读取器
+   接上（head 是 upgrade 分发可能已经垫好的首批字节，不能丢）。cid 只进日志：每
+   标签页一个随机标识（客户端拼在 query 上），握手建立/拒绝的日志靠它区分是哪一页。
+   webServer 的 upgrade 分发自己挂着 error 监听，这里听 close 就够 —— 死连接从
+   Set 里消失。 */
 function wsUpgrade(request, socket, head) {
   if (sameOrigin(request) !== true) {
+    socket.destroy()
+    return
+  }
+  let query = null
+  try {
+    query = new URL(request.url === undefined ? '/' : request.url, 'http://dsh.local').searchParams
+  } catch (error) {
+    query = null
+  }
+  const cidRaw = query !== null ? query.get('cid') : null
+  const cid = (typeof cidRaw === 'string' ? cidRaw : '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64)
+  if (tokenMatches(liveToken, query !== null ? query.get('token') : null) !== true) {
+    console.warn('dsh-git-idea: live 握手 token 不符，直接断开（cid=' + cid + '）')
     socket.destroy()
     return
   }
@@ -189,6 +208,7 @@ function wsUpgrade(request, socket, head) {
   socket.on('close', function () { liveHub.sockets.delete(socket) })
   socket.__dshLiveSeen = Date.now()
   liveHub.sockets.add(socket)
+  console.log('dsh-git-idea: live 连接建立（cid=' + cid + '）')
 }
 
 /* The body's own apply, plus the one thing the bridge used to own: the
@@ -196,10 +216,19 @@ function wsUpgrade(request, socket, head) {
    present in every web profile; without it the panel goes quiet and nothing
    else changes. */
 export function apply(ctx, config) {
+  /* 每次上任换一个新令牌（host-pre.js 的 newLiveToken）：dsh 重启或插件重装后，
+     旧 token 全部作废 —— 客户端每轮连接都重拉 ws-info，拿到的就是新令牌。 */
+  newLiveToken()
   ctx.inject(['webServer'], function (scope) {
     scope.effect(function () {
       return scope.webServer.register({ kind: 'exact', path: RPC_PATH, handler: rpcRoute })
     }, 'dsh-git-idea rpc route')
+    /* ws-info：token 的唯一下发口（GET，答 {ok:true, token}）。与 rpc 同一款 exact
+       路由，享受宿主既有认证围栏；没有 webServer 的环境与 rpc 同一批待遇：面板退
+       化为纯轮询，本就没有连接需要令牌。 */
+    scope.effect(function () {
+      return scope.webServer.register({ kind: 'exact', path: WS_INFO_PATH, handler: wsInfoRoute })
+    }, 'dsh-git-idea ws-info route')
     /* 客户端日志落盘（host-pre.js 的 clientLogRoute）：浏览器那半把生命周期账
        批量 POST 过来，追加写 ~/.dsh/logs/dsh-git-idea-client.log。没有 webServer
        的环境与 rpc 同一批待遇：日志只留在浏览器本地环里，面板照常工作。 */

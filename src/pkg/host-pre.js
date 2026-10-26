@@ -26,7 +26,12 @@ const liveHub = { sockets: new Set(), send: function () {} }
 /* The one route the browser half calls: same origin as the page, so no CORS.
    The same-origin check below is what keeps another page on loopback from
    driving git in this reader's working directory. */
-const RPC_PATH = '/dsh-git-idea/rpc'
+/* 插件全部路由的统一前缀。过去 RPC 与 ws 挂在顶层自造路径（/dsh-git-idea/rpc、
+   /dsh-git-idea/ws）上，这条形状在某些代理链（Windows 侧 whistle/nohost）里被
+   改写成 GET /ws//… 之类，握手永远到不了宿主；与 dsh 其它插件同款的
+   /api/<名>/… 前缀在同一条链上实测是通的 —— 全部搬过来。 */
+const API_BASE = '/api/dsh-git-idea'
+const RPC_PATH = API_BASE + '/rpc'
 const RPC_MAX_BYTES = 1048576
 
 /* Every handler the Client registered through \`harness.handle\`, keyed by the
@@ -177,6 +182,43 @@ async function clientLogRoute(request, response) {
   } catch (error) {
     sendJson(response, 200, { ok: false, error: detail(error) })
   }
+}
+
+/* ── ws 接入令牌（/api/dsh-git-idea/ws-info → /api/dsh-git-idea/ws?token=…）──
+ *
+ * 实时通道与 dsh 其它插件同款（/api/<名>/ws）之后，鉴权也照搬同一个模型
+ * （dsh-resume-on-restart 的 ws-state）：token 由宿主半每次 apply（插件实例上任）
+ * 生成一次（crypto.randomBytes(24).toString('base64url')，24 字节），只经 ws-info
+ * 下发；升级握手（host-post.js 的 wsUpgrade）校验 query 里的 token，不符直接
+ * destroy 不回包。比较先把两边都归一到定长 sha256 摘要再 timingSafeEqual ——
+ * 长度与字节都不会从比较耗时里漏出去。dsh 重启或插件重装后 token 换新，客户端
+ * 每轮连接都重拉 ws-info，拿旧 token 握手只会被断开再退避重来。
+ *
+ * ws-info 本身走 webServer.register 的 exact 路由（与 rpc 同一款，自动享受宿主
+ * 既有认证围栏），自己不再叠 sameOrigin 一道门 —— 同源的 GET fetch 本就不带
+ * Origin 头（浏览器只对 POST 与跨源请求附 Origin），那道门只会把正经客户端也
+ * 挡在门外；token 的真正关口在升级握手那一步。 */
+const WS_INFO_PATH = API_BASE + '/ws-info'
+let liveToken = ''
+
+function newLiveToken() {
+  liveToken = crypto.randomBytes(24).toString('base64url')
+}
+
+/* token 比较（timing-safe）：先归一到定长 sha256 摘要再比较。 */
+function tokenMatches(expected, provided) {
+  if (typeof provided !== 'string' || provided.length === 0) return false
+  const left = crypto.createHash('sha256').update(expected).digest()
+  const right = crypto.createHash('sha256').update(provided).digest()
+  return crypto.timingSafeEqual(left, right)
+}
+
+function wsInfoRoute(request, response) {
+  if (request.method !== 'GET') {
+    sendJson(response, 405, { ok: false, error: 'ws-info is GET only' })
+    return
+  }
+  sendJson(response, 200, { ok: true, token: liveToken })
 }
 
 /* The body registers RPC handlers here and nothing else: with no model tools

@@ -204,7 +204,7 @@
 
     /* 全局兜底上报（98-register.js）的身份过滤：堆栈/消息里带着本插件的记号才算
        自家的 —— 报错文本含 'dsh-git'（覆盖 dsh-git-idea / dsh.git-idea 键名、
-       /dsh-git-idea/* 路由、'dsh-git-idea:' 控制台前缀）。宁少报不误报：宿主与
+       /api/dsh-git-idea/* 路由、'dsh-git-idea:' 控制台前缀）。宁少报不误报：宿主与
        别的插件的错一个都不劫持；面板树内的错本来就有护栏精确接住，不靠这条猜。 */
     function diagLooksOurs(text) {
       const raw = typeof text === 'string' ? text : String(text == null ? '' : text)
