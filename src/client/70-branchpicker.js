@@ -241,7 +241,12 @@
     function BranchPicker(props) {
       const version = useDataVersion()
       useBranchPrefs()
-      const [data, setData] = React.useState(branchCache[props.repo] !== undefined ? branchCache[props.repo] : null)
+      /* 首帧的列表：内存新账优先；内存没有（刷新后必然如此）就回落盘账垫底
+         （62-branchstate.js 的 restoreBranches，纯读）—— 刷新后第一次悬停/打开
+         面板就有上次的列表可画，不用等 git/branches 那一程。盘账绝不写回
+         branchCache：预取的守卫只认内存新账，挂载后那一次读照发，答复一到
+         setData 整个盖掉。 */
+      const [data, setData] = React.useState(branchCache[props.repo] !== undefined ? branchCache[props.repo] : restoreBranches(props.repo))
       const [error, setError] = React.useState(null)
       const [note, setNote] = React.useState(null)
       const [busy, setBusy] = React.useState(false)

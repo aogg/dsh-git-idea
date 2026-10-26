@@ -179,6 +179,13 @@
            applied 信号，上面渲染期读过的 sessionRepo 重算一遍，watcher 跟着指回
            恢复出来的那个仓库（10-state.js 的 loadAppliedRepos）。 */
         loadAppliedRepos(chipNode != null ? chipNode.ownerDocument : null)
+        /* chip 分支名的持久化账同在这里读进（62-branchstate.js 的 loadChipLabels，
+           交 doc + 懒加载一次）。随后当场把 label 重读一次：刷新后内存账全空，首帧
+           画的是「Git」，这一帧起就画上次的分支名 —— 快读回来之前不再空窗。账已
+           载入，chipLabelFor 的盘账回落此时就能命中；快读每次照发，答复一到照旧
+           覆盖（盘账只管先画，永不拦读）。 */
+        loadChipLabels(chipNode != null ? chipNode.ownerDocument : null)
+        setInfo(chipLabelFor(sessionId))
         loadPluginConfig()
       }, [])
 
@@ -364,15 +371,21 @@
                re-derive it with another read. */
             chipInfos[sessionId] = { repo: repo, pending: pending, ahead: ahead, behind: behind }
             prefetchBranches(sessionId, repo.length > 0 ? repo : mine)
+            const shownLabel = detached ? 'HEAD' : (branch.length > 0 ? branch : 'HEAD')
             chipLabels[sessionId] = {
               phase: 'repo',
-              label: detached ? 'HEAD' : (branch.length > 0 ? branch : 'HEAD'),
+              label: shownLabel,
               pending: pending,
               ahead: ahead,
               behind: behind,
               repo: repo,
               reason: '',
             }
+            /* 身份读成功 = 分支名的最新事实：覆写盘账里该会话的条目（唯一写入点，
+               LRU 语义在 62-branchstate.js）。ahead/behind 随标签一起入库 —— 属同
+               一次身份读，是「先画、马上被下一次快读纠正」的显示垫底；改动数不进
+               缓存，刷新后照旧如实显示「正在核对改动…」。 */
+            storedChipLabelPut(sessionId, shownLabel, repo, ahead, behind)
           } else {
             chipInfos[sessionId] = { repo: data != null ? text(data.repo) : '', pending: 0, ahead: 0, behind: 0 }
             chipLabels[sessionId] = {
@@ -380,6 +393,10 @@
               repo: data != null ? text(data.repo) : '',
               reason: data != null ? text(data.reason) : '',
             }
+            /* 读不动（not-a-repo/missing/git-error/no-path/unsafe-owner…）= 缓存的
+               分支名已经不可信：删掉该会话的盘账条目并落盘 —— 仓库没了/读不动了，
+               不许在下一次刷新还魂。屏幕那份内存账已整个覆写成 none，立刻如实。 */
+            storedChipLabelDrop(sessionId)
           }
           setInfo(chipLabels[sessionId])
         }
