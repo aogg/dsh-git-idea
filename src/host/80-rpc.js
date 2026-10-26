@@ -679,6 +679,16 @@ onRpc('git/branch-create', function (input) {
   return panelMutate(input, ['switch', '-c', name], { desc: '新建分支' })
 })
 
+/* worktree 块「快速创建」（客户端 25-worktree.js 的 dsh-git-wt-form）：worktree add
+    是 v1.3 起 65-worktree.js 唯一的写路径，入参 {sessionId, repo?, mode, name?, at?,
+    path, force?}（mode = new / checkout / detach），校验、argv 组装（旗标全在 path
+    前、path 后只跟起点）与成功答复（panelMutate 结果 + 最新 worktreesSnapshot 一次
+    带回）都在 addWorktree（65-worktree.js 中段）。走 panelMutate 与 branch-create
+    同一条变更路：进「命令」页（desc「新建 worktree」）、整仓读缓存失效、noGit /
+    sandboxDenied 旗标。prune / remove / lock / move 仍无 —— 65-worktree.js 头部的
+    边界说明是同一句话。 */
+onRpc('git/worktree-add', function (input) { return addWorktree(input) })
+
 onRpc('git/branch-delete', function (input) {
   const name = input != null && isStr(input.name) ? input.name.trim() : ''
   if (name.length === 0) return { ok: false, error: 'a branch name is required' }

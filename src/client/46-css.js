@@ -622,8 +622,11 @@ textarea.dsh-git-input{resize:vertical}
    与 git 忽略项扫描的「链接」徽标（.dsh-git-ign-tag-link）同一读法，字号再小一号，
    它只是个提醒，不能和行名抢眼。 */
 .dsh-git-repo-wt{flex:none;padding:0 3px;border-radius:3px;border:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-secondary);font-size:9px;line-height:13px;cursor:default}
-.dsh-git-repo-add{display:flex;align-items:center;gap:5px;margin-top:2px;min-height:20px;padding:1px 5px;border-radius:5px;font-size:11px;cursor:pointer;white-space:nowrap}
-.dsh-git-repo-add:hover{background:var(--dsw-alias-interactive-bg-hover)}
+/* 动作行：仓库块的「＋ 添加目录」（24-repos.js）与 worktree 块的「＋ 新建 worktree」
+    （25-worktree.js v1.3）同一条声明 —— 两个块的动作行长得分毫不差才读起来是一族；
+    worktree 那行另起 dsh-git-wt-add 类名，不混进仓库块测试按个数认的那批账。 */
+.dsh-git-repo-add,.dsh-git-wt-add{display:flex;align-items:center;gap:5px;margin-top:2px;min-height:20px;padding:1px 5px;border-radius:5px;font-size:11px;cursor:pointer;white-space:nowrap}
+.dsh-git-repo-add:hover,.dsh-git-wt-add:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dsh-git-repo-addrow{display:flex;gap:4px;padding:2px 5px}
 .dsh-git-repo-input{flex:1;min-width:0;border:1px solid var(--dsw-alias-border-l1);border-radius:4px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-size:11px;padding:2px 4px;outline:none}
 .dsh-git-repo-input:focus{border-color:var(--dsw-alias-brand-primary)}
@@ -669,6 +672,21 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-wt-mainrow .dsh-git-tsub{flex:none}
 .dsh-git-wt-main-act{flex:none;border:1px solid var(--dsw-alias-border-l1);border-radius:4px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:10px;line-height:14px;padding:0 5px;cursor:pointer}
 .dsh-git-wt-main-act:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+/* worktree 块的「快速创建」表单（25-worktree.js v1.3，块底「＋ 新建 worktree」展开的
+    内联表单）：一列窄行，缩进对齐「主目录」行的 18px。输入复用仓库块登记行的
+    dsh-git-repo-input、按钮复用 dsh-git-btn —— 同一个侧栏同一个观感（56-setup.js 的
+    配置行那套 set-row/set-label 是 170px 标签的宽版，塞不进侧栏）；其余全是
+    dsh-git-wt-form 前缀的新类，与 dsh-git-wt-row（gp57/gp60 按清单行认个数的那批）
+    彻底无关。错误行与仓库块的问题行同一格红字小字。 */
+.dsh-git-wt-form{display:flex;flex-direction:column;align-items:stretch;gap:4px;padding:4px 5px 2px 18px}
+.dsh-git-wt-form-row{display:flex;align-items:center;gap:4px;min-width:0}
+.dsh-git-wt-form-label{flex:none;width:34px;font-size:10px;color:var(--dsw-alias-label-secondary)}
+.dsh-git-wt-form-row .dsh-git-repo-input{flex:1;min-width:0}
+.dsh-git-wt-form-modes{display:flex;flex-wrap:wrap;gap:2px 8px}
+.dsh-git-wt-form-modes label{display:inline-flex;align-items:center;gap:3px;font-size:10px;color:var(--dsw-alias-label-primary);cursor:pointer;white-space:nowrap}
+.dsh-git-wt-form-check{display:flex;align-items:center;gap:4px;font-size:10px;color:var(--dsw-alias-label-primary);cursor:pointer}
+.dsh-git-wt-form-error{font-size:10px;line-height:14px;color:var(--dsw-alias-state-error-primary)}
+.dsh-git-wt-form-btns{display:flex;justify-content:flex-end;gap:4px}
 
 /* ── 差异页右列：这批修改的来源文件列表 ──
    补丁区 flex:1、右列固定 240px。右列的行复用树行那套类名（dsh-git-trow），

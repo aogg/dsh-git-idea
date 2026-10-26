@@ -2386,6 +2386,29 @@
       const repoAdd = function (path) { return saveManualRepo(sessionId, { add: path }) }
       const repoRemove = function (path) { return saveManualRepo(sessionId, { remove: path }) }
 
+      /* ── worktree 块「快速创建」（25-worktree.js v1.3）的 RPC 回调 ──
+
+          表单只出业务字段（{mode, name?, at?, path, force}），这里补会话与仓库
+          （base = {sessionId, repo?}，repo 是生效仓库 —— 块里的清单本来就按它读的）
+          统一发 git/worktree-add（注册在 80-rpc.js，执行体 addWorktree 在
+          65-worktree.js：校验、argv 组装、成功答复带最新 worktrees 清单都在那头）。
+          rpc 手势与 70-branchpicker.js 的 git/branch-create 同一条：失败抛 Error、
+          原始答复挂在 failure.reply 上给表单折人话。成功后与「host 答了但失败」时都
+          走 ⟳/完成刷新同一条 bumpData 读路 —— panelMutate 已在 host 那头无条件整仓
+          失效读缓存，bump 推 freshAt 让 worktrees / refs / 状态 / 图全部重读（答复里
+          虽自带最新 worktrees 清单，但其余读数也得跟上这次变更）；真没答复的运输层
+          失败什么都没发生，不动版本。历史/变更两页的 worktreeProps 共用这一个闭包。 */
+      const worktreeAdd = function (fields) {
+        return rpc('git/worktree-add', Object.assign(base(effectiveRepo), fields), '新建 worktree 失败')
+          .then(function (reply) {
+            bump()
+            return reply
+          }, function (failure) {
+            if (failure.reply !== undefined) bump()
+            throw failure
+          })
+      }
+
       /* 两块侧栏的属性包：组件本身由 RefTree / ChangesPane 用 h() 挂（RepoSwitcher 有
          自己的 useState —— 当函数直接调会把它的钩子混进父组件的钩子序列，换页时数量
          一变就是坏状态）。 */
@@ -4889,7 +4912,13 @@
              「切生效仓库」：走 repoSingle —— 多选时先收拢回单仓库再切到那个工作
              区，变更列表跟着新仓库重读；点的就是当前生效工作区时 repoSingle 原地
              返回，无副作用。只给 onPickWorktree、不给 onPickBranch/activeRef/repo，
-             WorktreeBox 自己退回按路径高亮的仓库模式（25-worktree.js 顶部注释）。 */
+             WorktreeBox 自己退回按路径高亮的仓库模式（25-worktree.js 顶部注释）。
+             onWorktreeAdd（25-worktree.js v1.3）：worktree 块「快速创建」表单的发单
+             回调（上面 worktreeAdd 统一发 git/worktree-add + bump 重读）；表单创建
+             成功后的「切到新工作区」在本页走下面现成的 onPickWorktree —— 变更列表
+             直接切过去。refs 递分支树同一份（refs.local[i].data = 本地分支短名、
+             refs.remote[j].refs[k].data = origin/x 全短名）：表单的检出提示清单与
+             「新分支撞名」预检都从它免费查。 */
           worktreeProps: {
             data: worktrees,
             refs: refs,
@@ -4906,6 +4935,7 @@
               setTab('config')
             },
             onPickWorktree: function (path) { repoSingle('changes', path) },
+            onWorktreeAdd: worktreeAdd,
           },
           groups: changeGroups,
           onRepoSingle: function (path) { repoSingle('changes', path) },
@@ -5086,6 +5116,11 @@
                   if (effectiveRepo.length > 0) setRepoSelection(sessionId, 'config', [effectiveRepo])
                   setTab('config')
                 },
+                /* 「快速创建」（25-worktree.js v1.3）：发单回调与变更页同一个
+                   worktreeAdd；本页不给 onPickWorktree —— 创建成功后的「切到新工作
+                   区」由表单按答复清单里那个工作区站着的分支调 onPickBranch（游离 /
+                   清单没带回分支时没有 onPickWorktree 可落，就只剩 bump 那次刷新）。 */
+                onWorktreeAdd: worktreeAdd,
               },
               groups: logSel.length > 0 ? logSel.map(function (repo) {
                 return { repo: repo, refs: repoRefs[repo] === undefined ? null : repoRefs[repo] }

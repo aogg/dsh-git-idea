@@ -4,8 +4,14 @@
    的翻译，口径收窄成只含 `git worktree add` 出来的链接工作区 —— 主工作区（porcelain
    的第一条记录，git 保证它排第一）与 bare 记录（也只会是主仓库）解析完即丢，不发给
    客户端。v1 是纯只读的：面板把它画出来，最多允许单击把历史按那个 worktree 的分支
-   过滤 —— 不 checkout、不 prune、不碰任何 worktree 的工作区。这条边界在 Host 这一层
-   就守住了：这里只有一条读命令，没有任何写路径。
+   过滤 —— 不 checkout、不 prune、不碰任何 worktree 的工作区。这条边界在 v1.3 之前
+   在 Host 这一层就守住了：这里只有一条读命令，没有任何写路径。
+
+   v1.3 起多出一条、也**只有**一条写路径：worktree add（本文件中段的 addWorktree，
+   RPC 名 git/worktree-add，注册在 80-rpc.js git/branch-create 附近）—— worktree 块
+   「快速创建」表单的执行体，走 panelMutate（68-detail.js）：自动进「命令」页、整仓
+   读缓存随之失效、noGit / sandboxDenied 各自带旗标。除此之外边界照旧：仍无 prune /
+   remove / lock / move，不 checkout、不切换任何现有工作区的分支。
 
    走 refsSnapshot 同一套按仓库读缓存：cached(repo, 'worktrees', …) 的寿命与
    for-each-ref 那份完全相同，任何一次整仓失效（panelMutate、⟳ 的 flush、以及
@@ -84,6 +90,73 @@ async function worktreesSnapshot(input) {
   const repo = repoFrom(input, null)
   if (repo === undefined) return await readWorktrees(input, undefined)
   return await cached(repo, 'worktrees', function () { return readWorktrees(input, repo) })
+}
+
+/* ─────────────── worktree add（v1.3 起本文件唯一的写路径）─────────────── */
+
+/* git/worktree-add：worktree 块「快速创建」表单（客户端 25-worktree.js 的
+   dsh-git-wt-form）的执行体。入参 {sessionId, repo?, mode, name?, at?, path, force?}：
+     · mode: 'new'（新建分支 -b）/ 'checkout'（检出已有分支，含远端分支的 dwim）/
+       'detach'（游离检出 --detach）三选一；
+     · path: 新工作区的绝对路径（判据与 saveWorktreeMain 的 repo 相同：charAt(0)==='/'，
+       相对路径 git 会落在 cwd 底下，读者根本追不到它落哪了 —— 必须在这里挡死）；
+     · name: new / checkout 必填（checkout 收本地分支短名或完整的远端分支名
+       origin/feat/x —— 检出远端分支时 git 自己的 dwim 会建同名本地跟踪分支）；
+     · at: 起点可空。new 空 = 从 HEAD 起；detach 空 = 显式给 'HEAD'（git 对
+       `worktree add --detach <path>` 会拒收，起点必须说出口）；checkout 的 at 是
+       「从哪个提交检出这个分支」，一般不给；
+     · force: 客户端「强制覆盖」勾选 → --force（目录已存在且非空 / 分支已被别的
+       worktree 占用 / 目录是已登记但丢失的 worktree，这三种 git 默认都拒）。
+   校验失败一律 {ok:false, error:'人话'}（git/branch-create 同一个形状，80-rpc.js）；
+   名字与起点过一遍 cleanRefHalf（80-rpc.js，把前导 - 与控制字符挡在 argv 外面 ——
+   argv 全数组、不过 shell（panelMutate 同一规矩），要挡的是 git 自己会误读的形状）。
+
+   argv 顺序照 git worktree add 的手册：`git worktree add [--force] [--detach]
+   [-b <新分支>] <path> [<起点>]` —— 旗标全部在 path 前面，path 后面只跟起点。
+   执行走 panelMutate(input, argv, { desc: '新建 worktree' })（68-detail.js：自动进
+   「命令」页 + 无条件整仓读缓存失效 + sandboxDenied / noGit 旗标），与本插件其它
+   变更类 RPC 同一条路。
+
+   成功答复把 panelMutate 结果与 worktreesSnapshot(input)（上面的现成函数）合并：
+   panelMutate 已经把整仓读缓存作废，这次快照必是新账 —— 客户端一次往返同时拿到
+   「创建成了」与「最新的 worktree 清单」，不必再发一次 git/worktrees。快照那半边
+   万一读不出来不抹掉 add 的成功：worktrees 折成空数组、原因放在 wtError 里随行。 */
+async function addWorktree(input) {
+  const asked = input != null ? input : {}
+  const mode = isStr(asked.mode) ? asked.mode.trim() : ''
+  const path = isStr(asked.path) ? asked.path.trim() : ''
+  const force = asked.force === true
+  if (mode !== 'new' && mode !== 'checkout' && mode !== 'detach') {
+    return { ok: false, error: 'mode 必须是 new（新建分支）/ checkout（检出分支）/ detach（游离检出）三选一' }
+  }
+  if (path.length === 0) return { ok: false, error: '放置目录必填：新工作区要落在哪个绝对路径（以 / 开头）' }
+  if (path.charAt(0) !== '/') return { ok: false, error: '放置目录必须是绝对路径（以 / 开头），相对路径不收', path: path }
+  const name = isStr(asked.name) ? asked.name.trim() : ''
+  if (mode !== 'detach' && name.length === 0) {
+    return { ok: false, error: mode === 'new' ? '新分支名必填' : '要检出的分支名必填', path: path }
+  }
+  const cleanedName = mode === 'detach' ? '' : cleanRefHalf(name)
+  if (cleanedName === null) {
+    return { ok: false, error: '分支名不合法：不能为空、不能以 - 开头、不能含控制字符', path: path }
+  }
+  const cleanedAt = cleanRefHalf(isStr(asked.at) ? asked.at.trim() : '')
+  if (cleanedAt === null) {
+    return { ok: false, error: '起点不合法：不能以 - 开头、不能含控制字符', path: path }
+  }
+  const argv = ['worktree', 'add']
+  if (force === true) argv.push('--force')
+  if (mode === 'detach') argv.push('--detach')
+  if (mode === 'new') argv.push('-b', cleanedName)
+  argv.push(path)
+  if (mode === 'detach') argv.push(cleanedAt.length > 0 ? cleanedAt : 'HEAD')
+  else if (cleanedAt.length > 0) argv.push(cleanedAt)
+  const done = await panelMutate(input, argv, { desc: '新建 worktree' })
+  if (done.ok !== true) return done
+  const snap = await worktreesSnapshot(input)
+  const reply = Object.assign({}, done, { path: path, worktrees: snap.ok === true ? snap.worktrees : [] })
+  if (snap.ok === true) reply.repo = snap.repo
+  else reply.wtError = snap.error
+  return reply
 }
 
 /* ─────────────── worktree 的主目录（读 + 配置）─────────────── */
