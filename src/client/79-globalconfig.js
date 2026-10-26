@@ -130,15 +130,26 @@
        每一行命令都以同一个词开头，而那个词默认来自部署的 PATH。装在不在这条 PATH 上的
        地方（Homebrew 前缀、IDE 自带的 git、nix profile）时，面板以前只会说「这台机器
        上找不到 git」—— 既是错的，也没给出下一步。所以它是个设置。 */
-    function GitToolchainGroup() {
+    function GitToolchainGroup(props) {
+      /* 面板把手里的 session id 递下来（GitIdentityGroup 同一个先例）；组件单独渲染
+         （测试）时退回 lastSession。探测跟着会话的沙箱策略走 —— 面板里真正跑起来的
+         git 命令用的就是它，答出来的才是这台机器在该会话里的真实答案；不带会话的
+         探测会落进部署默认策略，而那条策略跑不跑得动是沙箱自己的事。 */
+      const remembered = useLastSession()
+      const sessionId = props != null && typeof props.sessionId === 'string' && props.sessionId.length > 0
+        ? props.sessionId
+        : remembered
       const plugin = usePluginConfig()
       const committed = usePluginConfigCommitted()
       const [draftPath, setDraftPath] = React.useState(plugin.gitPath)
       const [tool, setTool] = React.useState(null)
       React.useEffect(function () { setDraftPath(plugin.gitPath) }, [plugin.gitPath])
 
+      const request = function () {
+        return sessionId.length > 0 ? { sessionId: sessionId } : {}
+      }
       const probe = function () {
-        callHost('git/toolchain', {}).then(function (data) { setTool(data) }, function (failure) {
+        callHost('git/toolchain', request()).then(function (data) { setTool(data) }, function (failure) {
           setTool({ ok: false, path: '', version: '', found: false, reason: 'probe-failed', error: failureText(failure) })
         })
       }
@@ -147,7 +158,7 @@
          问到的是上一份配置 —— 真机上量到的就是界面永远慢一步（写入坏路径之后那一行
          还说「来自 PATH」，要等下一次改动才改口）；挂在每次按键上还会把一次询问变成
          每个字符一次。`committed` 只在答复带着配置回来时动。 */
-      React.useEffect(function () { probe() }, [committed])
+      React.useEffect(function () { probe() }, [committed, sessionId])
 
       const commitPath = function (value) {
         setDraftPath(value)
@@ -157,6 +168,8 @@
       }
       const found = tool != null && tool.found === true
       const reason = tool == null ? '' : text(tool.reason)
+      /* 「检查跑不起来」与「机器上没有 git」是两回事：前者把真实原因亮出来
+         （沙箱拦下的原话、宿主拒答的原话），后者才轮到「装上它」。 */
       const verdict = tool == null
         ? '正在检查…'
         : (found
@@ -164,7 +177,14 @@
             + ' · ' + text(tool.version))
           : (reason === 'configured-missing'
             ? '设置里写的这个路径不可用：它不存在，或者不是可执行文件。面板里的每条命令都会失败。'
-            : '这台机器的 PATH 上没有 git。装上它，或者在下面写一个绝对路径。'))
+            : reason === 'probe-blocked'
+              ? ('这条检查在沙箱里没跑成' + (text(tool.path).length > 0 ? '（git 在 ' + tool.path + '）' : '')
+                + '：' + (text(tool.detail).length > 0 ? tool.detail : '宿主没有给出原因')
+                + '。机器上未必没有 git —— 面板的命令跟着会话的沙箱策略走，多半不受这条影响。')
+              : reason === 'probe-failed' || text(tool.platform) === 'probe-failed'
+                ? ('检查没能完成：' + (text(tool.error).length > 0 ? tool.error : '宿主没有给出原因')
+                  + '。这不是「这台机器上没有 git」。')
+                : '这台机器的 PATH 上没有 git。装上它，或者在下面写一个绝对路径。'))
 
       return h('div', null,
         h('div', { className: 'dsh-git-set-group' }, 'git 位置'),
@@ -577,7 +597,7 @@
           /* 右列：git 与这台机器（组件根上还各有一层自己的包装 div），末尾收
              「本浏览器」一组。 */
           h('div', { className: 'dsh-git-set-col' },
-            h(GitToolchainGroup),
+            h(GitToolchainGroup, { key: 'tool', sessionId: sessionId }),
 
             h(GitCrlfGroup, { key: 'crlf', sessionId: sessionId }),
 

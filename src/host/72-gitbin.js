@@ -48,20 +48,72 @@ function cleanGitPath(value) {
    for, so it must not be turned into "this is not a repository".
 
    `P:` is printed even when `command -v` finds nothing (an empty line), because
-   "the word is not there" and "the probe did not run" have to stay apart. */
+   "the word is not there" and "the probe did not run" have to stay apart. That
+   guard turned out not to be enough, measured on a deployment whose default
+   policy is `workspace-write` rooted at `/`: bwrap's profile mounts the
+   workspace over everything it set up, `/dev/null` becomes unusable, and the
+   probe's own `2>/dev/null` then *fails as a redirection* — bash skips the
+   command entirely, `P:` comes back empty, and a machine with /usr/bin/git was
+   reported as having none. Two fixes, both about honesty rather than escape
+   hatches: the check carries no stderr redirection (there is nothing worth
+   silencing — `command -v` fails silently by design), and a trailing `Q:ok`
+   canary line says the script ran to the end at all. A probe that did not run
+   to its canary, a binary that resolved but would not speak `git version`, and
+   a shell layer that refuses to confine (SandboxUnavailableError) are all the
+   same answer: reason `probe-blocked`, with the underlying words in `detail` —
+   never "not-on-path". */
+
+/* The reply shape for "this check could not run": found stays false, but the
+   reason is its own, and the reader sees the actual words the sandbox or the
+   runner produced. */
+function probeBlocked(config, path, detail) {
+  return {
+    ok: true,
+    configured: config.gitPath,
+    fromPath: config.gitPath.length === 0,
+    path: path,
+    version: '',
+    found: false,
+    reason: 'probe-blocked',
+    detail: detail,
+    platform: 'probe-blocked',
+  }
+}
+
 async function toolchainSnapshot() {
   const config = await readConfigFile()
-  const probe = await invoke(
-    'p=$(command -v ' + gitCmd() + ' 2>/dev/null || true)\n'
-    + "printf 'P:%s\\n' \"$p\"\n"
-    + "printf 'V:%s\\n' \"$(" + gitCmd() + ' --version 2>&1 | head -1)"\n',
-    {}, null, { timeoutMs: 10000 })
+  let probe
+  try {
+    probe = await invoke(
+      'p=$(command -v ' + gitCmd() + ' || true)\n'
+      + "printf 'P:%s\\n' \"$p\"\n"
+      + "printf 'V:%s\\n' \"$(" + gitCmd() + ' --version 2>&1 | head -1)"\n'
+      + "printf 'Q:%s\\n' ok\n",
+      {}, null, { timeoutMs: 10000 })
+  } catch (error) {
+    /* SandboxUnavailableError and friends: the shell layer refused to run the
+       probe at all rather than run it unconfined. That is a statement about the
+       sandbox, not about git. */
+    return probeBlocked(config, '', error != null && error.message !== undefined ? String(error.message) : String(error))
+  }
   let resolved = ''
   let version = ''
+  let ranToCanary = false
   const lines = probe.stdout.split('\n')
   for (let i = 0; i < lines.length; i += 1) {
     if (lines[i].indexOf('P:') === 0) resolved = lines[i].slice(2).trim()
     if (lines[i].indexOf('V:') === 0) version = lines[i].slice(2).trim()
+    if (lines[i].indexOf('Q:') === 0) ranToCanary = lines[i].slice(2).trim() === 'ok'
+  }
+  /* The word resolved but would not identify itself: `git --version` speaks
+     `git version …` on every machine this panel will meet, so anything else on
+     that line is the binary's failure to run under this policy — the sandbox's
+     sentence, not a missing git. */
+  if (resolved.length > 0 && version.indexOf('git version') !== 0) return probeBlocked(config, resolved, version)
+  /* A script that never reached its canary was interrupted (denied, killed, or
+     sandboxed into a broken plumbing) — its empty `P:` is not an answer. */
+  if (!ranToCanary || (probe.sandboxDenied === true && probe.exitCode !== 0)) {
+    return probeBlocked(config, resolved, probe.stderr.length > 0 ? probe.stderr : '探测脚本没有跑到收尾（stdout 被截断或进程中断）')
   }
   /* A configured path that does not resolve is not the same failure as a machine
      with no git on PATH, and the fix is different — so it says which one it is. */

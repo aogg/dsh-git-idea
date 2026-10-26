@@ -39,6 +39,7 @@ let identityReply = {
   needsIdentity: false, nameMissing: false, emailMissing: false,
 }
 let toolReply = { ok: true, configured: '', fromPath: true, path: '/usr/bin/git', version: 'git version 2.43.0', found: true, reason: '', platform: 'ok' }
+let toolFail = null
 
 host.call = function (method, args) {
   if (method === 'git/identity') { identityCalls.push(args); return Promise.resolve(identityReply) }
@@ -52,7 +53,10 @@ host.call = function (method, args) {
       globalName: args.name, globalEmail: args.email, needsIdentity: false,
     })
   }
-  if (method === 'git/toolchain') { toolCalls.push(args); return Promise.resolve(toolReply) }
+  if (method === 'git/toolchain') {
+    toolCalls.push(args)
+    return toolFail != null ? Promise.reject(toolFail) : Promise.resolve(toolReply)
+  }
   if (method === 'git/config') return Promise.resolve(configReply({ config: configNow }))
   if (method === 'git/config-save') { configSaves.push(args.config); configNow = args.config; return Promise.resolve(configReply({ config: args.config })) }
   return baseCall(method, args)
@@ -169,6 +173,7 @@ console.log('== 配置页 · 全局配置 · git 位置 ==')
 const toolRow = function (t) {
   return rowTexts(t).filter(function (x) {
     return x.indexOf('现在用的是') >= 0 || x.indexOf('不可用') >= 0 || x.indexOf('PATH 上没有 git') >= 0
+      || x.indexOf('在沙箱里没跑成') >= 0 || x.indexOf('检查没能完成') >= 0
   })[0] || ''
 }
 st = await sectionTree('gp43-tool')
@@ -189,6 +194,38 @@ st = await sectionTree('gp43-tool-bad')
 console.log('  写错了:', JSON.stringify(toolRow(st)))
 ok('写进去的路径不可用时，说的是「设置里写的这个路径不可用」，而不是「这台机器没有 git」',
   toolRow(st).indexOf('设置里写的这个路径不可用') >= 0 && toolRow(st).indexOf('PATH 上没有 git') < 0)
+
+/* 探测跑不起来（沙箱拦下）：把真实原因亮出来，不许再冒充「PATH 上没有 git」。
+   2026-10-26 的真机事故：部署默认策略 workspace-write 根为 / 时，bwrap 的剖面把
+   自家的 /dev/null 盖坏，宿主把「探测没跑起来」误答成「PATH 上没有 git」（宿主侧
+   修复后这一类带着 reason='probe-blocked' 与原话 detail 到客户端）。 */
+toolReply = { ok: true, configured: '', fromPath: true, path: '/usr/bin/git', version: '', found: false, reason: 'probe-blocked', detail: "fatal: could not open '/dev/null' for reading and writing: Permission denied", platform: 'probe-blocked' }
+st = await sectionTree('gp43-tool-blocked')
+console.log('  沙箱拦下:', JSON.stringify(toolRow(st)))
+ok('探测被沙箱拦下时说的是「检查在沙箱里没跑成」并带原话，绝不是「PATH 上没有 git」',
+  toolRow(st).indexOf('在沙箱里没跑成') >= 0 && toolRow(st).indexOf('/dev/null') >= 0
+  && toolRow(st).indexOf('PATH 上没有 git') < 0)
+ok('这一行是警告色（读者要知道检查没作数）', byClass(st, 'dsh-git-warn').length > 0)
+
+/* 宿主拒答（callHost 整体被拒的 catch 路径）：错误原话要上屏，不许谎报没 git。
+   错误消息刻意避开 "is not registered" —— 那一句会被 callHost 当成「宿主还没就绪」
+   自动重试（10-state.js 的 HOST_NOT_READY），到不了探测的 catch；这里要测的是
+   真正落到 catch 的那一种（通道断了、桥源读不出来这类）。 */
+toolFail = new Error('dsh-git-idea/source handover failed')
+toolReply = { ok: true, configured: '', fromPath: true, path: '/usr/bin/git', version: 'git version 2.39.5', found: true, reason: '', platform: 'ok' }
+st = await sectionTree('gp43-tool-reject')
+console.log('  宿主拒答:', JSON.stringify(toolRow(st)))
+ok('宿主拒答时把错误原话说出来，不再冒充「PATH 上没有 git」',
+  toolRow(st).indexOf('检查没能完成') >= 0 && toolRow(st).indexOf('handover failed') >= 0
+  && toolRow(st).indexOf('PATH 上没有 git') < 0)
+toolFail = null
+
+/* 探测跟着会话走：请求里带 session id（身份组同一个先例 —— 面板里真正跑 git
+   命令用的就是会话那条策略，答出来的才是这台机器在该会话里的真实答案）。 */
+toolReply = { ok: true, configured: '', fromPath: true, path: '/usr/bin/git', version: 'git version 2.43.0', found: true, reason: '', platform: 'ok' }
+st = await sectionTree('gp43-tool-session')
+ok('git/toolchain 的请求带着 session id（探测跟着会话的沙箱策略走）',
+  toolCalls.length > 0 && toolCalls[toolCalls.length - 1].sessionId === 's-1')
 
 /* 改路径：去抖之后写进插件配置，同时立刻再检查一次「它到底能不能跑」。 */
 toolReply = { ok: true, configured: '/usr/local/bin/git', fromPath: false, path: '/usr/local/bin/git', version: 'git version 2.44.0', found: true, reason: '', platform: 'ok' }
