@@ -298,7 +298,7 @@ git config --global user.email "你的邮箱"
 node build-package.mjs          # 正式包：dist/lib/index.js + dist/client/client.js
 node build.mjs                  # 动态桥：dist/host.js + dist/client.js
 node test/build-suites.mjs      # 胶合套件：dist/test/ 下的 gp*-test 与基准
-node test/run-all.mjs           # 全部断言（1327 条）
+node test/run-all.mjs           # 全部断言（2121 条）
 node build.mjs --check && node build-package.mjs --check   # 产物是否最新
 node dist/test/bench.mjs        # 基准：200 条提交的历史列表
 node dist/test/bench-branch.mjs # 基准：300 个分支的切换器
@@ -313,7 +313,7 @@ node dist/test/bench-branch.mjs # 基准：300 个分支的切换器
 ```
 package.json          npm / DSH manifest（dsh.bundle patch + dsh.client web）
 cordis.patch.yml      bundle 层插入的插件行
-dist/                 全部构建产物（gitignore 不入库，先构建再测试/部署）
+dist/                 全部构建产物（重建在部署副本做，产物同步回本仓库入库：部署与核验以提交里的这份为准）
   dist/lib/index.js   构建产物：Host 半侧（ESM，插件对象 + 同源 RPC 路由）→ exports["."]
   dist/client/client.js
                       构建产物：Client 半侧（__ModuleLoader__ bundle）→ exports["./client"]
