@@ -14,6 +14,9 @@
  *   · session-complete  某会话的 running 位 true→false 边沿（进程内读 sessions /
  *                        agents 服务，不起进程）→ 2 秒防抖吞掉 goal 续轮间隙后广播；
  *                        浏览器补的那一刷就是 92-chip.js 的 runCompleteRefresh。
+ *                        广播前宿主先作废自己的读缓存（liveInvalidateCompletionRepos）：
+ *                        没有浏览器在听时推送等于没推、签名轮询也整轮省掉，这一拍
+ *                        的作废是「关着时完成 → 下次打开就是新账」的宿主半边。
  *
  * bridge 版（build.mjs 的 dist/host.js）没有 pkg 层，liveHub 不存在 —— 下面整个 effect
  * 用 typeof 守卫安静不启用，两种构建共用这一个片段。
@@ -203,9 +206,64 @@ function liveScheduleComplete(sessionId) {
   if (liveCompletePending.has(sessionId)) return
   const dispose = liveTimers().timeout(function () {
     liveCompletePending.delete(sessionId)
-    liveSend(JSON.stringify({ kind: 'session-complete', sessionId: sessionId }))
+    /* 先失效宿主自己的读缓存再广播（livePollRepo 的 repo-changed 同一条规矩）：
+     * 浏览器收到推送后赶来的读必须拿得到新答案。这条的另一半意义在「没有浏览器」
+     * 的现场 —— 完成推送推给零个连接等于没推，客户端那一刷（92-chip.js 的
+     * runCompleteRefresh：git/flush + 重读）永远不会来；签名轮询又因 sockets 空
+     * 整轮省掉（liveReposRound 开门就 return），读缓存里那份 graph / refs 就会
+     * 停在提交之前，下次打开面板的历史页读到的正是它（真机现场：agent 提交完，
+     * 面板开着时列表跟着刷、关着再开却停在旧账）。所以这一拍宿主把自己那份作废，
+     * 不依赖任何浏览器回话。 */
+    liveInvalidateCompletionRepos(sessionId).then(function () {
+      liveSend(JSON.stringify({ kind: 'session-complete', sessionId: sessionId }))
+    })
   }, LIVE_COMPLETE_DEBOUNCE_MS)
   liveCompletePending.set(sessionId, dispose)
+}
+
+/* 完成那一拍该作废哪些仓库：会话工作区本身，加上这个工作区在插件配置里记下的
+ * 手动仓库（70-config.js 的 repos，键是 repoKeyOf 口径）与生效仓库（appliedRepos）
+ * —— 与客户端完成那一刷的清单（92-chip.js 的 completionReposOf：扫描 + 手动 +
+ * 生效 + chip 记下的）同一家底；扫描那半宿主不做（那要起 find 进程，完成的这一拍
+ * 只该是缓存操作），工作区里嵌着的仓库若既没手动登记也没设成生效，就仍由「页面
+ * 在场」的那条链（客户端 flush + 签名轮询）兜着。读缓存条目的键是仓库路径前缀
+ * （60-reads.js 的 cached），逐仓作废即可。函数自身不抛：两处读源各有 catch 且
+ * 都说出去，作废失败时推送照发 —— 客户端的 flush 仍是第二道闸。 */
+async function liveInvalidateCompletionRepos(sessionId) {
+  const repos = []
+  const push = function (repo) {
+    if (!isStr(repo) || repo.length === 0) return
+    if (repos.indexOf(repo) >= 0) return
+    repos.push(repo)
+  }
+  let workspace = ''
+  const sessions = ctx.get('sessions')
+  if (sessions !== undefined && sessions != null && typeof sessions.get === 'function') {
+    try {
+      const session = sessions.get(sessionId)
+      const header = session != null ? session.header : null
+      if (header != null && isStr(header.cwd) && header.cwd.length > 0) {
+        workspace = header.cwd
+        push(workspace)
+      }
+    } catch (error) {
+      console.error('dsh-git-idea: live 完成刷新读不到会话工作区（这一拍只作废配置里记的仓库）', String(error))
+    }
+  }
+  try {
+    const config = await readConfigFile()
+    if (workspace.length > 0) {
+      const key = repoKeyOf(workspace)
+      const map = config != null && config.repos != null ? config.repos : null
+      const manual = map != null && Array.isArray(map[key]) ? map[key] : []
+      for (let i = 0; i < manual.length; i += 1) push(manual[i])
+      const applied = config != null && config.appliedRepos != null ? config.appliedRepos[key] : undefined
+      push(isStr(applied) ? applied : '')
+    }
+  } catch (error) {
+    console.error('dsh-git-idea: live 完成刷新读不到插件配置（这一拍只作废工作区那格）', String(error))
+  }
+  for (let i = 0; i < repos.length; i += 1) invalidateRepo(repos[i])
 }
 
 function liveCancelComplete(sessionId) {
