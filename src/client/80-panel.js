@@ -2905,7 +2905,10 @@
          不该白扫。答复落地全走函数式 setState，基于**最新**的 state 合并 —— 在飞
          期间 liveBus 插进来的行不会被旧闭包里的旧列表覆盖回去；sessionId 对不上时
          原样返回（那是换会话前留下的读数，谁也不许动它）。 */
-      const readCmdLog = function (at, opens) {
+      /* full === true 是「重新读取」按钮的强制全量：Host 不看账本、同步整扫一遍
+         （76-cmdlog.js）。其余的读（打开预读、切页补读、bump 补读）都走账本路 ——
+         账热时立即答复，增量刷新在后台完成后经 cmdlog-refresh 推送并回来。 */
+      const readCmdLog = function (at, opens, full) {
         cmdLogBox.seq += 1
         const seq = cmdLogBox.seq
         setCmdLog(function (previous) {
@@ -2919,7 +2922,7 @@
           }
           return { sessionId: sessionId, loading: true, at: at, opens: opens }
         })
-        callHost('git/command-log', { sessionId: sessionId, limit: 500 }).then(function (data) {
+        callHost('git/command-log', { sessionId: sessionId, limit: 500, full: full === true || undefined }).then(function (data) {
           if (seq !== cmdLogBox.seq) return
           setCmdLog(function (previous) {
             if (previous == null || previous.sessionId !== sessionId) return previous
@@ -2942,6 +2945,9 @@
               /* 会话扫描那一路读不了（没有 node、被沙箱拒了……）而面板记录给得出来时，
                  Host 把原话放在 warning 里随行 —— 折成空字段就成了没说过。 */
               warning: text(data.warning),
+              /* 工作区路径随答复记账：cmdlog-refresh 推送按它对号 —— 推送不带会话号，
+                 账本又是按工作区一本，没有这格就没法认领（见下面 live 订阅）。 */
+              workspace: text(data.workspace),
               at: at,
               opens: opens,
               refreshing: false,
@@ -3000,8 +3006,13 @@
          的列表：cmdlog-start 走和答复同一条增量合并路（57-cmdlog.js 的
          cmdlogMergeRows，按行身份去重/原地更新）—— 不再无条件 unshift：刚开的命令
          多半已经在最近一次答复里了，再前插一次就是两行；合并还会把它摆到 time 降序
-         该在的位置（最新，自然在最前）。cmdlog-exit 按 id 就地改退出码。函数式
-         setState 保证缝合落在最新的列表上，不与在飞的答复互相覆盖。 */
+         该在的位置（最新，自然在最前）。cmdlog-exit 按 id 就地改退出码（带 ms 时
+         连耗时一起，老宿主的推送没有 ms 就只改退出码 —— 向后兼容）。函数式
+         setState 保证缝合落在最新的列表上，不与在飞的答复互相覆盖。
+
+         cmdlog-refresh（76-cmdlog.js 的账本后台刷新）也是同一条合并路：推送按
+         workspace 对号 —— 这格是答复随行的（readCmdLog 记账），对不上就整包不理，
+         那是别的工作区的账；手里还没有列表时同样不理，下一轮读自会带来新账。 */
       React.useEffect(function () {
         if (typeof liveBus === 'undefined' || liveBus == null || typeof liveBus.subscribe !== 'function') return undefined
         return liveBus.subscribe(function (message) {
@@ -3024,6 +3035,13 @@
                 return Object.assign({}, one, { exitCode: typeof message.exitCode === 'number' ? message.exitCode : null })
               })
               return moved === true ? Object.assign({}, previous, { commands: next }) : previous
+            }
+            if (message.kind === 'cmdlog-refresh') {
+              if (Array.isArray(previous.commands) !== true) return previous
+              if (previous.workspace.length === 0 || message.workspace !== previous.workspace) return previous
+              if (Array.isArray(message.commands) !== true) return previous
+              return Object.assign({}, previous,
+                { commands: cmdlogMergeRows(previous.commands, message.commands, CMDLOG_LIVE_MAX) })
             }
             return previous
           })
@@ -5040,7 +5058,7 @@
            不清列表、不置 loading，读完增量合并 —— 和弹窗打开、bump 一个待遇。 */
         body = h(CommandLogPane, {
           log: cmdLog,
-          onReload: function () { readCmdLog(freshAt, cmdLogBox.opens) },
+          onReload: function () { readCmdLog(freshAt, cmdLogBox.opens, true) },
         })
       } else if (tab === 'config') {
         /* 远端表一变就当作仓库动过一次：分支树的「远程」分组、顶栏 ↑ 的数都从
