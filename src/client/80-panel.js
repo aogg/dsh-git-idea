@@ -3032,7 +3032,10 @@
               const next = previous.commands.map(function (one) {
                 if (one == null || one.id !== message.id) return one
                 moved = true
-                return Object.assign({}, one, { exitCode: typeof message.exitCode === 'number' ? message.exitCode : null })
+                return Object.assign({}, one, {
+                  exitCode: typeof message.exitCode === 'number' ? message.exitCode : null,
+                  durationMs: typeof message.ms === 'number' ? message.ms : (one != null ? one.durationMs : null),
+                })
               })
               return moved === true ? Object.assign({}, previous, { commands: next }) : previous
             }

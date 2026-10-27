@@ -715,6 +715,10 @@ textarea.dsh-git-input{resize:vertical}
 /* 100px 放得下最长的 YYYY-MM-DD HH:mm（10px 的表格数字），今天的那种短格式
    留白 —— 列对齐了，扫一眼就是时间轴。 */
 .dsh-git-cmdtime{flex:none;width:100px;font-size:10px;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}
+/* 耗时列紧跟时间列：固定最小宽（「运行中」三个字也放得下）加表格数字，一列耗时
+   才对得齐；flex:none，命令文本那格自带 min-width:0 先收缩 —— 窄面板先挤命令
+   文本，耗时格不破版。 */
+.dsh-git-cmddur{flex:none;min-width:48px;text-align:right;font-size:10px;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}
 .dsh-git-cmdtext{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
 .dsh-git-cmdesc{flex:0 1 auto;max-width:32%;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-secondary);font-size:11px}
 .dsh-git-cmdfail{flex:none;color:var(--dsh-alias-state-error-primary);font-size:10px;font-weight:600}

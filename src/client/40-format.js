@@ -58,6 +58,24 @@
         + ' ' + two(at.getHours()) + ':' + two(at.getMinutes())
     }
 
+    /* ── 命令页耗时列的形状（57-cmdlog.js 的行内徽标）──
+
+       三个刻度，一个未知：<1s 给毫秒原样（820ms，亚秒的命令占绝大多数，ms 才有
+       分辨率）；1s 到 1min 给秒、一位小数（3.2s；10s 以上小数位只是噪音，取整）；
+       超过 1min 给分秒（1m24s）。拿不到（null / 负数 / 非数 —— 两端时间戳缺了任何
+       一端）是「不知道」，不是 0：画 —。parseFloat 与宿主、排序同一个口径。 */
+    function durationText(ms) {
+      const n = parseFloat(ms)
+      if (isNaN(n) || n < 0) return '—'
+      if (n < 1000) return String(Math.round(n)) + 'ms'
+      if (n < 60000) {
+        const seconds = n / 1000
+        return (seconds >= 10 ? String(Math.round(seconds)) : seconds.toFixed(1)) + 's'
+      }
+      const total = Math.round(n / 1000)
+      return String(Math.floor(total / 60)) + 'm' + String(total % 60) + 's'
+    }
+
     function statusClass(status) {
       const head = text(status).charAt(0)
       if (head === 'A') return ' dsh-git-st-A'

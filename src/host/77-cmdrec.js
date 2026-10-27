@@ -149,12 +149,17 @@ function cmdrecBegin(input, desc, command, cwd) {
   return entry
 }
 
-/* 命令结束：补退出码、广播、退出码更新行进待写队列（同 id 合回起点行由读侧做）。 */
+/* 命令结束：补退出码与耗时、广播、退出码更新行进待写队列（同 id 合回起点行由
+ * 读侧做）。耗时是这里的第四个事实（起止都在手上，Date.now() 一减就有）：live
+ * 推送带 ms（客户端在命令页就地画耗时，老客户端不认这个字段也不碍事）；内存里
+ * 的 entry 同步补上（本会话的答复直接带着它）；文件里的更新行也带 ms（读侧
+ * cmdrecParseTail 合回起点行，换会话/重启后翻旧账照样有）。 */
 function cmdrecFinish(entry, exitCode) {
   if (entry == null) return
   entry.exitCode = typeof exitCode === 'number' ? exitCode : null
-  liveSend(JSON.stringify({ kind: 'cmdlog-exit', id: entry.id, exitCode: entry.exitCode }))
-  cmdrecQueue(JSON.stringify({ cmdrec: 'exit', id: entry.id, exitCode: entry.exitCode }))
+  entry.durationMs = Math.max(0, Date.now() - entry.time)
+  liveSend(JSON.stringify({ kind: 'cmdlog-exit', id: entry.id, exitCode: entry.exitCode, ms: entry.durationMs }))
+  cmdrecQueue(JSON.stringify({ cmdrec: 'exit', id: entry.id, exitCode: entry.exitCode, ms: entry.durationMs }))
 }
 
 /* switchBranch（66-refs.js）这类不经 panelMutate 的变更入口：把它们手里那次 git 调用
@@ -217,7 +222,11 @@ function cmdrecParseTail(stdout) {
     }
     if (raw == null || typeof raw !== 'object') continue
     if (raw.cmdrec === 'exit' && isStr(raw.id)) {
-      exits[raw.id] = typeof raw.exitCode === 'number' ? raw.exitCode : null
+      exits[raw.id] = {
+        exitCode: typeof raw.exitCode === 'number' ? raw.exitCode : null,
+        /* 老记录（加上耗时列之前写的）没有 ms：null 就是「不知道」，UI 画 —。 */
+        ms: typeof raw.ms === 'number' ? raw.ms : null,
+      }
       continue
     }
     if (isStr(raw.id) === false) continue
@@ -228,12 +237,16 @@ function cmdrecParseTail(stdout) {
       description: isStr(raw.description) ? raw.description : '',
       cwd: isStr(raw.cwd) ? raw.cwd : '',
       exitCode: typeof raw.exitCode === 'number' ? raw.exitCode : null,
+      durationMs: typeof raw.durationMs === 'number' ? raw.durationMs : null,
       source: 'panel',
       sessionId: isStr(raw.sessionId) ? raw.sessionId : '',
     })
   }
   for (let i = 0; i < starts.length; i += 1) {
-    if (Object.prototype.hasOwnProperty.call(exits, starts[i].id)) starts[i].exitCode = exits[starts[i].id]
+    if (Object.prototype.hasOwnProperty.call(exits, starts[i].id)) {
+      starts[i].exitCode = exits[starts[i].id].exitCode
+      if (exits[starts[i].id].ms !== null) starts[i].durationMs = exits[starts[i].id].ms
+    }
   }
   return { rows: starts, clipped: total > CMDREC_TAIL_LINES }
 }

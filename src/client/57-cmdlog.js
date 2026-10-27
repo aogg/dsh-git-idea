@@ -172,8 +172,11 @@
         /* 面板执行（source === 'panel'）的行：右侧徽标画「面板」，不画会话号 —— 它
            不是 AI 会话里跑的，会话号反而是噪音。退出码还空着的面板行是正在跑的：给
            一个会动的省略号当「运行中」，结束时由推送（80-panel.js 的 live 订阅）补上
-           真退出码。 */
+           真退出码；耗时格同一时刻画「运行中」（start 推送没带耗时 —— 它还没跑完），
+           cmdlog-exit 带着 ms 来了才换成真数字。 */
         const fromPanel = one.source === 'panel'
+        const running = fromPanel === true && exit == null
+        const duration = running === true ? '运行中' : durationText(one.durationMs)
         rows.push(h('div', {
           key: key,
           className: 'dsh-git-cmdline',
@@ -190,6 +193,11 @@
           },
         },
           h('span', { key: 't', className: 'dsh-git-cmdtime', title: cmdClockFull(one.time) }, cmdClock(one.time)),
+          h('span', {
+            key: 'u', className: 'dsh-git-cmddur',
+            title: running === true ? '执行中，结束后显示耗时'
+              : (typeof one.durationMs === 'number' ? '耗时 ' + durationText(one.durationMs) : '耗时未知（记录里没有起止时间）'),
+          }, duration),
           h('span', { key: 'x', className: 'dsh-git-cmdtext' }, command),
           text(one.description).length > 0
             ? h('span', { key: 'd', className: 'dsh-git-cmdesc', title: text(one.description) }, text(one.description))
