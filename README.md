@@ -316,7 +316,7 @@ node dist/test/bench-branch.mjs # 基准：300 个分支的切换器
 ```
 package.json          npm / DSH manifest（dsh.bundle patch + dsh.client web）
 cordis.patch.yml      bundle 层插入的插件行
-dist/                 全部构建产物（重建在部署副本做，产物同步回本仓库入库：部署与核验以提交里的这份为准）
+dist/                 全部构建产物（gitignore 不入库，先构建再测试/部署）
   dist/lib/index.js   构建产物：Host 半侧（ESM，插件对象 + 同源 RPC 路由）→ exports["."]
   dist/client/client.js
                       构建产物：Client 半侧（__ModuleLoader__ bundle）→ exports["./client"]
