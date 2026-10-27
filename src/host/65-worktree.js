@@ -103,8 +103,9 @@ async function worktreesSnapshot(input) {
      · name: new / checkout 必填（checkout 收本地分支短名或完整的远端分支名
        origin/feat/x —— 检出远端分支时 git 自己的 dwim 会建同名本地跟踪分支）；
      · at: 起点可空。new 空 = 从 HEAD 起；detach 空 = 显式给 'HEAD'（git 对
-       `worktree add --detach <path>` 会拒收，起点必须说出口）；checkout 的 at 是
-       「从哪个提交检出这个分支」，一般不给；
+       `worktree add --detach <path>` 会拒收，起点必须说出口）；checkout **不收**
+       at —— 要检出的那个分支名本身就是起点（客户端 checkout 模式根本不发 at；
+       真收到了就答人话，不静默丢掉读者的输入）；
      · force: 客户端「强制覆盖」勾选 → --force（目录已存在且非空 / 分支已被别的
        worktree 占用 / 目录是已登记但丢失的 worktree，这三种 git 默认都拒）。
    校验失败一律 {ok:false, error:'人话'}（git/branch-create 同一个形状，80-rpc.js）；
@@ -112,7 +113,15 @@ async function worktreesSnapshot(input) {
    argv 全数组、不过 shell（panelMutate 同一规矩），要挡的是 git 自己会误读的形状）。
 
    argv 顺序照 git worktree add 的手册：`git worktree add [--force] [--detach]
-   [-b <新分支>] <path> [<起点>]` —— 旗标全部在 path 前面，path 后面只跟起点。
+   [-b <新分支>] <path> [<commit-ish>]` —— 旗标全部在 path 前面，path 后面只跟
+   起点位那一个 <commit-ish>：
+     · new      → `-b <新分支> <path> [<起点>]`（起点空 = 从 HEAD 起，git 默认）；
+     · detach   → `--detach <path> <起点|HEAD>`；
+     · checkout → `<path> <要检出的分支>`：检出已有分支，分支名就落在手册的
+       <commit-ish> 位上（本地短名与远端全名 origin/feat/x 都放这里，后者交给 git
+       的 dwim 建同名本地跟踪分支）。反例（本次修的就是它）：分支名只进了校验、
+       不进 argv 的话，实际跑的是 `worktree add <path>` —— 变成 HEAD 的游离检出，
+       根本不是「检出读者点名的那个分支」。
    执行走 panelMutate(input, argv, { desc: '新建 worktree' })（68-detail.js：自动进
    「命令」页 + 无条件整仓读缓存失效 + sandboxDenied / noGit 旗标），与本插件其它
    变更类 RPC 同一条路。
@@ -143,12 +152,18 @@ async function addWorktree(input) {
   if (cleanedAt === null) {
     return { ok: false, error: '起点不合法：不能以 - 开头、不能含控制字符', path: path }
   }
+  /* checkout 的起点位是被检出的分支名本身（手册的 <commit-ish>），没有第二个起点
+     可放；客户端那个模式也不发 at。真收到就明说，不悄悄丢掉读者的输入。 */
+  if (mode === 'checkout' && cleanedAt.length > 0) {
+    return { ok: false, error: '检出分支模式不接受起点：要检出的分支名本身就是起点', path: path }
+  }
   const argv = ['worktree', 'add']
   if (force === true) argv.push('--force')
   if (mode === 'detach') argv.push('--detach')
   if (mode === 'new') argv.push('-b', cleanedName)
   argv.push(path)
   if (mode === 'detach') argv.push(cleanedAt.length > 0 ? cleanedAt : 'HEAD')
+  else if (mode === 'checkout') argv.push(cleanedName)
   else if (cleanedAt.length > 0) argv.push(cleanedAt)
   const done = await panelMutate(input, argv, { desc: '新建 worktree' })
   if (done.ok !== true) return done
