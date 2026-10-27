@@ -73,6 +73,7 @@ export const TARGETS = [
       'src/client/60-icons.js',
       'src/client/61-filemenu.js',
       'src/client/62-branchstate.js',
+      'src/client/63-storedlists.js',
       'src/client/70-branchpicker.js',
       'src/client/78-actions.js',
       'src/client/79-globalconfig.js',

@@ -55,10 +55,10 @@
        错误横幅的事 —— 仓库清单是辅助信息，坏掉它不该坏掉面板（RepoSetup 那套 reason
        的完整句子留给了「仓库本身读不动」这种情况）。 */
     function adoptReposReply(sessionId, data) {
+      let changed = false
       if (data != null && data.ok === true && text(data.workspace).length > 0) {
         const workspace = text(data.workspace)
-        repoSessions[sessionId] = workspace
-        repoLists[workspace] = {
+        const fresh = {
           repos: Array.isArray(data.repos) ? data.repos.map(text) : [],
           manual: Array.isArray(data.manual) ? data.manual.map(text) : [],
           missing: Array.isArray(data.missing) ? data.missing.map(text) : [],
@@ -68,12 +68,39 @@
           phase: 'ready',
           note: data.truncated === true ? '仓库太多，只显示前 ' + String(Array.isArray(data.repos) ? data.repos.length : 0) + ' 个' : '',
         }
+        /* 内容级去重（63-storedlists.js）：会话映射没换、工作区名下又已有一份
+           ready 且清单逐字一致（内容原样的重新 adopt）就不重写内存账、不 bump
+           重画、也不落盘 —— 映射换过（刷新后首次 adopt 把会话认到工作区名下）则
+           照旧整套落账，渲染按新映射找清单。 */
+        const previous = repoLists[workspace]
+        const same = repoSessions[sessionId] === workspace
+          && previous !== undefined
+          && previous.phase === 'ready'
+          && storedRepoListFieldsSame(previous, fresh)
+        repoSessions[sessionId] = workspace
+        if (same !== true) {
+          repoLists[workspace] = fresh
+          /* 盘账跟着落一份（63-storedlists.js，按会话一格；put 内部对盘上现账再做
+             一次内容去重，一致就不写盘）。 */
+          repoListsStored.put(text(sessionId), {
+            repos: fresh.repos,
+            manual: fresh.manual,
+            missing: fresh.missing,
+            links: fresh.links,
+            note: fresh.note,
+          })
+          changed = true
+        }
       } else if (sessionId != null) {
         /* 没扫出来（或 Host 还没有这个方法）：清单保持空白，但「扫过了」要记下，
            免得每次重渲染都再问一遍。生效仓库那一行由调用方补种，列表依然可用。 */
         repoLists['session:' + text(sessionId)] = Object.assign(repoListEmpty(), { phase: 'failed' })
+        /* 扫描答复不是 ok：这份清单已经不可信，删掉该会话的盘账条目并落盘 ——
+           仓库没了/读不动了，不许在下一次刷新还魂（chip 的分支名同一套失效规矩）。 */
+        repoListsStored.drop(text(sessionId))
+        changed = true
       }
-      bumpRepoList()
+      if (changed) bumpRepoList()
     }
 
     /* 面板打开时叫一次。异步、不阻塞首帧：这里只发起，回复通过
@@ -86,13 +113,21 @@
     function ensureWorkspaceRepos(sessionId) {
       if (sessionId == null || repoScanAsked[sessionId] === true) return
       repoScanAsked[sessionId] = true
-      repoLists['session:' + text(sessionId)] = Object.assign(repoListEmpty(), { phase: 'scanning' })
+      /* 首帧垫底（63-storedlists.js 的盘账）：这个会话盘上有上次的清单，就先把
+         'session:'+id 的占位种成 ready + 那份清单 —— 扫描答复回来之前左栏就有得
+         画，不再闪「正在扫描」。扫描照发（去重键仍是会话），答复一到照旧 adopt
+         整个盖掉；盘账只管「首帧不空」，绝不拦读、绝不省读。 */
+      const storedList = repoListsStored.get(text(sessionId))
+      repoLists['session:' + text(sessionId)] = storedList != null
+        ? Object.assign(repoListEmpty(), storedList, { phase: 'ready' })
+        : Object.assign(repoListEmpty(), { phase: 'scanning' })
       bumpRepoList()
       callHost('git/repos', { sessionId: sessionId }).then(function (data) {
         adoptReposReply(sessionId, data)
       }).catch(function (failure) {
         /* 运输层断了（Host 重启中 callHost 自己会重试）才会走到这：记成失败，面板
-           那一栏说「扫描失败」，而不是永远「正在扫描」。 */
+           那一栏说「扫描失败」，而不是永远「正在扫描」。盘账不删 —— 没有答复说清
+           单错了，Host 回来后下一次刷新垫底还有得上（chip 的分支名同一套规矩）。 */
         console.error('dsh-git-idea: workspace repo scan failed', failureText(failure))
         repoLists['session:' + text(sessionId)] = Object.assign(repoListEmpty(), { phase: 'failed' })
         bumpRepoList()

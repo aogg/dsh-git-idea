@@ -2714,8 +2714,29 @@
       React.useEffect(function () {
         if (!repoOk || props.ready !== true) return undefined
         let alive = true
+        /* 首帧垫底（63-storedlists.js 的盘账）：内存里还没有这个仓库的账（刷新后
+           必然如此，或刚从别的仓库切过来）就先把盘上那份摆上去画。RPC 照发，答复
+           一到整个盖掉 —— 盘账只管「首帧不空」，已持有同一仓库的 ok 内存账时不许
+           被盘上那份覆盖（盘账只旧不新）。 */
+        const seed = appliedRepo.length > 0 ? refsTreeStored.get(appliedRepo) : null
+        if (seed != null) {
+          setRefs(function (previous) {
+            if (previous != null && previous.ok === true && text(previous.repo) === appliedRepo) return previous
+            return seed
+          })
+        }
         callHost('git/refs', base(appliedRepo)).then(function (data) {
-          if (alive) setRefs(data)
+          if (alive !== true) return
+          /* 内容级去重：与内存现账逐字一致就不 setRefs（重画抖动停掉）；盘账的
+             put 自己再比一次，一致就不落盘。答复 ok!==true 维持照画现状，另外删
+             该仓的盘账条目 —— 仓库读不动了，不许在下一次刷新还魂（运输层失败不
+             删：与 chip 的分支名同一套规矩）。 */
+          setRefs(function (previous) {
+            if (previous != null && sameStoredJSON(previous, data)) return previous
+            return data
+          })
+          if (data != null && data.ok === true) refsTreeStored.put(appliedRepo, data)
+          else refsTreeStored.drop(appliedRepo)
         }).catch(function (failure) {
           if (alive) setError(failureText(failure))
         })
@@ -2730,20 +2751,43 @@
         if (tab !== 'log' || props.ready !== true || logSelKey.length === 0) return undefined
         let alive = true
         const repos = logSelKey.split('\u0000')
+        /* 首帧垫底（63-storedlists.js 的盘账）：多选里内存还没有 ok 账的仓库，先把
+           盘上那份种进去 —— 刷新后或换一组选中的第一帧，分组头下面就有分支行。
+           各仓的 git/refs 照发，答复到了按内容决定盖不盖。 */
+        setRepoRefs(function (previous) {
+          let next = previous
+          for (let i = 0; i < repos.length; i += 1) {
+            const repo = repos[i]
+            const current = next[repo]
+            if (current != null && current.ok === true) continue
+            const hit = refsTreeStored.get(repo)
+            if (hit == null) continue
+            if (next === previous) next = Object.assign({}, previous)
+            next[repo] = hit
+          }
+          return next
+        })
         for (let i = 0; i < repos.length; i += 1) {
           const repo = repos[i]
           callHost('git/refs', { sessionId: sessionId, repo: repo }).then(function (data) {
             if (alive !== true) return
+            /* 内容级去重（63-storedlists.js）：与该仓内存现账逐字一致就不写 state
+               也不落盘 —— 各仓答复先来后到，互不牵连。ok!==true 删该仓盘账条目。 */
             setRepoRefs(function (previous) {
+              const current = previous[repo]
+              if (current != null && sameStoredJSON(current, data)) return previous
               const next = Object.assign({}, previous)
               next[repo] = data
               return next
             })
+            if (data != null && data.ok === true) refsTreeStored.put(repo, data)
+            else refsTreeStored.drop(repo)
           }).catch(function (failure) {
             /* 一份 ref 表读不动不该连别的组也不画：记进日志，那一组显示「无法读取
                分支」。 */
             console.error('dsh-git-idea: could not read refs of ' + repo, failureText(failure))
             if (alive !== true) return
+            refsTreeStored.drop(repo)
             setRepoRefs(function (previous) {
               const next = Object.assign({}, previous)
               next[repo] = { ok: false, local: [], current: [], remote: [] }
@@ -2771,8 +2815,25 @@
       React.useEffect(function () {
         if (!repoOk || props.ready !== true) return undefined
         let alive = true
+        /* 首帧垫底（63-storedlists.js 的盘账），与上面 git/refs 那条同一套：内存里
+           还没有这个仓库的账就先画盘上那份，RPC 照发，答复一到整个盖掉。 */
+        const seed = appliedRepo.length > 0 ? worktreesStored.get(appliedRepo) : null
+        if (seed != null) {
+          setWorktrees(function (previous) {
+            if (previous != null && previous.ok === true && text(previous.repo) === appliedRepo) return previous
+            return seed
+          })
+        }
         callHost('git/worktrees', base(appliedRepo)).then(function (data) {
-          if (alive) setWorktrees(data)
+          if (alive !== true) return
+          /* 内容级去重：与内存现账逐字一致就不 setWorktrees；put 内部对盘账再比
+             一次，一致就不落盘。答复 ok!==true 删该仓盘账条目（运输层失败不删）。 */
+          setWorktrees(function (previous) {
+            if (previous != null && sameStoredJSON(previous, data)) return previous
+            return data
+          })
+          if (data != null && data.ok === true) worktreesStored.put(appliedRepo, data)
+          else worktreesStored.drop(appliedRepo)
         }).catch(function (failure) {
           console.error('dsh-git-idea: could not read worktrees', failureText(failure))
           if (alive) setWorktrees({ ok: false, repo: appliedRepo.length > 0 ? appliedRepo : null, error: 'unavailable', worktrees: [] })
@@ -3102,6 +3163,10 @@
            读好了（它每页必挂），这里补一次 doc 交接兜底 —— 万一面板先于 chip 到场
            （单测直接挂面板、或未来的挂载顺序变化），账也赶在下次询问前就位。 */
         loadAppliedRepos(doc)
+        /* 左栏三份列表（分支树 / worktree / 仓库清单）的垫底账同在这里交 doc：
+           63-storedlists.js 的 loadStoredLists，懒加载一次，随后的首帧垫底读就能
+           命中（loadChipLabels 同一条先例）。 */
+        loadStoredLists(doc)
         loadPluginConfig()
         /* 面板先于 chip 到场时的兜底：后端账这一问也在这里发（appliedAsked 去重，
            与 chip 谁先到都只问一次）。 */
