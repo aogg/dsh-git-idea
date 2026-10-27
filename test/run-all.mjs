@@ -54,10 +54,11 @@ const COUNTING = [
   'gp67-client-test.mjs',
   'gp69-lifecycle-client-test.mjs',
   'gp70-telemetry-client-test.mjs',
+  'gp73-worktree-form-client-test.mjs',
   'gp74-client-test.mjs',
 ]
 /* Suites that report by exit code and print their own lines. */
-const PROSE = ['gp34a-host-test.mjs', 'gp34d-config-test.mjs', 'gp34e-bridge-test.mjs', 'gp45-host-test.mjs', 'gp48-safedir-host-test.mjs', 'gp49-host-test.mjs', 'gp50-host-test.mjs', 'gp51-host-test.mjs', 'gp53-host-test.mjs', 'gp54-host-test.mjs', 'gp54-client-test.mjs', 'gp55-filesave-host-test.mjs', 'gp56-host-test.mjs', 'gp57-host-test.mjs', 'gp58-host-test.mjs', 'gp61-host-test.mjs', 'gp62-host-test.mjs', 'gp63-host-test.mjs', 'gp64-host-test.mjs', 'gp66-host-test.mjs', 'gp67-host-test.mjs', 'gp68-token-host-test.mjs', 'gp71-clientlog-host-test.mjs']
+const PROSE = ['gp34a-host-test.mjs', 'gp34d-config-test.mjs', 'gp34e-bridge-test.mjs', 'gp45-host-test.mjs', 'gp48-safedir-host-test.mjs', 'gp49-host-test.mjs', 'gp50-host-test.mjs', 'gp51-host-test.mjs', 'gp53-host-test.mjs', 'gp54-host-test.mjs', 'gp54-client-test.mjs', 'gp55-filesave-host-test.mjs', 'gp56-host-test.mjs', 'gp57-host-test.mjs', 'gp58-host-test.mjs', 'gp61-host-test.mjs', 'gp62-host-test.mjs', 'gp63-host-test.mjs', 'gp64-host-test.mjs', 'gp66-host-test.mjs', 'gp67-host-test.mjs', 'gp68-token-host-test.mjs', 'gp71-clientlog-host-test.mjs', 'gp72-worktree-host-test.mjs']
 
 /* ── GP_FRESH：不落仓库产物也做回归 ──
 
@@ -88,7 +89,7 @@ function run(file) {
   const started = Date.now()
   /* 这六个套件读的是 host 那一半，其余读 client 那一半（GP_SRC 在它们各自文件里
      的含义就是「要测的那份源码」）。 */
-  const hostHalves = ['gp34a-host-test.mjs', 'gp34d-config-test.mjs', 'gp45-host-test.mjs', 'gp48-safedir-host-test.mjs', 'gp49-host-test.mjs', 'gp50-host-test.mjs', 'gp51-host-test.mjs', 'gp53-host-test.mjs', 'gp54-host-test.mjs', 'gp55-filesave-host-test.mjs', 'gp56-host-test.mjs', 'gp57-host-test.mjs', 'gp58-host-test.mjs', 'gp59-filemenu-test.mjs', 'gp61-host-test.mjs', 'gp62-host-test.mjs', 'gp63-host-test.mjs', 'gp64-host-test.mjs', 'gp66-host-test.mjs', 'gp67-host-test.mjs']
+  const hostHalves = ['gp34a-host-test.mjs', 'gp34d-config-test.mjs', 'gp45-host-test.mjs', 'gp48-safedir-host-test.mjs', 'gp49-host-test.mjs', 'gp50-host-test.mjs', 'gp51-host-test.mjs', 'gp53-host-test.mjs', 'gp54-host-test.mjs', 'gp55-filesave-host-test.mjs', 'gp56-host-test.mjs', 'gp57-host-test.mjs', 'gp58-host-test.mjs', 'gp59-filemenu-test.mjs', 'gp61-host-test.mjs', 'gp62-host-test.mjs', 'gp63-host-test.mjs', 'gp64-host-test.mjs', 'gp66-host-test.mjs', 'gp67-host-test.mjs', 'gp72-worktree-host-test.mjs']
   const env = Object.assign({}, process.env)
   if (FRESH) {
     env.GP_SRC = hostHalves.indexOf(file) >= 0 ? freshHost : freshClient
