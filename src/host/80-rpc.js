@@ -7,12 +7,122 @@
    (`gitExe` — see 72-gitbin.js) and command lines are built synchronously inside
    the handlers. One cached read for the life of the process: the first request
    pays for it, and a "which git" answer can never be half-applied. */
+/* ── 宿主读耗时观测日志（~/.dsh/logs/dsh-git-idea-host.log）──
+ *
+ * 「慢」的定位以前只能靠猜：整树 4–6s、命令页全扫 4s+、路径读 1.5s——到底是哪条
+ * 命令哪个仓库慢，没有账可翻。这里给每一个 RPC 调用记一行：时刻、方法名、仓库
+ * （payload.repo 或解析到的会话 cwd，拿不到记 -）、paths 条数（有则记）、耗时
+ * ms、ok / 错误摘要。落盘复用 client-log（src/pkg/host-pre.js）的轮转思路：
+ * 5MB 一转、.1 覆盖旧的；但 host 片段碰不到 fs，追加走 invoke（77-cmdrec.js 的
+ * cmdrecAppendLines 同一条路）。
+ *
+ * 防刷屏规则（写死在这里，改规则改这里）：`git/watch` 成功且耗时 < 200ms 的跳过，
+ * 其余全记。watcher 是这条通道上最高频的调用（每仓库每 3 秒一条），而它成功时
+ * 几乎永远在几十 ms 内 —— 全记的话日志里九成是它的成功行，把真正慢的那几条淹没。
+ * 它失败（拒绝、超时、shell 层报错）或变慢（≥200ms，9p 盘上整树时就有这么大）时
+ * 恰恰是最值得看的信号，一条不落。
+ *
+ * 追加必须异步且失败安静：日志挂在每一次读的路上，写不动（盘满、目录没了）时
+ * 只能记一条 console.error，绝不能让读本身跟着失败 —— 这是对「禁止空 catch 裸吞」
+ * 的例外，理由就是这句：观测不许反过来伤害被观测的东西。 */
+const RPCLOG_BASENAME = '/logs/dsh-git-idea-host.log'
+const RPCLOG_MAX_BYTES = 5 * 1024 * 1024
+const RPCLOG_FLUSH_MS = 2000
+const RPCLOG_QUEUE_MAX = 1000
+const RPCLOG_WATCH_SKIP_MS = 200
+const rpclogQueue = []
+let rpclogTimer = null
+let rpclogDirTried = false
+let rpclogDropped = 0
+
+function rpclogField(value, cap) {
+  const raw = typeof value === 'string' ? value : String(value)
+  const cleaned = raw.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim()
+  return cleaned.length > cap ? cleaned.slice(0, cap) + '…' : cleaned
+}
+
+function rpclogNote(name, input, elapsedMs, error, value) {
+  /* 防刷屏：git/watch 成功且 <200ms 跳过，其余全记（理由见上面那块注释）。 */
+  if (name === 'git/watch' && error == null && elapsedMs < RPCLOG_WATCH_SKIP_MS) return
+  const repoRaw = repoFrom(input)
+  const repo = isStr(repoRaw) && repoRaw.length > 0 ? rpclogField(repoRaw, 300) : '-'
+  const paths = input != null && Array.isArray(input.paths) ? String(input.paths.length) : '-'
+  /* 三种结局分开记：err = promise 拒了（transport 层的失败）；no = 答复自身带
+     ok:false（git 拒绝、不是仓库……领域层的「办不成」——查「为什么这条失败」
+     大半查的是它）；ok = 干净答复。摘要都是一行以内。 */
+  let outcome = 'ok'
+  if (error != null) outcome = 'err ' + rpclogField(error.message !== undefined ? error.message : error, 200)
+  else if (value != null && typeof value === 'object' && value.ok === false) {
+    outcome = 'no ' + rpclogField(value.error !== undefined ? value.error : value.stderr, 200)
+  }
+  const line = new Date().toISOString() + '\t' + name + '\t' + repo + '\tpaths=' + paths
+    + '\t' + String(elapsedMs) + 'ms\t' + outcome + '\n'
+  rpclogQueue.push(line)
+  while (rpclogQueue.length > RPCLOG_QUEUE_MAX) {
+    rpclogQueue.shift()
+    rpclogDropped += 1
+  }
+  if (rpclogTimer !== null) return
+  rpclogTimer = setTimeout(function () { rpclogTimer = null; rpclogFlush() }, RPCLOG_FLUSH_MS)
+  if (typeof rpclogTimer.unref === 'function') rpclogTimer.unref()
+}
+
+/* 攒批冲刷：2 秒的行一次追加完（一条 printf、一次进程）。cmdlogHome() 顺带给出
+ * DSH_HOME —— 日志跟 client-log / 面板命令记录住同一个家（$DSH_HOME/logs/）。
+ * 轮转检查每次冲刷都带上：`stat -c %s` 只问元数据不读内容（client-log 的 fsp.stat
+ * 同一个思路，9p 上也就一两 ms），比「攒 256KB 才查一次」的记账法可靠 —— 外部把
+ * 文件写大（别的工具、手工）也逃不掉。 */
+function rpclogFlush() {
+  if (rpclogQueue.length === 0) return
+  const lines = rpclogQueue.splice(0, rpclogQueue.length)
+  const dropped = rpclogDropped
+  rpclogDropped = 0
+  cmdlogHome().then(function (home) {
+    if (home === null) return
+    const file = home + RPCLOG_BASENAME
+    const first = rpclogDirTried !== true
+    rpclogDirTried = true
+    const text = lines.join('') + (dropped > 0 ? '…\t队列溢出，丢了 ' + String(dropped) + ' 行\n' : '')
+    return invoke(
+      (first === true ? 'mkdir -p ' + shq(home + '/logs') + ' && ' : '')
+        + 's=$(stat -c %s ' + shq(file) + ' 2>/dev/null || echo 0); if [ "$s" -gt ' + String(RPCLOG_MAX_BYTES) + ' ]; then mv ' + shq(file) + ' ' + shq(file + '.1') + '; fi; '
+        + 'printf %s ' + shq(text) + ' >> ' + shq(file) + '\n',
+      {}, null, { timeoutMs: 10000 }).then(function (wrote) {
+        if (wrote.exitCode !== 0) {
+          console.error('dsh-git-idea: 宿主读耗时日志写不进 ' + file + '（读本身不受影响）', wrote.stderr.slice(0, 200))
+        }
+      })
+  }).catch(function (error) {
+    console.error('dsh-git-idea: 宿主读耗时日志冲刷失败（读本身不受影响）', String(error))
+  })
+}
+
 function onRpc(name, handler) {
   ctx.effect(function () {
     return harness.handle(name, function (input) {
+      const startedAt = Date.now()
+      const note = function (resolved, error, value) {
+        try {
+          rpclogNote(name, resolved, Date.now() - startedAt, error, value)
+        } catch (error2) {
+          /* 记日志的代码自己出伤不能再往读上翻 —— 说一声就放下。 */
+          console.error('dsh-git-idea: rpclog 内部出错', String(error2))
+        }
+      }
       return readConfigFile()
         .then(function () { return withSessionRepo(input) })
-        .then(function (resolved) { return handler(resolved) })
+        .then(function (resolved) {
+          /* 有的处理函数给的就是个对象（git/flush 的 {ok:true}），不是 promise ——
+             Promise.resolve 把两种形状拉平，计时与记账对两种都成立。 */
+          return Promise.resolve(handler(resolved)).then(
+            function (value) { note(resolved, null, value); return value },
+            function (error) { note(resolved, error); throw error })
+        }, function (error) {
+          /* config 读、会话 cwd 解析这两步失败也算这次调用的耗时与错误 —— 观测
+             不只看好天气里的读。repo 此刻解析不到，rpclogNote 自己会记成 -。 */
+          note(null, error)
+          throw error
+        })
     })
   }, 'dsh-git-idea rpc ' + name)
 }
@@ -152,7 +262,8 @@ onRpc('git/repo-applied-save', function (input) { return saveAppliedRepo(input) 
 
 /* 面板「命令」页：这个工作区里执行过的所有 git 命令，数据源是 DSH 的会话记录
    而不是仓库（76-cmdlog.js）。和上面两个 repos 读一样按工作区走，不进读缓存 ——
-   它要的就是「刚刚又跑了什么」，每次都重读一遍会话文件。 */
+   它要的就是「刚刚又跑了什么」；扫描结果由 76 的账本按会话文件 (mtimeMs,size)
+   记账，账热时立即答复、增量刷新走后台，读本身不再每次付全量重扫的钱。 */
 onRpc('git/command-log', function (input) { return commandLogSnapshot(input) })
 
 onRpc('git/commit-detail', function (input) { return commitDetailSnapshot(input) })
