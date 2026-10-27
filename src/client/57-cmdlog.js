@@ -228,6 +228,22 @@
         }
       }
 
+      /* 表头：只是列名的静态标注 —— 不可点、无悬停、不可选中，不碰过滤/展开/
+         复制任何一条逻辑。只在手里真有数据行可对齐时渲染：读取中、没执行过、
+         过滤无匹配这些空态再给一行表头，读起来像坏掉而不是像引导。退出码与
+         运行中是行内条件徽标（不是每行都有、位置也不固定），不设列头 —— 表头上
+         描述与来源之间的空档就是它们出现的地方。列宽不另起炉灶：时间/耗时两格
+         直接复用数据行的格类（dsh-git-cmdtime / dsh-git-cmddur），两处共用一份
+         宽度声明，纵向永远对得齐。 */
+      const head = rows.length > 0
+        ? h('div', { key: 'head', className: 'dsh-git-cmdhead' },
+          h('span', { key: 't', className: 'dsh-git-cmdtime' }, '时间'),
+          h('span', { key: 'u', className: 'dsh-git-cmddur' }, '耗时'),
+          h('span', { key: 'x', className: 'dsh-git-cmdheadcmd' }, '命令'),
+          h('span', { key: 'd', className: 'dsh-git-cmdheaddesc' }, '描述'),
+          h('span', { key: 's', className: 'dsh-git-cmdheadsrc' }, '来源'))
+        : null
+
       const bar = h('div', { key: 'bar', className: 'dsh-git-cmdbar' },
         h('button', {
           key: 'r', type: 'button', className: 'dsh-git-btn', disabled: loading,
@@ -292,5 +308,5 @@
             ? h('div', { key: 'empty', className: 'dsh-git-pane dsh-git-dim' }, '还没有执行过 git 命令')
             : rows.length === 0
               ? h('div', { key: 'none', className: 'dsh-git-pane dsh-git-dim' }, '没有匹配的命令')
-              : rows))
+              : [head].concat(rows))
     }

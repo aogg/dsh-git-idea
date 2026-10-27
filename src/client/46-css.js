@@ -712,6 +712,17 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-cmdlist{flex:1;min-height:0;overflow:auto;padding:4px 0}
 .dsh-git-cmdline{display:flex;align-items:center;gap:8px;padding:2px 8px;cursor:pointer;white-space:nowrap;-webkit-user-select:none;user-select:none}
 .dsh-git-cmdline:hover{background:var(--dsw-alias-bg-layer-2)}
+/* 表头（57-cmdlog.js 只在有数据行时渲染）：吸顶的列名标注。sticky 的 top 用
+   -4px 抵消列表容器 4px 的 padding-top —— 不抵的话，滚动时行会从表头上沿那条
+   padding 缝里透出来。背景必须不透明（与工具条同用 bg-layer-2），行从底下穿过
+   才不会与列名叠印；观感对齐 .dsh-git-diffrail-head：小一号、次级色、字距、
+   下边框。时间/耗时两格不在这里重复声明宽度 —— 直接复用数据行的格类，纵向
+   对齐由同一个类保证。表头不是行：没有指针、没有悬停、不可选中，点它不发生
+   任何事。来源格贴最右，与数据行行尾的来源徽标/会话号对齐。 */
+.dsh-git-cmdhead{position:sticky;top:-4px;z-index:1;display:flex;align-items:center;gap:8px;padding:4px 8px;font-size:10px;letter-spacing:.04em;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-2);border-bottom:1px solid var(--dsw-alias-border-l1);-webkit-user-select:none;user-select:none}
+.dsh-git-cmdheadcmd{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.dsh-git-cmdheaddesc{flex:0 1 auto}
+.dsh-git-cmdheadsrc{flex:none;margin-left:auto}
 /* 100px 放得下最长的 YYYY-MM-DD HH:mm（10px 的表格数字），今天的那种短格式
    留白 —— 列对齐了，扫一眼就是时间轴。 */
 .dsh-git-cmdtime{flex:none;width:100px;font-size:10px;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}
