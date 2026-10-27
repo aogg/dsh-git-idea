@@ -119,7 +119,7 @@ window.__ModuleLoader__.load({
           if (liveBus.closed === true || liveBus.socket !== null) return
           let ws = null
           try {
-            ws = new WebSocket((location.protocol === 'https:' ? 'wss' : 'ws') + '//'
+            ws = new WebSocket((location.protocol === 'https:' ? 'wss:' : 'ws:') + '//'
               + location.host + API_BASE + '/ws?token=' + encodeURIComponent(info.token)
               + '&cid=' + encodeURIComponent(WS_CID))
           } catch (error) {
