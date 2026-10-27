@@ -8,11 +8,13 @@ import fs from 'node:fs'
  *      checkout 必填 name；name / at 过 cleanRefHalf（空、前导 -、控制字符都不收）
  *      —— 校验失败一律 {ok:false, error:人话}，且一个字节不跑、一个目录不建；
  *   2. argv 组装（手册顺序 `worktree add [--force] [--detach] [-b <名>] <path>
- *      [<起点>]`）：force 的 --force 排最前；new 的 -b 名在 path 前；detach 空 at
- *      显式给 'HEAD'（git 拒收无起点的 --detach）；起点永远在 path 后面；
+ *      [<commit-ish>]`）：force 的 --force 排最前；new 的 -b 名在 path 前；detach
+ *      空 at 显式给 'HEAD'（git 拒收无起点的 --detach）；起点永远在 path 后面；
  *      工作目录跟着请求点名的仓库走；
- *      ⚠ checkout 模式当前形状：name 校验过但不进 argv（分支名既不在 -b 也不在
- *      起点位）—— 见汇报的实现疑点，这里按现状钉住，修的时候这条会红；
+ *      checkout 的分支名落在 path 后的 <commit-ish> 位：本地短名 feat 与远端全名
+ *      origin/feat/x 同一个位置、不做任何前缀变换（后者交给 git 的 dwim 建同名
+ *      本地跟踪分支）；checkout 不收 at —— 非空 at 直接 {ok:false} 且一条命令不跑
+ *      （要检出的分支名本身就是起点）；
  *   3. 走 panelMutate 的语义：ok = exitCode===0；人话命令、stdout/stderr/exitCode
  *      透传；noGit（127 + 标记字）与 sandboxDenied 两面旗标原样带上；
  *   4. 成功答复合并 worktreesSnapshot：worktrees 是 porcelain 滤掉主仓后的链接
@@ -132,9 +134,34 @@ console.log('=== 2｜argv 组装：旗标全在 path 前，path 后只跟起点 
 
   const f = makeBody()
   const replyF = await f.H('git/worktree-add')({ sessionId: 's', repo: '/tmp/gp72/f0', mode: 'checkout', name: 'feat', path: '/tmp/gp72/co' })
-  check('checkout（当前形状 ⚠）：name 校验通过，但 argv 只有 add <path> —— 分支名没进命令',
-    replyF.ok === true && addRuns(f.runs)[0].command.indexOf("'worktree' 'add' '/tmp/gp72/co'") >= 0
-    && addRuns(f.runs)[0].command.indexOf("'feat'") < 0)
+  const cmdF = addRuns(f.runs)[0].command
+  check('checkout 本地分支：argv 精确为 add <path> feat —— 分支名进 <commit-ish> 位，无 --force',
+    replyF.ok === true && replyF.command === 'git worktree add /tmp/gp72/co feat'
+    && cmdF.indexOf("'worktree' 'add' '/tmp/gp72/co' 'feat'") >= 0 && cmdF.indexOf('--force') < 0)
+
+  const g = makeBody()
+  const replyG = await g.H('git/worktree-add')({ sessionId: 's', repo: '/tmp/gp72/g0', mode: 'checkout', name: 'origin/feat/x', path: '/tmp/gp72/co-remote' })
+  const cmdG = addRuns(g.runs)[0].command
+  check('checkout 远端分支名：origin/feat/x 原样落在同一位置，不做任何前缀变换',
+    replyG.ok === true && replyG.command === 'git worktree add /tmp/gp72/co-remote origin/feat/x'
+    && cmdG.indexOf("'/tmp/gp72/co-remote' 'origin/feat/x'") >= 0
+    && cmdG.indexOf('-b') < 0 && cmdG.indexOf('--detach') < 0 && cmdG.indexOf('refs/') < 0)
+
+  const h = makeBody()
+  const replyH = await h.H('git/worktree-add')({ sessionId: 's', repo: '/tmp/gp72/h0', mode: 'checkout', name: 'feat', path: '/tmp/gp72/co-force', force: true })
+  const cmdH = addRuns(h.runs)[0].command
+  check('checkout + force：--force 仍在 path 前，分支名照旧在 path 后',
+    replyH.ok === true && replyH.command === 'git worktree add --force /tmp/gp72/co-force feat'
+    && cmdH.indexOf('--force') >= 0 && cmdH.indexOf('--force') < cmdH.indexOf('/tmp/gp72/co-force')
+    && cmdH.indexOf('/tmp/gp72/co-force') < cmdH.indexOf("'feat'"))
+
+  const i = makeBody()
+  const replyI = await i.H('git/worktree-add')({ sessionId: 's', repo: '/tmp/gp72/i0', mode: 'checkout', name: 'feat', at: 'origin/main', path: '/tmp/gp72/co-at' })
+  check('checkout + 非空 at：ok:false、error 说「不接受起点」，一个 worktree add / list 都没跑',
+    replyI !== null && typeof replyI === 'object' && replyI.ok === false
+    && typeof replyI.error === 'string' && replyI.error.indexOf('不接受起点') >= 0
+    && replyI.path === '/tmp/gp72/co-at'
+    && addRuns(i.runs).length === 0 && listRuns(i.runs).length === 0)
 }
 
 console.log('')

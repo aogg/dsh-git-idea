@@ -301,7 +301,7 @@ git config --global user.email "你的邮箱"
 node build-package.mjs          # 正式包：dist/lib/index.js + dist/client/client.js
 node build.mjs                  # 动态桥：dist/host.js + dist/client.js
 node test/build-suites.mjs      # 胶合套件：dist/test/ 下的 gp*-test 与基准
-node test/run-all.mjs           # 全部断言（2320 条）
+node test/run-all.mjs           # 全部断言（2323 条）
 node build.mjs --check && node build-package.mjs --check   # 产物是否最新
 node dist/test/bench.mjs        # 基准：200 条提交的历史列表
 node dist/test/bench-branch.mjs # 基准：300 个分支的切换器
