@@ -632,13 +632,18 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-repo-input:focus{border-color:var(--dsw-alias-brand-primary)}
 .dsh-git-repo-ok{flex:none}
 .dsh-git-repo-problem{padding:2px 6px 3px;font-size:10px;line-height:14px;color:var(--dsw-alias-state-error-primary)}
-/* 组头（24-repos.js 的分组渲染）：压暗小字 + 文件夹图标 + 目录短名 —— 只在登记了
-   「含仓库目录」、清单跨容器时才出现（只有一组时整个平铺，一行组头都没有）。行首
+/* 组头（24-repos.js 的分组渲染）：压暗小字 + 文件夹图标 + 目录短名 —— 登记了
+   「含仓库目录」就出现（没登记目录且只有一组时整个平铺，一行组头都没有）。行首
    空着 mark 列，名字和仓库行对齐成一列；行不是控件，不给 hover 底色也不给手型。
-   登记目录的组头带一枚 ×（复用 .dsh-git-repo-x），它是持久登记项，就地可移除。 */
+   登记目录的组头带一枚 ×（复用 .dsh-git-repo-x），它是持久登记项，就地可移除；
+   目录一个仓库都没扫到时组头照画，登记项才始终可见、可移除。 */
 .dsh-git-repo-ghead{display:flex;align-items:center;gap:5px;margin-top:4px;min-height:18px;padding:1px 5px;font-size:10px;font-weight:600;color:var(--dsw-alias-label-secondary);white-space:nowrap;-webkit-user-select:none;user-select:none}
 .dsh-git-repo-ghead .dsh-git-repo-glyph{width:12px;height:12px}
 .dsh-git-repo-gname{flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;min-width:0}
+/* 登记目录组没扫到仓库时的占位行（24-repos.js 的 groupEmptyEl）：组头底下的压暗
+   说明行 —— 不是仓库行，不可点也不给手型/hover，没有 ×（移除登记走组头）；行高、
+   字号与缩进对齐仓库行，压暗程度与失效行 .dsh-git-repo-gone 同一档。 */
+.dsh-git-repo-gempty{display:flex;align-items:center;gap:5px;min-height:20px;padding:1px 5px;border-radius:5px;font-size:11px;color:var(--dsw-alias-label-secondary);opacity:.55;white-space:nowrap}
 /* 「未检测到仓库」的说明页下面挂的那份仓库清单：RepoSetup 自己是可滚动的整页，
    清单跟在它下面同页滚动，一条细线隔开。 */
 .dsh-git-setupwrap{flex:1;display:flex;flex-direction:column;min-height:0;overflow:auto}

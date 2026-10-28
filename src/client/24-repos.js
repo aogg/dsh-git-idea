@@ -347,11 +347,15 @@
             前缀 —— 嵌套登记时里层的赢）→ 那个目录的组；
          b) 否则在会话工作区下 → 「工作区」组；
          c) 否则（工作区外的手动登记）→ 「手动登记」组。
-       组序：工作区 → 登记目录（按路径排序）→ 手动登记；空组不画。两个伪组的键
-       带一个路径里不可能出现的 \u0000 前缀，永远不和登记目录（真实路径）撞名。
+       组序：工作区 → 登记目录（按路径排序）→ 手动登记。空组只丢伪组：登记目录组
+       一个仓库都没扫到（仓库被跳过名单挡掉、超出每目录 head 封顶等）也要留 ——
+       paths 给空数组，组头照画、× 照在，登记项才不会变成「界面上看不见也删不掉」
+       的幽灵。两个伪组的键带一个路径里不可能出现的 \u0000 前缀，永远不和登记目录
+       （真实路径）撞名。
 
-       返回的数组长度 ≤ 1 时调用方照旧平铺渲染：没登记任何目录、仓库也全在工作区
-       下（最常见的形态），一个组头都不该多画 —— 这是零视觉回归的那条线。 */
+       平铺与否由调用方按「list.dirs.length > 0 || 组数 > 1」判：没登记任何目录、
+       仓库也全在工作区下（最常见的形态）照旧一张组头都不画 —— 零视觉回归的那条
+       线；登记过目录就一定走分组，组头是登记项唯一的可见落点。 */
     const GROUP_WS_KEY = '\u0000ws'
     const GROUP_MANUAL_KEY = '\u0000manual'
 
@@ -388,11 +392,14 @@
       const out = []
       for (let i = 0; i < order.length; i += 1) {
         const key = order[i]
-        if (buckets[key].length === 0) continue
+        const pseudo = key === GROUP_WS_KEY || key === GROUP_MANUAL_KEY
+        /* 只丢伪组的空桶：伪组（工作区/手动登记）是分组的衍生物、不是登记项，空了
+           没有可画的；登记目录组空了也留 —— 组头是登记项在界面上唯一的落点。 */
+        if (pseudo && buckets[key].length === 0) continue
         out.push({
           key: key,
           /* 伪组（工作区/手动登记）dir 记 null：组头不按路径取名、也不带 ×。 */
-          dir: key === GROUP_WS_KEY || key === GROUP_MANUAL_KEY ? null : key,
+          dir: pseudo ? null : key,
           paths: buckets[key],
         })
       }
@@ -581,18 +588,35 @@
           }, '×') : null)
       }
 
-      /* 平铺还是分组，由分组函数的答案定：只有一组（没登记目录、仓库也全在工作区
-         下）就照旧一张组头都不画 —— 零视觉回归；两组起才出现组头，组内行的顺序
-         仍是清单本身的顺序。 */
+      /* 登记目录组一个仓库都没扫到时的占位行：压暗一句说明，不是仓库行 —— 没有
+         onClick、没有 ×（移除登记走组头那枚），样式也不给手型与 hover
+         （.dsh-git-repo-gempty）。没有它，「目录登记了但仓库没扫到」就只剩组头
+         孤零零一行，读者分不清底下是空的还是漏画的。 */
+      const groupEmptyEl = function (group) {
+        return h('div', {
+          key: 'gempty:' + group.key,
+          className: 'dsh-git-repo-gempty',
+          title: group.dir + '\n这个登记目录下没扫到 git 仓库（可能被扫描跳过名单挡掉，或超出数量上限）',
+        },
+          h('span', { key: 'm', className: 'dsh-git-repo-mark' }),
+          h('span', { key: 'g', className: 'dsh-git-repo-glyph' }),
+          h('span', { key: 'n', className: 'dsh-git-repo-name' }, '没扫到仓库'))
+      }
+
+      /* 平铺还是分组：登记过「含仓库目录」就走分组 —— 组头是登记项在界面上唯一的
+         落点，一个仓库都没扫到时它也必须画得出来（空组组头底下跟一行压暗的占位，
+         见 groupEmptyEl）；没登记目录时与从前同一条线：两组起才出现组头，≤1 组
+         照旧平铺、一字不差（零视觉回归）。组内行的顺序仍是清单本身的顺序。 */
       const groups = repoGroupsOf(workspaceOf(sessionId), list, shown)
-      if (groups.length <= 1) {
-        for (let i = 0; i < shown.length; i += 1) rows.push(repoRowEl(shown[i]))
-      } else {
+      if (list.dirs.length > 0 || groups.length > 1) {
         for (let g = 0; g < groups.length; g += 1) {
           rows.push(groupHeadEl(groups[g]))
           const paths = groups[g].paths
+          if (paths.length === 0) { rows.push(groupEmptyEl(groups[g])); continue }
           for (let i = 0; i < paths.length; i += 1) rows.push(repoRowEl(paths[i]))
         }
+      } else {
+        for (let i = 0; i < shown.length; i += 1) rows.push(repoRowEl(shown[i]))
       }
 
       /* 手动登记过、目录已经不在（或不再是仓库）的路径：留一行、压暗、能移除 ——
