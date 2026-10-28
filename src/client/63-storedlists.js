@@ -120,10 +120,28 @@
           manual: Array.isArray(data.manual) ? data.manual.map(text) : [],
           missing: Array.isArray(data.missing) ? data.missing.map(text) : [],
           links: Array.isArray(data.links) ? data.links.map(text) : [],
+          /* dirs/dirRepos（v0.2.9 的分组账）：旧盘账没有这两格时缺省空 —— 首帧
+             垫底按平铺画，扫描答复一到整套盖掉，与 links 缺省同一条规矩。 */
+          dirs: Array.isArray(data.dirs) ? data.dirs.map(text) : [],
+          dirRepos: sanitizeDirRepos(data.dirRepos),
           note: typeof data.note === 'string' ? data.note : '',
         },
         at: typeof value.at === 'number' && isFinite(value.at) ? value.at : 0,
       }
+    }
+
+    /* 「目录 → 子孙仓库」的读入清洗：只收「对象 → 非空字符串数组」的形状，畸形
+       条目整条丢 —— localStorage 是谁都能写的一块地，清洗即读入的合同在这里同样
+       成立（repoDirReposOf 在 24-repos.js，答复那半的清洗；两边形状要一致）。 */
+    function sanitizeDirRepos(raw) {
+      const out = {}
+      if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return out
+      const keys = Object.keys(raw)
+      for (let i = 0; i < keys.length; i += 1) {
+        const list = raw[keys[i]]
+        if (Array.isArray(list) && list.length > 0) out[keys[i]] = list.map(text)
+      }
+      return out
     }
 
     const refsTreeStored = createStoredListLayer('dsh.git-idea.refs-tree', 10, sanitizeRefsStoredEntry)
@@ -131,11 +149,12 @@
     const repoListsStored = createStoredListLayer('dsh.git-idea.repo-lists', 50, sanitizeRepoListStoredEntry)
 
     /* 仓库清单的内容比较：字段投影后逐字比（内存账上还有 phase 一格，不参与 ——
-       它说的是「这份账可不可信」，不是清单内容）。 */
+       它说的是「这份账可不可信」，不是清单内容）。dirs/dirRepos 一并投影：登记
+       目录变了分组就得重画，「内容一致就不落盘」的省略对它们同样成立。 */
     function storedRepoListFieldsSame(a, b) {
       return sameStoredJSON(
-        { repos: a.repos, manual: a.manual, missing: a.missing, links: a.links, note: a.note },
-        { repos: b.repos, manual: b.manual, missing: b.missing, links: b.links, note: b.note })
+        { repos: a.repos, manual: a.manual, missing: a.missing, links: a.links, dirs: a.dirs, dirRepos: a.dirRepos, note: a.note },
+        { repos: b.repos, manual: b.manual, missing: b.missing, links: b.links, dirs: b.dirs, dirRepos: b.dirRepos, note: b.note })
     }
 
     /* 面板挂载时把三层的账一次读进来（80-panel.js 的挂载 effect，loadAppliedRepos

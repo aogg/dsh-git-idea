@@ -38,6 +38,12 @@ function normalizeConfig(raw) {
        换机器打开同一个工作区，清单应该还是同一份；localStorage 那层（20-prefs.js）
        留给「这台浏览器怎么看」。 */
     repos: {},
+    /* 手动登记的「含仓库目录」，与 repos 平行（61-repos.js）：里面不一定有 .git，
+       但子孙里嵌着仓库（monorepo 的外层壳、按项目整理的仓库仓库集）。存的是目录
+       本身，`git/repos` 每次读时对它们各跑一遍同款扫描，扫到的仓库照常进清单。
+       归一化与 repos 完全同一套（normalizeRepoMap）：形状相同 —— 工作区 → 绝对
+       路径数组 —— 该拦的东西也一样，两份清洗各写一遍只会漂移。 */
+    repoDirs: {},
     /* 快捷命令（面板的 ⚡ 按钮，78-actions.js 两侧）。跟 repos 同一个理由：它描述的
        是「这个项目要一键跑什么」，跟着插件走而不是跟着某台浏览器。 */
     quickCommands: [],
@@ -82,6 +88,8 @@ function normalizeConfig(raw) {
   out.refreshOnComplete = raw.refreshOnComplete !== false
   out.pushOnAllComplete = raw.pushOnAllComplete === true
   out.repos = normalizeRepoMap(raw.repos)
+  /* repoDirs 与 repos 同一个函数归一化（键值形状相同，见 PLUGIN 默认值处说明）。 */
+  out.repoDirs = normalizeRepoMap(raw.repoDirs)
   out.quickCommands = normalizeQuickCommands(raw.quickCommands)
   out.drafts = normalizeDrafts(raw.drafts)
   out.worktreeMains = normalizeWorktreeMains(raw.worktreeMains)

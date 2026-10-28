@@ -79,6 +79,12 @@
          改一次 git 路径，手动仓库清单就没了。原样搬运、不做清洗 —— 那是 Host 那边
          normalizeConfig 的职责，两边各写一份迟早漂移。 */
       repos: {},
+      /* 手动登记的「含仓库目录」（与 repos 平行，按工作区分组，24-repos.js /
+         61-repos.js）。与 repos 同一条先例：配置页保存的是**整份**配置，客户端的
+         归一化把它丢了的话，读者在配置页改一次 git 路径，登记的目录就全没了。
+         原样搬运、不做清洗 —— 清洗是 Host 那边 normalizeRepoMap 的职责（两个键
+         用同一个函数，形状相同）。 */
+      repoDirs: {},
       /* 快捷命令（历史页 ⚡ 按钮，客户端 78-actions.js / host 78-actions.js）。和 repos
          不同，这一项两边都做归一化：它是读者直接编辑的清单，编辑器保存前要拿「合法
          条目 + 条数」做校验，Host 那份 normalizeConfig 是落盘前的最后一道关卡。 */
@@ -136,6 +142,8 @@
       out.pushOnAllComplete = raw.pushOnAllComplete === true
       /* repos 见上面 PLUGIN_CONFIG_DEFAULTS 里的说明：原样搬运，Host 那边负责清洗。 */
       out.repos = raw.repos != null && typeof raw.repos === 'object' && !Array.isArray(raw.repos) ? raw.repos : {}
+      /* repoDirs 同 repos 一条先例：原样搬运，Host 那边负责清洗。 */
+      out.repoDirs = raw.repoDirs != null && typeof raw.repoDirs === 'object' && !Array.isArray(raw.repoDirs) ? raw.repoDirs : {}
       out.quickCommands = normalizeQuickCommands(raw.quickCommands)
       /* drafts 同 repos 一条先例：原样搬运，Host 那边负责清洗（见 PLUGIN_CONFIG_DEFAULTS
          里那一格的说明）。 */

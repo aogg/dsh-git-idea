@@ -25,7 +25,20 @@
     const useRepoList = repoListSignal.use
 
     function repoListEmpty() {
-      return { repos: [], manual: [], missing: [], links: [], phase: 'idle', note: '' }
+      return { repos: [], manual: [], missing: [], links: [], dirs: [], dirRepos: {}, phase: 'idle', note: '' }
+    }
+
+    /* 「目录 → 子孙仓库」的清洗：答复/盘账里谁都能塞东西，只收「对象 → 字符串
+       数组」的形状，其余当没有 —— 与 sanitizeRepoListStoredEntry 同一条宁少勿错。 */
+    function repoDirReposOf(raw) {
+      const out = {}
+      if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return out
+      const keys = Object.keys(raw)
+      for (let i = 0; i < keys.length; i += 1) {
+        const list = raw[keys[i]]
+        if (Array.isArray(list) && list.length > 0) out[keys[i]] = list.map(text)
+      }
+      return out
     }
 
     function repoListFor(workspace) {
@@ -65,6 +78,10 @@
           /* links：.git 是文件的仓库根（worktree / 子模块）。Host 旧版没有这一格
              （答复缺字段），缺省空数组 —— 行上不画小标，一切照旧。 */
           links: Array.isArray(data.links) ? data.links.map(text) : [],
+          /* dirs/dirRepos：登记的「含仓库目录」与「目录 → 子孙仓库」（v0.2.9）。
+             Host 旧版没有这两格时缺省空 —— 分组函数拿到空 dirs 照旧平铺，一切照旧。 */
+          dirs: Array.isArray(data.dirs) ? data.dirs.map(text) : [],
+          dirRepos: repoDirReposOf(data.dirRepos),
           phase: 'ready',
           note: data.truncated === true ? '仓库太多，只显示前 ' + String(Array.isArray(data.repos) ? data.repos.length : 0) + ' 个' : '',
         }
@@ -87,6 +104,8 @@
             manual: fresh.manual,
             missing: fresh.missing,
             links: fresh.links,
+            dirs: fresh.dirs,
+            dirRepos: fresh.dirRepos,
             note: fresh.note,
           })
           changed = true
@@ -321,6 +340,65 @@
       return out
     }
 
+    /* ── 分组：把清单里的每个仓库归到且只归到一组 ──
+
+       归组按「离仓库最近的登记容器」判，三步：
+         a) 路径等于某个登记目录或是它的子孙（前缀 = 目录 + '/'；多组命中取最长
+            前缀 —— 嵌套登记时里层的赢）→ 那个目录的组；
+         b) 否则在会话工作区下 → 「工作区」组；
+         c) 否则（工作区外的手动登记）→ 「手动登记」组。
+       组序：工作区 → 登记目录（按路径排序）→ 手动登记；空组不画。两个伪组的键
+       带一个路径里不可能出现的 \u0000 前缀，永远不和登记目录（真实路径）撞名。
+
+       返回的数组长度 ≤ 1 时调用方照旧平铺渲染：没登记任何目录、仓库也全在工作区
+       下（最常见的形态），一个组头都不该多画 —— 这是零视觉回归的那条线。 */
+    const GROUP_WS_KEY = '\u0000ws'
+    const GROUP_MANUAL_KEY = '\u0000manual'
+
+    /* 分组用的路径比较统一先去尾斜杠：登记目录是读者手填的，「/a/b/」和「/a/b」
+       得是同一个前缀；根目录去完变空串，回到「/」。与 Host 的 repoKeyOf 同一口径。 */
+    function repoGroupPath(path) {
+      const trimmed = text(path).replace(/\/+$/, '')
+      return trimmed.length > 0 ? trimmed : '/'
+    }
+
+    function repoGroupUnder(path, root) {
+      if (root === '/') return true
+      return path === root || path.indexOf(root + '/') === 0
+    }
+
+    function repoGroupsOf(workspace, list, shown) {
+      const dirs = (Array.isArray(list.dirs) ? list.dirs : []).map(repoGroupPath)
+      dirs.sort()
+      const ws = repoGroupPath(workspace)
+      const order = [GROUP_WS_KEY].concat(dirs).concat([GROUP_MANUAL_KEY])
+      const buckets = {}
+      for (let i = 0; i < order.length; i += 1) buckets[order[i]] = []
+      for (let i = 0; i < shown.length; i += 1) {
+        const path = repoGroupPath(shown[i])
+        let best = ''
+        let bestLen = -1
+        for (let d = 0; d < dirs.length; d += 1) {
+          if (repoGroupUnder(path, dirs[d]) && dirs[d].length > bestLen) { bestLen = dirs[d].length; best = dirs[d] }
+        }
+        if (bestLen >= 0) { buckets[best].push(shown[i]); continue }
+        if (workspace.length > 0 && repoGroupUnder(path, ws)) { buckets[GROUP_WS_KEY].push(shown[i]); continue }
+        buckets[GROUP_MANUAL_KEY].push(shown[i])
+      }
+      const out = []
+      for (let i = 0; i < order.length; i += 1) {
+        const key = order[i]
+        if (buckets[key].length === 0) continue
+        out.push({
+          key: key,
+          /* 伪组（工作区/手动登记）dir 记 null：组头不按路径取名、也不带 ×。 */
+          dir: key === GROUP_WS_KEY || key === GROUP_MANUAL_KEY ? null : key,
+          paths: buckets[key],
+        })
+      }
+      return out
+    }
+
     /* props: sessionId、pane（'log'|'changes' 多选模式；'config' 受控单选）、
        list（repoListFor 的那份）、effective（当前生效仓库路径；种进行当第一行之后的行）、
        pick（受控单选才给：本页正在编辑的仓库路径。给了它，单击行 = 换编辑目标，
@@ -436,8 +514,9 @@
         h('span', { key: 'n', className: 'dsh-git-repo-name' }, '全部'),
         h('span', { key: 'c', className: 'dsh-git-repo-dim' }, String(shown.length))))
 
-      for (let i = 0; i < shown.length; i += 1) {
-        const path = shown[i]
+      /* 一行仓库的画法抽成一个局部函数：平铺与分组两条路径共用同一份行构造，
+         行本身的行为（点选、Ctrl 多选、wt 小标、× 删除）与从前一字不差。 */
+      const repoRowEl = function (path) {
         const isCur = path === effective
         const picked = selection.indexOf(path) >= 0
         const manual = list.manual.indexOf(path) >= 0
@@ -445,7 +524,7 @@
             不是独立仓库，配置它的提交身份/远端会改到链接那头的版本库，扫一眼分得清。
             missing 行（目录已不在）不加：那一行说的已经是另一件事。 */
         const linked = list.links.indexOf(path) >= 0
-        rows.push(h('div', {
+        return h('div', {
           key: 'repo:' + path,
           className: 'dsh-git-repo-row'
             + (isCur ? ' dsh-git-repo-cur' : '')
@@ -475,7 +554,45 @@
             key: 'x', type: 'button', className: 'dsh-git-repo-x',
             title: '从列表移除（手动登记的仓库才能移除）',
             onClick: function (event) { stopEvent(event); removeOne(path) },
-          }, '×') : null))
+          }, '×') : null)
+      }
+
+      /* 组头行：压暗小字 + 文件夹图标 + 短名（title=完整路径）。登记目录的组头是
+         持久登记项，带一枚 × 就地可移除 —— 走的还是 git/repos-save 的 remove，
+         Host 会从两份清单里幂等地删；「工作区」「手动登记」只是分组的衍生物、不是
+         登记项，组头不带 ×。 */
+      const groupHeadEl = function (group) {
+        const isDir = group.dir !== null
+        const isWs = group.key === GROUP_WS_KEY
+        return h('div', {
+          key: 'ghead:' + group.key,
+          className: 'dsh-git-repo-ghead',
+          title: isDir ? group.dir
+            : (isWs ? workspaceOf(sessionId) : '工作区之外手动登记的仓库'),
+        },
+          h('span', { key: 'm', className: 'dsh-git-repo-mark' }),
+          h('span', { key: 'g', className: 'dsh-git-repo-glyph' }, h(Icon, { name: 'folder', size: 11 })),
+          h('span', { key: 'n', className: 'dsh-git-repo-gname' },
+            isDir ? repoBaseName(group.dir) : (isWs ? '工作区' : '手动登记')),
+          isDir ? h('button', {
+            key: 'x', type: 'button', className: 'dsh-git-repo-x',
+            title: '移除这个登记目录（分组随之取消；手动登记过的仓库不受影响）',
+            onClick: function (event) { stopEvent(event); removeOne(group.dir) },
+          }, '×') : null)
+      }
+
+      /* 平铺还是分组，由分组函数的答案定：只有一组（没登记目录、仓库也全在工作区
+         下）就照旧一张组头都不画 —— 零视觉回归；两组起才出现组头，组内行的顺序
+         仍是清单本身的顺序。 */
+      const groups = repoGroupsOf(workspaceOf(sessionId), list, shown)
+      if (groups.length <= 1) {
+        for (let i = 0; i < shown.length; i += 1) rows.push(repoRowEl(shown[i]))
+      } else {
+        for (let g = 0; g < groups.length; g += 1) {
+          rows.push(groupHeadEl(groups[g]))
+          const paths = groups[g].paths
+          for (let i = 0; i < paths.length; i += 1) rows.push(repoRowEl(paths[i]))
+        }
       }
 
       /* 手动登记过、目录已经不在（或不再是仓库）的路径：留一行、压暗、能移除 ——
@@ -501,7 +618,7 @@
         ? h('div', { key: 'repo-add-row', className: 'dsh-git-repo-addrow' },
             h('input', {
               key: 'i', className: 'dsh-git-repo-input', autoFocus: true,
-              placeholder: '仓库目录的绝对路径',
+              placeholder: '仓库或含仓库的目录，绝对路径',
               value: draft,
               onChange: function (event) { setDraft(event.target.value) },
               onKeyDown: function (event) {
@@ -514,7 +631,7 @@
               disabled: busy || draft.trim().length === 0, onClick: submitAdd,
             }, busy ? '…' : '添加'))
         : h('div', {
-            key: 'repo-add', className: 'dsh-git-repo-add', title: '把一个 git 仓库目录手动加进这个项目的列表（持久保存）',
+            key: 'repo-add', className: 'dsh-git-repo-add', title: '把一个 git 仓库、或一个里面嵌着仓库的目录加进这个项目的列表（持久保存；目录自己不必是仓库）',
             onClick: function () { setAdding(true); setProblem('') },
           },
             h('span', { key: 'p', className: 'dsh-git-repo-mark' }, '＋'),
