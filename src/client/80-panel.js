@@ -3416,8 +3416,15 @@
          五棵文件树（单提交详情 / 合并视图 / 差异右列两路 / 变更页）把「右键的是
          哪一行」拼成 target 递上来；这里只记光标坐标与 target。两段式确认沿用
          ctxArm 那一格（键串带路径 —— 武装之后换行再右键，旧武装对不上新键，自然
-         失效），开新菜单先作废上一次的武装，与 openBranchMenu 同一条规矩。 */
+         失效），开新菜单先作废上一次的武装，与 openBranchMenu 同一条规矩。这是
+         提交行/分支行右键同一条规矩 —— 先拦掉浏览器自带的菜单（preventDefault +
+         stopPropagation）再交给面板；文件行之前漏了这条，导致原生菜单跟着自定义
+         菜单一起弹，现在收口在这一个汇聚点补齐，五棵树一并修好。 */
       const openFileMenu = function (target, event) {
+        if (event != null) {
+          event.preventDefault()
+          event.stopPropagation()
+        }
         setCtxArm('')
         setCtxMenu({
           kind: 'file', target: target, repo: target != null ? text(target.repo) : '',
