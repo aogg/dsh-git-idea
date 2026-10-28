@@ -299,8 +299,10 @@ const pickRow = (t, path) => byClass(t, 'dsh-git-repo-row').find((r) => String(r
 const rgroupNames = (t) => byClass(t, 'dsh-git-rgroup').map((g) => textOf(byClass(g, 'dsh-git-repo-name')[0]))
 console.log('  切换器行:', JSON.stringify(switcherNames(multi)))
 ok('仓库块是一个独立容器，不再和树行平铺在一起', byClass(multi, 'dsh-git-repo-box').length === 1)
-ok('同名仓库：最浅的保裸名、其余最小扩展、还撞再补一层，不冲突的不动',
-  switcherNames(multi).join('|') === '全部|c/e/d|d|c/d|e/d|other|ws|添加目录')
+/* v0.2.9 起这份清单跨容器（/tmp/q/e/d 在工作区 /tmp/ws 外）就是两组起 → 分组渲染：
+   工作区那组照清单序在前，工作区外的 e/d 落「手动登记」组垫底；短名消歧本身没变。 */
+ok('同名仓库：最浅的保裸名、其余最小扩展、还撞再补一层，不冲突的不动（跨容器两组起分组，e/d 归手动登记组垫底）',
+  switcherNames(multi).join('|') === '全部|c/e/d|d|c/d|other|ws|e/d|添加目录')
 const repoRowsA = byClass(multi, 'dsh-git-repo-row').filter((r) => String(r.props.key).indexOf('repo:') === 0)
 ok('每一行的悬浮 title 仍是完整路径',
   repoRowsA.length === 6 && repoRowsA.every((r) => String(r.props.title).indexOf(r.props.key.slice(5)) === 0))

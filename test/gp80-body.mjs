@@ -54,7 +54,10 @@ await clickText77(tree, '命令')
 tree = await settle()
 const durs = durCells(tree)
 ok('六个命令行各有一格耗时',
-  cmdRows(tree).length === 6 && byClass(tree, 'dsh-git-cmddur').length === 6)
+  /* 吸顶表头（c03c2f8 的 dsh-git-cmdhead）有意复用数据行的格类共用列宽：手里有
+     数据行时表头在渲染，格数 = 6 行 + 1 表头。行数断言只数 dsh-git-cmdline，
+     不受影响。 */
+  cmdRows(tree).length === 6 && byClass(tree, 'dsh-git-cmddur').length === 7)
 ok('<1s 画毫秒：820ms', durs.indexOf('820ms') >= 0)
 ok('1s–1min 画秒一位小数：3.2s', durs.indexOf('3.2s') >= 0)
 ok('10s 以上小数位是噪音，取整：10s', durs.indexOf('10s') >= 0)

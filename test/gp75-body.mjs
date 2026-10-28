@@ -398,9 +398,9 @@ holdRepos75r.resolve(adopt75r)
 await wait(20)
 tree75r = await panelTree75(inst75r, 's-75r', 'pop-75r')
 const acct75r = readAccount75(K_RL75)
-ok('扫描答复 adopt 落盘：{repos,manual,missing,links,note} 原样进 {data,at}',
+ok('扫描答复 adopt 落盘：{repos,manual,missing,links,dirs,dirRepos,note} 原样进 {data,at}',
   acct75r !== null && acct75r['s-75r'] !== undefined
-  && JSON.stringify(acct75r['s-75r'].data) === JSON.stringify({ repos: ['/seed/ws-one', '/seed/ws-two'], manual: ['/manual/ws'], missing: ['/gone/ws'], links: ['/link/ws'], note: '' })
+  && JSON.stringify(acct75r['s-75r'].data) === JSON.stringify({ repos: ['/seed/ws-one', '/seed/ws-two'], manual: ['/manual/ws'], missing: ['/gone/ws'], links: ['/link/ws'], dirs: [], dirRepos: {}, note: '' })
   && typeof acct75r['s-75r'].at === 'number' && isFinite(acct75r['s-75r'].at))
 /* saveManualRepo：切换器「添加目录」那行进去，答复走 adopt → 同一个 choke point 落盘。 */
 const addRow75r = byClass(tree75r, 'dsh-git-repo-add')[0]

@@ -598,8 +598,13 @@ ok('标题只说这个目录不是仓库', setupTitle === '这个目录不是 Gi
 ok('不再声称「所有上级目录都没有 .git」',
   setupHints.indexOf('所有上级目录') < 0 && setupHints.indexOf('都没有') < 0)
 ok('也不再声称看过目录里有什么', setupHints.indexOf('空目录') < 0 && setupHints.indexOf('没有任何文件') < 0)
-/* 要看的路径已经显示在上面了：没有要解释的规则，也没有要填的东西。 */
-ok('整页一句说明都没有', setupHints.length === 0)
+/* 要看的路径已经显示在上面了：e1618b0 起这页补了一句指路（列表里点嵌着的仓库、
+   或「＋ 添加目录」登记仓库/嵌仓库的目录）—— 除此之外没有要解释的规则，也没有
+   要填的东西。（setupHints 是 join 过的串，条数要看 join 前的数组。） */
+const setupHintLines = byClass(setupBox, 'dsh-git-hint').map((n) => textOf(n))
+ok('说明只剩一句指路（点嵌着的仓库、或添加目录登记），不解释规则也不要填写',
+  setupHintLines.length === 1 && setupHintLines[0].indexOf('添加目录') >= 0
+  && setupHintLines[0].indexOf('嵌着仓库的目录') >= 0)
 ok('不再让人把同一个路径再抄一遍（没有输入框）', inputs(setupBox).length === 0)
 ok('要看的目录本身仍然写着', textOf(byClass(setupTree, 'dsh-git-setup-path')[0]) === '/home/u/work/plain')
 ok('指路与初始化仍然在（不替用户做决定，也不挡着）',
