@@ -308,5 +308,5 @@
             ? h('div', { key: 'empty', className: 'dsh-git-pane dsh-git-dim' }, '还没有执行过 git 命令')
             : rows.length === 0
               ? h('div', { key: 'none', className: 'dsh-git-pane dsh-git-dim' }, '没有匹配的命令')
-              : [head].concat(rows))
+              : [head].concat(rows)))
     }
