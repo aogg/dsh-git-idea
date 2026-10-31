@@ -492,6 +492,33 @@
         savePluginConfig(next)
       }
 
+      /* 「分支会话历史」组（79c-branchhistory.js 的全局半）：改的是
+         pdraft.branchHistory 里嵌着的那两格（defaultOn / maxSessions）—— 嵌套键没有
+         setPlugin 那样的平铺写法，这里只做一层浅拷贝再换格，走同一个整份保存通道。
+         host 归一化拦得住的（越界数字、非布尔）这里也先拦一遍：数字不合 1–50 就不
+         落笔，输入框里留着读者打到一半的草稿。 */
+      const bhOf = function (source) {
+        const one = source != null && typeof source.branchHistory === 'object' && source.branchHistory != null
+          ? source.branchHistory
+          : {}
+        return {
+          defaultOn: one.defaultOn === true,
+          maxSessions: typeof one.maxSessions === 'number' && isFinite(one.maxSessions) && one.maxSessions >= 1
+            ? one.maxSessions
+            : 20,
+        }
+      }
+      const setBranchHistory = function (key, value) {
+        const next = Object.assign({}, pdraft)
+        const one = Object.assign({}, bhOf(pdraft))
+        one[key] = value
+        next.branchHistory = one
+        setPdraft(next)
+        savePluginConfig(next)
+      }
+      const [maxDraft, setMaxDraft] = React.useState(String(bhOf(plugin).maxSessions))
+      React.useEffect(function () { setMaxDraft(String(bhOf(plugin).maxSessions)) }, [plugin])
+
       const apply = function (next) {
         setDraft(next)
         saveSettings(next)
@@ -592,7 +619,38 @@
             h('div', { className: 'dsh-git-set-group' }, 'worktree'),
             h('div', { className: 'dsh-git-set-hint' },
               'worktree 的 .git 链接文件里记着主仓库的目录路径；整棵目录树从别的机器拷来时（如在 Windows 上建好、拿到这台 Linux 机器用），里面记的还是那台机器的路径（D:/code/…），这台机器的 git 读不动它。下面的「目录映射」类似虚拟机挂载的目录映射：识别 worktree 的主目录时，路径以「原目录」开头的那一段整段替换成「替换目录」（前缀匹配替换，D:/… 与 D:\\… 两种写法都认），换算出的主仓库就能被面板认出、打开。'),
-            h(WorktreeDirMappingsEditor, { key: 'wdm' })),
+            h(WorktreeDirMappingsEditor, { key: 'wdm' }),
+
+            /* 「分支会话历史」组：两个全局默认值（工作区级的显式开关在 chip 分支名
+                右边的小滑块上，项目配置档里还有生效状态与各分支的专用提示词）。
+                它描述的是「这个部署对新工作区的默认态度」，跟插件走而不是跟某台
+                浏览器，所以放全局档、落上面那个 json。 */
+            h('div', { className: 'dsh-git-set-group' }, '分支会话历史'),
+            h('div', { className: 'dsh-git-set-hint' },
+              '本插件按工作区 × 分支自动记录每个会话的 id；开关打开的工作区，每个新对话发出第一条消息时宿主自动附加一段「本分支历史会话 id」的说明，模型可据此回溯本分支先前的对话。开关按工作区记忆（chip 分支名右边的小滑块），没单独设置过的工作区按这里的默认算。'),
+
+            h('div', { className: 'dsh-git-set-row' },
+              h('label', { className: 'dsh-git-set-check' },
+                h('input', {
+                  type: 'checkbox', checked: bhOf(pdraft).defaultOn === true,
+                  onChange: function (event) { setBranchHistory('defaultOn', event.target.checked) },
+                }),
+                h('span', null, '新工作区默认开启')),
+              h('span', { className: 'dsh-git-set-hint' }, '关着时照样登记账，只是不往对话里注入；单开某个工作区用那只小滑块')),
+
+            h('div', { className: 'dsh-git-set-row' },
+              h('span', { className: 'dsh-git-set-label' }, '注入历史会话条数上限'),
+              h('input', {
+                className: 'dsh-git-input dsh-git-set-input',
+                type: 'number', min: 1, max: 50,
+                value: maxDraft,
+                onChange: function (event) {
+                  setMaxDraft(event.target.value)
+                  const parsed = parseInt(event.target.value, 10)
+                  if (isFinite(parsed) && parsed >= 1 && parsed <= 50) setBranchHistory('maxSessions', parsed)
+                },
+              }),
+              h('span', { className: 'dsh-git-set-hint' }, '1–50，默认 20；注入时取该分支最近 N 条（不含当前会话）'))),
 
           /* 右列：git 与这台机器（组件根上还各有一层自己的包装 div），末尾收
              「本浏览器」一组。 */

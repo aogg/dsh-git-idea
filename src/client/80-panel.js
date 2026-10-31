@@ -951,6 +951,229 @@
       return h('div', { className: 'dsh-git-ign' }, rows)
     }
 
+    /* ── 配置页「分支会话历史」组（项目配置档，与「会话完成」并列）──
+
+        宿主半（79c-branchhistory.js）按工作区 × 分支记会话账、按开关注入历史 id；
+        这一组的编辑面：生效状态一行（带 [跟随全局默认]，仅工作区有显式值时出现）、
+        当前分支的专用提示词（保存 / 清除走 git/branch-prompt-save）、已配提示词的
+        分支的**收纳列表**（默认收起 —— 一行分支名 + 会话数，展开才编辑，不平铺占
+        屏）。状态全部来自 64-branchhistory.js 的镜像：进页 refresh 一次拿「现在」，
+        保存成功用答复就地更新。 */
+    function GitBranchHistoryGroup(props) {
+      const remembered = useLastSession()
+      const sessionId = props != null && typeof props.sessionId === 'string' && props.sessionId.length > 0
+        ? props.sessionId
+        : remembered
+      useBranchHistoryVersion()
+      const state = branchHistoryStateFor(sessionId)
+      const [promptDraft, setPromptDraft] = React.useState('')
+      const [promptBranch, setPromptBranch] = React.useState('')
+      const [busy, setBusy] = React.useState(false)
+      const [note, setNote] = React.useState('')
+      const [problem, setProblem] = React.useState('')
+      const [open, setOpen] = React.useState(false)
+      const [editing, setEditing] = React.useState('')
+      const [editDraft, setEditDraft] = React.useState('')
+      const [armDel, setArmDel] = React.useState('')
+
+      React.useEffect(function () { refreshBranchHistoryState(sessionId) }, [sessionId])
+
+      /* 当前分支专用提示词的草稿：分支没读到不预填；分支在、且草稿还不属于它时，
+         用账里那份预填（保存成功换来的新账不覆盖正在打的字 —— promptBranch 已对上
+         就不动）。 */
+      React.useEffect(function () {
+        const branch = state != null && typeof state.branch === 'string' ? state.branch : ''
+        if (branch.length === 0) { setPromptBranch(''); return }
+        if (promptBranch === branch) return
+        const current = state != null && state.prompts != null && typeof state.prompts[branch] === 'string'
+          ? state.prompts[branch]
+          : ''
+        setPromptBranch(branch)
+        setPromptDraft(current)
+      }, [state, promptBranch])
+
+      const branchNow = state != null && typeof state.branch === 'string' ? state.branch : ''
+      const workspaceNow = state != null && typeof state.workspace === 'string' ? state.workspace : ''
+      const statusLine = state == null
+        ? '正在读取…'
+        : (workspaceNow.length === 0
+          ? '读不到当前工作区 —— 会话确定工作区之后这里才有答案'
+          : (state.on === true
+            ? '本工作区：开（工作区设置）'
+            : (state.on === false
+              ? '本工作区：关（工作区设置）'
+              : (state.effective === true ? '本工作区：开（跟随全局默认）' : '本工作区：关（跟随全局默认）'))))
+      const hasExplicit = state != null && (state.on === true || state.on === false)
+
+      const runSave = function (branch, value, doneNote) {
+        if (busy === true) return
+        setBusy(true)
+        setNote('')
+        setProblem('')
+        const payload = { sessionId: sessionId, branch: branch, text: value }
+        let pending
+        try {
+          pending = callHost('git/branch-prompt-save', payload)
+        } catch (error) {
+          setBusy(false)
+          setProblem(failureText(error))
+          return
+        }
+        Promise.resolve(pending).then(function (result) {
+          setBusy(false)
+          if (result == null || result.ok !== true) {
+            setProblem(commandDetail(result) || text(result != null ? result.error : '') || '保存失败')
+            return
+          }
+          adoptBranchHistoryReply(sessionId, result)
+          setNote(doneNote)
+        }, function (failure) {
+          setBusy(false)
+          setProblem(failureText(failure))
+        })
+      }
+
+      const savePrompt = function () {
+        if (busy === true) return
+        if (branchNow.length === 0) {
+          setProblem('当前分支读不到 —— 游离 HEAD（detached）或这个工作区还不是仓库，先确认分支再写提示词')
+          return
+        }
+        const value = promptDraft
+        runSave(branchNow, value, value.trim().length === 0
+          ? '已清除「' + branchNow + '」的专用提示词（注入改用默认说明）'
+          : '已保存「' + branchNow + '」的专用提示词')
+      }
+
+      const promptNames = state != null && state.prompts != null && typeof state.prompts === 'object'
+        ? Object.keys(state.prompts).sort()
+        : []
+      const counts = state != null && state.counts != null && typeof state.counts === 'object' ? state.counts : {}
+
+      const startEdit = function (name) {
+        setEditing(name)
+        setEditDraft(typeof state.prompts[name] === 'string' ? state.prompts[name] : '')
+        setArmDel('')
+        setNote('')
+        setProblem('')
+      }
+      const saveEdit = function (name) {
+        if (busy === true) return
+        runSave(name, editDraft, editDraft.trim().length === 0
+          ? '已清除「' + name + '」的专用提示词'
+          : '已保存「' + name + '」的专用提示词')
+        setEditing('')
+        setEditDraft('')
+      }
+      const dropPrompt = function (name) {
+        if (armDel !== name) { setArmDel(name); return }
+        setArmDel('')
+        if (busy === true) return
+        runSave(name, '', '已清除「' + name + '」的专用提示词')
+        if (editing === name) { setEditing(''); setEditDraft('') }
+      }
+
+      const rows = []
+      if (open === true) {
+        if (promptNames.length === 0) {
+          rows.push(h('div', { key: 'none', className: 'dsh-git-set-row dsh-git-set-hint' },
+            '还没有分支配过专用提示词 —— 上面「当前分支专用提示词」保存一条，这里就会收进一行'))
+        }
+        for (let i = 0; i < promptNames.length; i += 1) {
+          const name = promptNames[i]
+          const count = typeof counts[name] === 'number' && isFinite(counts[name]) ? counts[name] : 0
+          rows.push(h('div', { key: 'row:' + name, className: 'dsh-git-set-row' },
+            h('span', { className: 'dsh-git-set-label', title: name }, name),
+            h('span', { className: 'dsh-git-set-hint' }, String(count) + ' 个会话'),
+            h('button', {
+              type: 'button', className: 'dsh-git-btn', title: '展开编辑这条专用提示词',
+              onClick: function () { startEdit(name) },
+            }, '编辑'),
+            h('button', {
+              type: 'button', className: 'dsh-git-btn' + (armDel === name ? ' dsh-git-danger' : ''),
+              title: armDel === name ? '再点一次确认删除' : '删除这条专用提示词（注入改回默认说明）',
+              onClick: function () { dropPrompt(name) },
+            }, armDel === name ? '确认删除' : '删除')))
+          if (editing === name) {
+            rows.push(h('div', { key: 'edit:' + name, className: 'dsh-git-set-row' },
+              h('span', { className: 'dsh-git-set-label' }, '提示词'),
+              h('textarea', {
+                className: 'dsh-git-input dsh-git-set-input',
+                rows: 4,
+                placeholder: '「' + name + '」注入时的正文（清空保存 = 删除这条）',
+                value: editDraft,
+                disabled: busy === true,
+                onChange: function (event) { setEditDraft(event.target.value) },
+              }),
+              h('button', {
+                type: 'button', className: 'dsh-git-btn dsh-git-primary', disabled: busy === true,
+                title: '保存这条专用提示词',
+                onClick: function () { saveEdit(name) },
+              }, busy === true ? '保存中…' : '保存'),
+              h('button', {
+                type: 'button', className: 'dsh-git-btn', disabled: busy === true,
+                onClick: function () { setEditing(''); setEditDraft('') },
+              }, '收起')))
+          }
+        }
+      }
+
+      return h('div', null,
+        h('div', { className: 'dsh-git-set-group' }, '分支会话历史'),
+        h('div', { className: 'dsh-git-set-hint' },
+          '本插件按工作区 × 分支自动记录每个会话的 id；开关打开后，这个工作区的每个新对话发出第一条消息时，宿主自动附加一段「本分支历史会话 id」的说明，模型可据此回溯本分支先前的对话。开关在 chip 分支名右边那只小滑块上，按工作区记忆、存部署配置，换浏览器一致。'),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '生效状态'),
+          h('span', { className: 'dsh-git-set-hint' }, statusLine),
+          hasExplicit === true
+            ? h('button', {
+              type: 'button', className: 'dsh-git-btn', disabled: busy === true,
+              title: '删掉这个工作区的显式开关，回到全局默认（全局档「新工作区默认开启」说了算）',
+              onClick: function () { switchBranchHistory(sessionId, 'reset') },
+            }, '跟随全局默认')
+            : null),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '当前分支'),
+          h('span', { className: 'dsh-git-set-hint' },
+            state == null ? '…' : (branchNow.length > 0 ? branchNow : '读不到（游离 HEAD 或这里还不是仓库）'))),
+
+        h('div', { className: 'dsh-git-set-group' }, '当前分支专用提示词'),
+        h('div', { className: 'dsh-git-set-hint' },
+          '这个分支注入时替换默认说明的正文（末尾仍会接上历史会话 id 列表）；只作用于当前分支，换分支去分支行切换后再来。'),
+        h('div', { className: 'dsh-git-set-row' },
+          h('textarea', {
+            className: 'dsh-git-input dsh-git-set-input',
+            rows: 4,
+            placeholder: branchNow.length > 0 ? '「' + branchNow + '」注入时的正文（留空 = 用默认说明）' : '当前分支读不到，先确认分支',
+            value: promptDraft,
+            disabled: busy === true || branchNow.length === 0,
+            onChange: function (event) { setPromptDraft(event.target.value) },
+          })),
+        h('div', { className: 'dsh-git-set-row' },
+          h('button', {
+            type: 'button', className: 'dsh-git-btn dsh-git-primary', disabled: busy === true || branchNow.length === 0,
+            onClick: savePrompt,
+          }, busy === true ? '保存中…' : '保存'),
+          h('button', {
+            type: 'button', className: 'dsh-git-btn', disabled: busy === true || branchNow.length === 0,
+            title: '清除当前分支的专用提示词（注入改回默认说明）',
+            onClick: function () { setPromptDraft(''); savePrompt() },
+          }, '清除')),
+
+        h('div', { className: 'dsh-git-set-group dsh-git-set-group-row' },
+          h('button', {
+            type: 'button', className: 'dsh-git-btn',
+            title: open === true ? '收起已配提示词的分支' : '展开已配提示词的分支（收纳在这里，不平铺占屏）',
+            onClick: function () { setOpen(open !== true) },
+          }, (open === true ? '▾ ' : '▸ ') + '已配置提示词的分支 · ' + String(promptNames.length))),
+        rows,
+
+        note.length > 0 ? h('div', { className: 'dsh-git-set-row dsh-git-set-hint' }, note) : null,
+        problem.length > 0 ? h('div', { className: 'dsh-git-set-row dsh-git-error' }, problem) : null)
+    }
+
     /* 配置页「worktree 主目录」组的模块级读数缓存：按仓库路径记 git/wt-main 的答复。
         进入配置页或换编辑目标时查它，命中就不发请求（不发 ≠ 不刷新：保存成功会把
         最新答复写回这一格）；面板级那面 wtMain 读数另有 React state，两份互不干扰
@@ -1579,6 +1802,10 @@
           h('span', { className: 'dsh-git-set-hint' },
             autoPushNote == null ? '还没有自动推送过'
               : (cmdClock(autoPushNote.time) + ' · ' + (autoPushNote.ok === true ? '成功' : '失败') + '：' + text(autoPushNote.detail)))),
+
+        /* ── 分支会话历史（插件级，与「会话完成」并列）：开关与账都按工作区走，
+            不随本页编辑目标走 —— 组件自己带着生效状态、当前分支提示词与收纳列表。 ── */
+        h(GitBranchHistoryGroup, { key: 'branch-history', sessionId: sessionId }),
 
         /* ── 「仓库」一组：顶部挑本页编辑目标（受控单选，行为不动），受切换仓库影响
            的几组收在外框里做下级 —— 缩进 + 左侧竖线（46-css.js 的 dsh-git-set-scope

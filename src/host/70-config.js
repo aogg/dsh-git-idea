@@ -77,6 +77,14 @@ function normalizeConfig(raw) {
        跟着部署走；数组形状（含稳定 id）参考 quickCommands，编辑器在客户端
        79-globalconfig.js 的「worktree」组。 */
     worktreeDirMappings: [],
+    /* 分支会话历史（79c-branchhistory.js 注入与登记，编辑器在客户端 79-globalconfig.js
+       的「分支会话历史」组与 chip 上的小滑块）。跟 repos / appliedRepos 同一个理由
+       放这份配置而不是浏览器 localStorage：它描述的是「这个工作区记了哪些分支、开没
+       开注入」，跟着部署走 —— 换浏览器、换机器打开同一个工作区，开关与历史账都还是
+       同一份。三格形状见下面各自的归一化函数。 */
+    branchHistory: { defaultOn: false, maxSessions: 20, workspaces: {} },
+    branchPrompts: {},
+    branchSessions: {},
   }
   if (raw == null || typeof raw !== 'object') return out
   if (isStr(raw.initBranch)) out.initBranch = raw.initBranch.trim().slice(0, 120)
@@ -95,6 +103,9 @@ function normalizeConfig(raw) {
   out.worktreeMains = normalizeWorktreeMains(raw.worktreeMains)
   out.appliedRepos = normalizeAppliedRepos(raw.appliedRepos)
   out.worktreeDirMappings = normalizeWorktreeDirMappings(raw.worktreeDirMappings)
+  out.branchHistory = normalizeBranchHistory(raw.branchHistory)
+  out.branchPrompts = normalizeBranchPrompts(raw.branchPrompts)
+  out.branchSessions = normalizeBranchSessions(raw.branchSessions)
   return out
 }
 
@@ -225,6 +236,126 @@ function normalizeWorktreeDirMappings(raw) {
     const id = isStr(one.id) && one.id.trim().length > 0 ? one.id.trim().slice(0, 200)
       : (from + '-' + String(Date.now()))
     out.push({ id: id, from: from, to: to })
+  }
+  return out
+}
+
+/* ── 分支会话历史的三格（79c-branchhistory.js 的注入与登记） ──
+
+   branchHistory 工作区开关的清洗照 normalizeAppliedRepos 的口径：键必须是 /
+   开头的绝对路径（trim 后 ≤4096，同一个目录两种写法得是同一个键），条数封顶
+   128（REPO_MAP_WORKSPACES 同一个数）；值必须是布尔，非布尔的条目整个丢弃 ——
+   「没设置过」和「设置成了奇怪的值」在生效值上都落回 defaultOn，但配置里只留
+   前者，读答复才答得出 on:null（跟随全局）而不是一个编造的 false。defaultOn
+   布尔、默认 false；maxSessions 整数 1–50、默认 20，越界与非整数一律回默认。 */
+const BRANCH_HISTORY_WS_MAX = 128
+const BRANCH_HISTORY_PATH_MAX = 4096
+const BRANCH_HISTORY_MAX_SESSIONS_DEFAULT = 20
+
+function normalizeBranchHistory(raw) {
+  const out = { defaultOn: false, maxSessions: BRANCH_HISTORY_MAX_SESSIONS_DEFAULT, workspaces: {} }
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return out
+  out.defaultOn = raw.defaultOn === true
+  if (typeof raw.maxSessions === 'number' && isFinite(raw.maxSessions)
+    && Math.floor(raw.maxSessions) === raw.maxSessions
+    && raw.maxSessions >= 1 && raw.maxSessions <= 50) {
+    out.maxSessions = raw.maxSessions
+  }
+  if (raw.workspaces == null || typeof raw.workspaces !== 'object' || Array.isArray(raw.workspaces)) return out
+  let kept = 0
+  for (const key in raw.workspaces) {
+    if (!Object.prototype.hasOwnProperty.call(raw.workspaces, key)) continue
+    if (kept >= BRANCH_HISTORY_WS_MAX) break
+    const workspace = key.trim()
+    if (workspace.charAt(0) !== '/' || workspace.length > BRANCH_HISTORY_PATH_MAX) continue
+    const value = raw.workspaces[key]
+    if (value !== true && value !== false) continue
+    out.workspaces[workspace] = value
+    kept += 1
+  }
+  return out
+}
+
+/* branchPrompts：工作区 → 分支 → 提示词文本。工作区数与清洗口径同
+   normalizeBranchHistory（≤128、/ 开头绝对路径 ≤4096）；每工作区的分支数 ≤64
+   （REPO_MAP_PER_WORKSPACE 同一个数）、分支名 trim 后非空 ≤200 字符、单条文本
+   ≤4000 字符（DRAFT_LEN_MAX 同一个数）；空文本 = 删除该条 —— 「清空了输入框」
+   也是一条答案，配置里没有这个键就是「空」的存储形状。清洗后一格分支都不剩的
+   工作区整个丢掉：一个读不出来的条目比一个被悄悄改写过的条目诚实。 */
+const BRANCH_PROMPT_WS_MAX = 128
+const BRANCH_PROMPT_PATH_MAX = 4096
+const BRANCH_PROMPT_BRANCH_MAX = 64
+const BRANCH_PROMPT_BRANCH_LEN_MAX = 200
+const BRANCH_PROMPT_TEXT_MAX = 4000
+
+function normalizeBranchPrompts(raw) {
+  const out = {}
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return out
+  let kept = 0
+  for (const key in raw) {
+    if (!Object.prototype.hasOwnProperty.call(raw, key)) continue
+    if (kept >= BRANCH_PROMPT_WS_MAX) break
+    const workspace = key.trim()
+    if (workspace.charAt(0) !== '/' || workspace.length > BRANCH_PROMPT_PATH_MAX) continue
+    const value = raw[key]
+    if (value == null || typeof value !== 'object' || Array.isArray(value)) continue
+    const perWorkspace = {}
+    for (const branch in value) {
+      if (!Object.prototype.hasOwnProperty.call(value, branch)) continue
+      if (Object.keys(perWorkspace).length >= BRANCH_PROMPT_BRANCH_MAX) break
+      const name = isStr(branch) ? branch.trim() : ''
+      if (name.length === 0 || name.length > BRANCH_PROMPT_BRANCH_LEN_MAX) continue
+      const text = isStr(value[branch]) ? value[branch].slice(0, BRANCH_PROMPT_TEXT_MAX) : ''
+      if (text.trim().length === 0) continue
+      perWorkspace[name] = text
+    }
+    if (Object.keys(perWorkspace).length > 0) { out[workspace] = perWorkspace; kept += 1 }
+  }
+  return out
+}
+
+/* branchSessions：工作区 → 分支 → 会话账 [{id, at}]，最新的在数组头部。前两层的
+   封顶与清洗与 branchPrompts 完全同一套（≤128 工作区、每工作区 ≤64 分支、分支名
+   trim 非空 ≤200）；每分支的会话 ≤200 条，超限裁尾部 —— 这格是插件自己写的账
+   （79c-branchhistory.js 登记时就在头部插入并裁尾），这里的归一化是文件被手改 /
+   旧版本读走之后兜底的那道关卡：条目必须是 {id, at} 形状，id 非空字符串 ≤200、
+   at 是数字（读不出时记 0，排序无意义但形状诚实）。 */
+const BRANCH_SESSION_WS_MAX = 128
+const BRANCH_SESSION_PATH_MAX = 4096
+const BRANCH_SESSION_BRANCH_MAX = 64
+const BRANCH_SESSION_BRANCH_LEN_MAX = 200
+const BRANCH_SESSIONS_MAX = 200
+const BRANCH_SESSION_ID_MAX = 200
+
+function normalizeBranchSessions(raw) {
+  const out = {}
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return out
+  let kept = 0
+  for (const key in raw) {
+    if (!Object.prototype.hasOwnProperty.call(raw, key)) continue
+    if (kept >= BRANCH_SESSION_WS_MAX) break
+    const workspace = key.trim()
+    if (workspace.charAt(0) !== '/' || workspace.length > BRANCH_SESSION_PATH_MAX) continue
+    const value = raw[key]
+    if (value == null || typeof value !== 'object' || Array.isArray(value)) continue
+    const perWorkspace = {}
+    for (const branch in value) {
+      if (!Object.prototype.hasOwnProperty.call(value, branch)) continue
+      if (Object.keys(perWorkspace).length >= BRANCH_SESSION_BRANCH_MAX) break
+      const name = isStr(branch) ? branch.trim() : ''
+      if (name.length === 0 || name.length > BRANCH_SESSION_BRANCH_LEN_MAX) continue
+      const list = Array.isArray(value[branch]) ? value[branch] : []
+      const clean = []
+      for (let i = 0; i < list.length && clean.length < BRANCH_SESSIONS_MAX; i += 1) {
+        const one = list[i]
+        if (one == null || typeof one !== 'object') continue
+        const id = isStr(one.id) ? one.id.trim() : ''
+        if (id.length === 0 || id.length > BRANCH_SESSION_ID_MAX) continue
+        clean.push({ id: id, at: typeof one.at === 'number' && isFinite(one.at) ? one.at : 0 })
+      }
+      if (clean.length > 0) perWorkspace[name] = clean
+    }
+    if (Object.keys(perWorkspace).length > 0) { out[workspace] = perWorkspace; kept += 1 }
   }
   return out
 }

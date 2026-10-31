@@ -159,6 +159,8 @@
          about, and this signal is how the chip hears about it: without the render
          it went on reading — and watching — the workspace it started with. */
       const repoVersion = useRepoApplied()
+      /* 分支会话历史的账（64-branchhistory.js）：答复落地 / 乐观切换都要重画滑块。 */
+      useBranchHistoryVersion()
       const watched = sessionRepo(props.sessionId)
       const sessionId = props.sessionId
       const repo = info.repo.length > 0 ? info.repo : watched
@@ -214,6 +216,12 @@
          新会话、换浏览器、刷新页面都还是读者上次选定的那个，不再回落到工作区默认仓库。 */
       React.useEffect(function () {
         ensureAppliedRepo(sessionId)
+      }, [sessionId])
+
+      /* 分支会话历史的状态（64-branchhistory.js）：每会话问一次（fire-and-forget，
+         失败安静），答复到了上面的 useBranchHistoryVersion 会带着滑块一起翻正。 */
+      React.useEffect(function () {
+        loadBranchHistoryState(sessionId)
       }, [sessionId])
 
       /* ── 会话状态（有则用之，bridge 版这些 props 不存在）──
@@ -502,6 +510,9 @@
         spin: switching !== null,
       })]
       if (isRepo) children.push(h('span', { className: 'dsh-git-chip-label', key: 'label' }, info.label))
+      /* 分支会话历史的迷你滑块（64-branchhistory.js）：挂在分支名 label 右边，是
+         本工作区注不注入的开关；点击 stopPropagation，别把 chip 本体的面板开合带出来。 */
+      if (isRepo) children.push(branchHistoryChipSwitch(sessionId))
       /* 「字符 + 数字」的三小组都收进同一个 wrapper（dsh-git-chip-grp，组内 3px），
          字符不带类、色随 chip 文字。改动数药丸及其变淡态原样照旧，只是前面多了 ●。 */
       if (isRepo && known === true && pending > 0) {

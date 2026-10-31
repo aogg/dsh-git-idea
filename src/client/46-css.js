@@ -17,6 +17,15 @@
    chip 本身的 6px 更紧（3px，同顶部同步组 tool 键 4px 一档），字符色跟随 chip 文字色。 */
 .dsh-git-chip-grp{display:inline-flex;align-items:center;gap:3px;flex:none}
 .dsh-git-chip-n{display:inline-grid;place-items:center;min-width:14px;height:14px;padding:0 3px;border-radius:999px;background:var(--dsw-alias-brand-primary);color:#fff;font-size:9px;line-height:1;flex:none}
+/* chip 分支名右边的「分支会话历史」迷你滑块（64-branchhistory.js，纯 span + CSS，
+   不是 input）：22×12 的轨道 + 8px 圆点，开 = 品牌色轨道、圆点推到右边（配色同
+   改动数药丸的 brand 底白点）；状态没读到时整只压暗 —— 答复到了自动翻正。 */
+.dsh-git-chip-switch{position:relative;display:inline-block;box-sizing:border-box;width:22px;height:12px;border-radius:999px;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l1);cursor:pointer;flex:none;transition:background .15s ease,border-color .15s ease}
+.dsh-git-chip-switch::after{content:'';position:absolute;top:1px;left:1px;width:8px;height:8px;border-radius:999px;background:var(--dsw-alias-label-secondary);transition:transform .15s ease,background .15s ease}
+.dsh-git-chip-switch:hover{border-color:var(--dsw-alias-brand-primary)}
+.dsh-git-chip-switch-on{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary)}
+.dsh-git-chip-switch-on::after{transform:translateX(10px);background:#fff}
+.dsh-git-chip-switch-unknown{opacity:.55}
 .dsh-git-pop{position:absolute;left:8px;right:8px;bottom:100%;margin-bottom:8px;z-index:30;pointer-events:auto;box-sizing:border-box;height:74vh;display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--dsw-alias-border-l1);border-radius:12px;background:var(--dsw-alias-bg-layer-1);box-shadow:var(--dsw-elevation-soft);color:var(--dsw-alias-label-primary);font-size:12px}
 .dsh-git-top{display:flex;align-items:center;gap:8px;row-gap:6px;flex-wrap:wrap;flex:none;padding:8px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);position:relative}
 .dsh-git-tabs{display:flex;gap:2px;flex:none}

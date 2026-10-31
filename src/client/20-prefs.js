@@ -113,6 +113,15 @@
          normalizeWorktreeDirMappings 的职责（quickCommands 那种「两边都归一化」
          是编辑器要当场数条数校验的特例，这里的编辑器只拦「条数」，形状交给 Host）。 */
       worktreeDirMappings: [],
+      /* 分支会话历史的三格（host 79c-branchhistory.js 注入与登记；开关编辑器在
+         79-globalconfig.js 的「分支会话历史」组与 chip 上的小滑块，提示词编辑器在
+         80-panel.js 的项目配置档）。与 repos 同一条先例：配置页保存的是**整份**
+         配置，客户端的归一化把它们丢了的话，读者在配置页改一次 git 路径，各工作区
+         的开关、各分支的专用提示词与按分支记下的会话账就全没了。原样搬运、不做
+         清洗 —— 清洗是 Host 那边 normalizeBranch* 的职责。 */
+      branchHistory: { defaultOn: false, maxSessions: 20, workspaces: {} },
+      branchPrompts: {},
+      branchSessions: {},
     }
     let pluginConfig = Object.assign({}, PLUGIN_CONFIG_DEFAULTS)
     let pluginConfigPath = ''
@@ -156,6 +165,12 @@
          清洗都在 Host（normalizeWorktreeDirMappings），这里只守住「不是数组就当
          没有配置」的底。 */
       out.worktreeDirMappings = Array.isArray(raw.worktreeDirMappings) ? raw.worktreeDirMappings : []
+      /* branchHistory / branchPrompts / branchSessions 同 repos 一族的原样搬运（对象
+         款）：形状与清洗都在 Host（normalizeBranchHistory 等），这里只守住「不是
+         对象就当没有配置」的底。 */
+      out.branchHistory = raw.branchHistory != null && typeof raw.branchHistory === 'object' && !Array.isArray(raw.branchHistory) ? raw.branchHistory : {}
+      out.branchPrompts = raw.branchPrompts != null && typeof raw.branchPrompts === 'object' && !Array.isArray(raw.branchPrompts) ? raw.branchPrompts : {}
+      out.branchSessions = raw.branchSessions != null && typeof raw.branchSessions === 'object' && !Array.isArray(raw.branchSessions) ? raw.branchSessions : {}
       return out
     }
 

@@ -842,5 +842,24 @@ onRpc('git/reword', function (input) { return rewordRun(input, '改写提交消�
 
 onRpc('git/quick', function (input) { return quickRun(input, '快捷命令') })
 
+/* 分支会话历史（79c-branchhistory.js）的三条：读（chip 滑块与配置页「分支会话历史」
+    组的数据源，prompts/counts 只答本工作区那格）、写工作区开关（reset 回全局默认、
+    同值不落盘）、写当前分支的专用提示词（空文本 = 删除该分支条目）。读改写都在
+    Host，与 drafts / appliedRepos 同一条理由：config-save 是「整份换掉」的写法，
+    客户端只递「这个会话、开还是关、哪条提示词」，谁也抹不掉谁。 */
+onRpc('git/branch-history-config', function (input) { return branchHistorySnapshot(input) })
+
+onRpc('git/branch-history-switch', function (input) { return branchHistorySwitchSave(input) })
+
+onRpc('git/branch-prompt-save', function (input) { return branchPromptSave(input) })
+
+/* 分支会话历史的宿主监听（pre-step 登记 + 注入）。守卫写在 effect 里：bridge 版的
+    老 ctx façade 没有 on 时安静不启用（79b-file-save.js 的守卫先例）。 */
+ctx.effect(function () {
+  if (typeof ctx.on !== 'function') return undefined
+  registerBranchHistory(ctx)
+  return undefined
+}, 'dsh-git-idea branch-history register')
+
   },
 }
