@@ -148,7 +148,7 @@
       })
     }
 
-    /* chip 滑块本体（92-chip.js 在分支名 label 右边挂它）：纯 span + CSS 的迷你
+    /* chip 滑块本体（92-chip.js 把它挂在最左、分支图标之前）：纯 span + CSS 的迷你
        开关，宽 22px 高 12px（46-css.js 的 dsh-git-chip-switch）。点击 stopPropagation
        —— chip 本体是 button，别让它把面板开合也带出来。 */
     function branchHistoryChipSwitch(sessionId) {

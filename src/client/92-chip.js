@@ -505,14 +505,15 @@
       else if (info.reason === '') title = 'Git —— 点击打开面板'
       else title = where + ' 读不动这个目录 —— 点击查看'
 
-      const children = [h(BranchIcon, {
-        key: 'icon', size: 14, plus: !isRepo && info.phase === 'none',
-        spin: switching !== null,
-      })]
-      if (isRepo) children.push(h('span', { className: 'dsh-git-chip-label', key: 'label' }, info.label))
-      /* 分支会话历史的迷你滑块（64-branchhistory.js）：挂在分支名 label 右边，是
+      const children = []
+      /* 分支会话历史的迷你滑块（64-branchhistory.js）：挂在最左、分支图标之前，是
          本工作区注不注入的开关；点击 stopPropagation，别把 chip 本体的面板开合带出来。 */
       if (isRepo) children.push(branchHistoryChipSwitch(sessionId))
+      children.push(h(BranchIcon, {
+        key: 'icon', size: 14, plus: !isRepo && info.phase === 'none',
+        spin: switching !== null,
+      }))
+      if (isRepo) children.push(h('span', { className: 'dsh-git-chip-label', key: 'label' }, info.label))
       /* 「字符 + 数字」的三小组都收进同一个 wrapper（dsh-git-chip-grp，组内 3px），
          字符不带类、色随 chip 文字。改动数药丸及其变淡态原样照旧，只是前面多了 ●。 */
       if (isRepo && known === true && pending > 0) {
