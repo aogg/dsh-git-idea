@@ -204,7 +204,10 @@ console.log('=== transport 的选择：本地与 POSIX 远端透传，cmd 远端
 console.log('')
 console.log('=== cmd 远端：包裹命令形状与真读 ===')
 {
-  const engine = makeEngine({ remoteDialect: () => 'cmd', whereGit: 'D:\\soft\\Git\\cmd\\git.exe\n' })
+  const engine = makeEngine({
+    remoteDialect: () => 'cmd', whereGit: 'D:\\soft\\Git\\cmd\\git.exe\n',
+    versions: { 'D:\\soft\\Git\\cmd\\bin\\bash.exe': null },
+  })
   const a = makeBody(engine)
   const read = await a.H('git/panel')({ sessionId: 's-1', repo: SSH_PROJ })
   check('cmd 远端的整树读成功（真仓库、真通道）：分支与改动数都对',
@@ -213,7 +216,7 @@ console.log('=== cmd 远端：包裹命令形状与真读 ===')
   check('包裹命令是 `cd /d "<远端路径>" && "<bash>" -s`：路径换算成 Windows 反斜杠拼法',
     wrap !== undefined && wrap.cwd === WIN_PROJ && wrap.bash === GOOD_BASH)
   check('脚本里的 ssh://win/ 前缀整段摘成远端路径（stdin 数据不在此列），[ -e .git ] 才探得到',
-    wrap.script.indexOf('ssh://win/') < 0 && wrap.script.indexOf(WIN_PROJ.replace('\\', '/')) >= 0
+    wrap.script.indexOf('ssh://win/') < 0 && wrap.script.indexOf(WIN_PROJ.split('\\').join('/')) >= 0
     && wrap.script.indexOf('[ -e ') >= 0)
   check('通道用完把连接占用还回去（release 成对出现）',
     engine.calls.releaseCalls > 0)
@@ -222,6 +225,19 @@ console.log('=== cmd 远端：包裹命令形状与真读 ===')
   await a.H('git/panel')({ sessionId: 's-1', repo: SSH_PROJ })
   check('第二次读直接用缓存：bash 探测零次、方言零次',
     engine.calls.probes.length === probesBefore && engine.calls.dialectCalls === 1)
+  /* 首次判定的结论按工作区落进部署配置（70-config.js 的 remoteTransports）。 */
+  const stored = await a.H('git/config')({ sessionId: 's-1' })
+  check('判定记录按工作区永久落账（dialect=cmd + 发现来的 bash）',
+    stored.ok === true && stored.config.remoteTransports != null
+    && stored.config.remoteTransports[SSH_PROJ] != null
+    && stored.config.remoteTransports[SSH_PROJ].dialect === 'cmd'
+    && stored.config.remoteTransports[SSH_PROJ].bash === GOOD_BASH)
+  /* 清除记录：配置里的条目删掉，下一读重新首次判定。 */
+  const cleared = await a.H('git/remote-transport-clear')({ sessionId: 's-1' })
+  const afterClear = await a.H('git/config')({ sessionId: 's-1' })
+  check('git/remote-transport-clear 删掉记录，配置里不再有这个工作区',
+    cleared.ok === true && cleared.cleared === true
+    && (afterClear.config.remoteTransports == null || afterClear.config.remoteTransports[SSH_PROJ] === undefined))
 }
 
 console.log('')
@@ -281,7 +297,10 @@ console.log('=== bash 路径的发现：向上推、System32 拒绝、假 bash �
 console.log('')
 console.log('=== 手填优先与缓存作废 ===')
 {
-  const engine = makeEngine({ remoteDialect: () => 'cmd', whereGit: 'D:\\soft\\Git\\cmd\\git.exe\n' })
+  const engine = makeEngine({
+    remoteDialect: () => 'cmd', whereGit: 'D:\\soft\\Git\\cmd\\git.exe\n',
+    versions: { 'D:\\soft\\Git\\cmd\\bin\\bash.exe': null },
+  })
   const a = makeBody(engine)
   /* 先让自动发现把缓存填上。 */
   const first = await a.H('git/panel')({ sessionId: 's-1', repo: SSH_PROJ })
@@ -375,6 +394,13 @@ console.log('=== 配置归一化：ssh:// 键照常存取，语义不变 ===')
     appliedRepos: { [SSH_PROJ]: 'ssh://win/D:/code/proj', '/local/ws': '/local/repo' },
     drafts: { 'ssh://win/D:/code/proj': '远程仓库的草稿', '/local/repo': '本地草稿' },
     worktreeMains: { 'ssh://win/D:/code/wt': 'ssh://win/D:/code/proj' },
+    remoteTransports: {
+      [SSH_PROJ]: { dialect: 'cmd', bash: 'D:\\soft\\Git\\bin\\bash.exe', at: 1234 },
+      'ssh://posix/tmp/gp84-posix': { dialect: 'posix', bash: '', at: 99 },
+      'ssh://win/D:/broken': { dialect: 'cmd', bash: '', at: 7 },
+      'relative/junk': { dialect: 'posix', bash: '', at: 1 },
+      '/local/only': { dialect: 'posix', bash: '', at: 2 },
+    },
   }
   const saved = await a.H('git/config-save')({ sessionId: 's-1', config: config })
   check('ssh:// 键与值原样落盘（不再被「必须以 / 开头」静默丢掉）',
@@ -385,6 +411,16 @@ console.log('=== 配置归一化：ssh:// 键照常存取，语义不变 ===')
   check('本地路径键照旧，非路径键照旧拒（relative/junk 丢）',
     saved.config.repos[SSH_PROJ][1] === '/local/repo' && saved.config.repos[SSH_PROJ].length === 2
     && saved.config.drafts['/local/repo'] === '本地草稿')
+  check('remoteTransports 归一化：cmd 记录带 bash 落账、posix 记录落账、没 bash 的 cmd 记录丢、非 ssh:// 键丢',
+    saved.config.remoteTransports != null
+    && saved.config.remoteTransports[SSH_PROJ] != null
+    && saved.config.remoteTransports[SSH_PROJ].dialect === 'cmd'
+    && saved.config.remoteTransports[SSH_PROJ].bash === 'D:\\soft\\Git\\bin\\bash.exe'
+    && saved.config.remoteTransports['ssh://posix/tmp/gp84-posix'] != null
+    && saved.config.remoteTransports['ssh://posix/tmp/gp84-posix'].dialect === 'posix'
+    && saved.config.remoteTransports['ssh://win/D:/broken'] === undefined
+    && saved.config.remoteTransports['relative/junk'] === undefined
+    && saved.config.remoteTransports['/local/only'] === undefined)
   const readBack = await a.H('git/draft-read')({ sessionId: 's-1', repo: SSH_PROJ })
   check('draft-read 按远程仓库键答草稿', readBack.ok === true && readBack.message === '远程仓库的草稿')
   const applied = await a.H('git/repo-applied-save')({ sessionId: 's-1', repo: 'ssh://win/D:/code/other' })

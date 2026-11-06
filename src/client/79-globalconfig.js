@@ -205,15 +205,19 @@
           h('span', { className: 'dsh-git-set-hint' }, '面板读、写、初始化用的都是这一个；会话工作区是 ssh:// 远程主机时，指的是那台远端机上的 git')))
     }
 
-    /* ── 远程主机：ssh:// 会话的 Git Bash 通道 ──
+    /* ── 远程主机：ssh:// 会话的三方言判定与 Git Bash 通道 ──
 
-       会话工作区是 ssh:// 远程工作区、而那台远端是 Windows OpenSSH 主机（登录
-       shell 是 cmd.exe）时，插件的 POSIX git 脚本在 cmd 里必败，面板只会说「不是
-       git 仓库」。插件的对策是 cmd 方言改走 Git Bash 通道：`cd /d "<路径>" &&
-       "<bash>" -s`，脚本原文从 stdin 喂入。通道要的 bash 在配置里手填，空则远端
-       自动发现（where git 向上推同树 bin\bash.exe；C:\Windows\System32\bash.exe
-       是 WSL 存根，明确拒绝）。这一组把通道的状态与发现失败的原因说给人听 ——
-       reason/detail 沿用 git 位置组的文案风格，失败的出路是下面这个输入框。 */
+       会话工作区是 ssh:// 远程工作区时，那台远端可能是 Linux / macOS（POSIX
+       登录 shell，脚本原样透传）、也可能是 Windows OpenSSH（登录 shell 是
+       cmd.exe，POSIX git 脚本必败，面板只会说「不是 git 仓库」）。插件的对策：
+       首次需要时判定一次方言 —— 测得 POSIX、测得 cmd、没测出来按 POSIX 兜底，
+       三种状态分得清清楚楚 —— 测得的结论**按工作区永久记录**进插件配置
+       （host 70-config.js 的 remoteTransports），之后这个工作区直接读记录、
+       不再探测；cmd 方言才走 Git Bash 通道（`cd /d "<路径>" && "<bash>" -s`，
+       脚本原文从 stdin 喂入）。通道要的 bash 在配置里手填，空则远端自动发现
+       （where git 向上推同树 bin\bash.exe；C:\Windows\System32\bash.exe 是 WSL
+       存根，明确拒绝）。这一组把三态结论、通道状态与发现失败的原因说给人听，
+       并让记录可见、可清（清了下一读重新判定）。 */
     function RemoteTransportGroup(props) {
       const remembered = useLastSession()
       const sessionId = props != null && typeof props.sessionId === 'string' && props.sessionId.length > 0
@@ -223,6 +227,8 @@
       const [draftPath, setDraftPath] = React.useState(plugin.remoteBashPath)
       const [snap, setSnap] = React.useState(null)
       const [checking, setChecking] = React.useState(false)
+      const [clearing, setClearing] = React.useState(false)
+      const [note, setNote] = React.useState('')
       React.useEffect(function () { setDraftPath(plugin.remoteBashPath) }, [plugin.remoteBashPath])
 
       const load = function (refresh) {
@@ -245,24 +251,52 @@
         savePluginConfig(next)
       }
 
+      /* 永久记录的那半句：有记录说记录（何时判的），没有就不说。 */
+      const recordedNote = function () {
+        const at = snap != null && typeof snap.recordedAt === 'number' ? snap.recordedAt : 0
+        if (!(at > 0)) return '判定已按工作区永久记录，之后不再探测'
+        const said = new Date(at)
+        return '判定已按工作区永久记录（' + (isNaN(said.getTime()) ? String(at) : said.toLocaleString()) + '），之后不再探测'
+      }
       const detail = snap == null ? '' : text(snap.detail)
+      const dialect = snap == null ? '' : text(snap.dialect)
       const verdict = snap == null
         ? '正在检查…'
         : (snap.ok === false
           ? '读不到通道状态：' + detail
           : (snap.remote !== true
             ? '本会话不是 ssh:// 远程工作区 —— 这一组只在远程会话里有答案，本地会话的 git 命令不走这一通道。'
-            : (text(snap.dialect) !== 'cmd'
-              ? '远程是 POSIX 主机（Linux/macOS）：POSIX 脚本原样透传，不需要 Git Bash 通道。'
-              : (text(snap.bash).length > 0
-                ? ('通道就绪：' + text(snap.bash) + (snap.source === 'config' ? '（配置页指定的）' : '（自动发现的）')
-                  + (detail.length > 0 ? ' · ' + detail : ''))
-                : (detail.length > 0 ? detail : '通道还没就绪：在下面手填远端 bash 的绝对路径。')))))
+            : (dialect === 'posix-fallback' || (dialect === 'posix' && snap.measured !== true)
+              ? '方言没测出来（' + (detail.length > 0 ? detail : '远端没有应答') + '），本次按 POSIX 兜底透传；兜底不是结论，没有写入永久记录，之后会自动重探。'
+              : (dialect === 'posix'
+                ? '测得 POSIX 主机（Linux/macOS）：脚本原样透传，不需要 Git Bash 通道。' + recordedNote() + '。'
+                : (text(snap.bash).length > 0
+                  ? ('测得 Windows 主机（登录 shell 是 cmd.exe）：git 命令经 Git Bash 执行 —— ' + text(snap.bash)
+                    + (snap.source === 'config' ? '（配置页指定的）' : '（自动发现的）'))
+                  + '。' + recordedNote() + '。' + (detail.length > 0 ? ' · ' + detail : '')
+                  : (detail.length > 0 ? detail : '测得 Windows 主机，但 Git Bash 通道还没就绪：在下面手填远端 bash 的绝对路径。')))))))
+
+      const clearRecord = function () {
+        if (clearing) return
+        setClearing(true)
+        setNote('')
+        const payload = sessionId.length > 0 ? { sessionId: sessionId } : {}
+        callHost('git/remote-transport-clear', payload).then(function (result) {
+          setClearing(false)
+          setNote(result != null && result.cleared === true
+            ? '已清除这个工作区的判定记录：下一次读会重新判定（测得的新结论会重新落记录）。'
+            : '这个工作区本来就没有判定记录。')
+          load(false)
+        }, function (failure) {
+          setClearing(false)
+          setNote('清除失败：' + failureText(failure))
+        })
+      }
 
       return h('div', null,
-        h('div', { className: 'dsh-git-set-group' }, '远程主机（ssh:// 会话的 Git Bash 通道）'),
+        h('div', { className: 'dsh-git-set-group' }, '远程主机（ssh:// 会话的三方言判定与 Git Bash 通道）'),
         h('div', { className: 'dsh-git-set-hint' },
-          '远端是 Windows（登录 shell 是 cmd.exe）时，git 命令改经 Git Bash 执行，这个路径就是通道用的 bash：填 Git for Windows 的 bash.exe 绝对路径（例：D:\\soft\\Git\\bin\\bash.exe），留空则自动发现。System32 下的 bash.exe 是 WSL 存根，不会采用。'),
+          '远端可能是 Linux / macOS（POSIX，脚本原样透传）或 Windows（登录 shell 是 cmd.exe，git 命令改经 Git Bash 执行）。首次读取时判定一次并按工作区永久记录，之后不再探测；判定状态与记录见下面。Windows 的通道要一个 bash：填 Git for Windows 的 bash.exe 绝对路径（例：D:\\soft\\Git\\bin\\bash.exe），留空则自动发现 —— System32 下的 bash.exe 是 WSL 存根，不会采用。'),
 
         h('div', { className: 'dsh-git-set-row' },
           h('span', { className: 'dsh-git-set-label' }, '远程 bash 路径'),
@@ -273,11 +307,20 @@
             onChange: function (event) { commitPath(event.target.value) },
           })),
         h('div', { className: 'dsh-git-set-row' },
-          h('span', { className: 'dsh-git-set-label' }, ''),
+          h('span', { className: 'dsh-git-set-label' }, '判定与通道'),
           h('span', {
-            className: text(snap != null && snap.remote === true && text(snap.dialect) === 'cmd' && text(snap.bash).length === 0
+            className: text(snap != null && snap.remote === true && dialect === 'cmd' && text(snap.bash).length === 0
               ? 'dsh-git-set-hint dsh-git-warn' : 'dsh-git-set-hint'),
           }, verdict)),
+        snap != null && snap.remote === true && snap.origin === 'record'
+          ? h('div', { className: 'dsh-git-set-row' },
+            h('span', { className: 'dsh-git-set-label' }, ''),
+            h('button', {
+              type: 'button', className: 'dsh-git-btn', disabled: clearing,
+              onClick: clearRecord,
+            }, clearing ? '清除中…' : '清除这个工作区的判定记录'),
+            h('span', { className: 'dsh-git-set-hint' }, note.length > 0 ? note : '删掉永久记录，下一次读重新判定（怀疑远端换过系统时用）'))
+          : null,
         h('div', { className: 'dsh-git-set-row' },
           h('span', { className: 'dsh-git-set-label' }, ''),
           h('button', {

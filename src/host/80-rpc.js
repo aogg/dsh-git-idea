@@ -171,19 +171,34 @@ onRpc('git/draft-save', function (input) { return draftSave(input) })
    cached — the reader opening this page is asking "now", not "a moment ago". */
 onRpc('git/toolchain', function () { return toolchainSnapshot() })
 
-/* ssh:// 远程工作区的通道快照（11-remote.js）：这个会话的主机、登录 shell 方言、
-   Git Bash 通道的解析结果与失败原因。配置页的「远程主机」组拿它说话；refresh
-   让「再检查一次」绕开按别名缓存的发现结果。本地会话答 remote:false —— 这条
-   只在远程会话里有答案，本地永远是 POSIX 的老路。 */
+/* ssh:// 远程工作区的通道快照（11-remote.js）：这个工作区的主机、三态方言结论
+   （测得 posix / 测得 cmd / 没测出来按 posix 兜底）、Git Bash 通道的解析结果与
+   永久记录（remoteTransports，首次判定后按工作区落进配置）的状态。配置页的
+   「远程主机」组拿它说话；refresh 让「再检查一次」作废进程内缓存重新审 ——
+   cmd 记录复审 bash、没记录的重新测量，记录本身不动。本地会话答 remote:false
+   —— 这条只在远程会话里有答案，本地永远是 POSIX 的老路。 */
 onRpc('git/remote-transport', function (input) {
   const workdir = sessionWorkdir(input)
   const parts = remotePartsOf(workdir)
   if (parts === undefined) {
-    return Promise.resolve({ ok: true, remote: false, alias: '', dialect: '', bash: '', source: '', reason: '', detail: '' })
+    return Promise.resolve({ ok: true, remote: false, workdir: '', alias: '', dialect: '', measured: false, origin: '', recordedAt: 0, bash: '', source: '', reason: '', detail: '' })
   }
-  return remoteTransportSnapshot(parts.alias, input != null && input.refresh === true).then(function (snap) {
-    return Object.assign({ ok: true, remote: true }, snap)
+  const args = argsAt(input, null)
+  return remoteTransportSnapshot(workdir, input != null && input.refresh === true, args).then(function (snap) {
+    return Object.assign({ ok: true }, snap)
   })
+})
+
+/* 清除这个工作区的判定记录（配置页「远程主机」组的按钮，host 11-remote.js 的
+   clearRemoteTransport）：配置里的条目删掉、进程内缓存作废，下一读重新首次
+   判定。设置类动作，不进「命令」页（identity-save 同一个先例）。 */
+onRpc('git/remote-transport-clear', function (input) {
+  const workdir = sessionWorkdir(input)
+  const parts = remotePartsOf(workdir)
+  if (parts === undefined) {
+    return Promise.resolve({ ok: false, error: 'not-remote', workspace: isStr(workdir) ? workdir : '' })
+  }
+  return clearRemoteTransport(workdir, argsAt(input, null))
 })
 
 onRpc('git/identity', function (input) { return identitySnapshot(input) })

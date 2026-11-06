@@ -98,11 +98,18 @@ async function invoke(command, args, exec, options) {
   const sandbox = sandboxFor(args, exec)
   if (sandbox !== undefined) request.sandboxPolicy = sandbox
   /* ── transport 的选择（11-remote.js）──
-     ssh:// 远端 + cmd 方言主机走 Git Bash 通道（POSIX 脚本原文从 stdin 喂 bash），
-     其余 —— 本地、POSIX 远端、ssh 插件不在场 —— 原样走 shell 层，一字节不改。
-     通道开不出来时这里抛错：原因直达面板的 problem 行，绝不落成「不是 git 仓库」。 */
-  const route = await remoteRouteOf(request, sandbox)
-  const raw = route !== null ? await remoteShellRun(route, request) : await runShell(shell.resolve(request))
+     ssh:// 远端 + cmd 方言主机走 Git Bash 通道（POSIX 脚本原文从 stdin 喂 bash）；
+     POSIX 远端（测得或兜底）仍走 shell 层透传，但命令文本里的 ssh://<alias>/
+     前缀要摘成本机路径拼法，脚本里嵌的 <repo> 才在远端文件系统上存在；本地与
+     ssh 插件不在场的会话一字节不改。首次判定要落永久记录，args（带 sessionId）
+     也递进去；通道开不出来时这里抛错：原因直达面板的 problem 行，绝不落成
+     「不是 git 仓库」。 */
+  const route = await remoteRouteOf(request, sandbox, args)
+  const raw = route === null
+    ? await runShell(shell.resolve(request))
+    : (route.kind === 'engine'
+      ? await remoteShellRun(route, request)
+      : await runShell(shell.resolve(Object.assign({}, request, { command: remoteScriptText(route, request.command) }))))
   const out = raw.stdout == null ? null : raw.stdout
   const err = raw.stderr == null ? null : raw.stderr
   return {

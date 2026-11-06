@@ -7,18 +7,28 @@
  * 单引号不是引号字符 —— `cd 'D:/…'` 连目录都进不去，POSIX 脚本必败（实测报
  * 「'p' 不是内部或外部命令」），面板于是把一台好好的仓库判成「不是 git 仓库」。
  *
- * 所以 transport 按「workdir 是否 ssh:// + 主机方言」选：方言拿不到或就是 POSIX 时
- * 一字节不改地走老路（现状即正确）；方言是 cmd 时改走 Git Bash 通道 —— 命令改成
- * `cd /d "<remotePath>" && "<bash路径>" -s`，POSIX 脚本原文连同 stdin 数据从 stdin
- * 喂进 bash（bash -s 把剩余 stdin 交给脚本里的 `cat`/`git apply -` 读，已实测余量
- * 数据不丢）。通道走 dsh-ssh-workspace 自己的 engine.openChannel（同一条池化 SSH
- * 连接上的裸 exec 通道）：patch-shell 那半的自动 cd 前缀是 POSIX 语法、在 cmd 主机
- * 上必死，绕开它而不是修它 —— 那是另一个插件，这里只读不动。
+ * 所以 transport 按「workdir 是否 ssh:// + 主机方言」选，方言三态：
+ *   - 测得 posix（Linux/macOS）：脚本原样透传，零包装（现状即正确）；
+ *   - 测得 cmd（Windows OpenSSH）：改走 Git Bash 通道 —— 命令改成
+ *     `cd /d "<remotePath>" && "<bash路径>" -s`，POSIX 脚本原文连同 stdin 数据从
+ *     stdin 喂进 bash（bash -s 把剩余 stdin 交给脚本里的 `cat`/`git apply -` 读，
+ *     已实测余量数据不丢）。通道走 dsh-ssh-workspace 自己的 engine.openChannel
+ *     （同一条池化 SSH 连接上的裸 exec 通道）：patch-shell 那半的自动 cd 前缀是
+ *     POSIX 语法、在 cmd 主机上必死，绕开它而不是修它 —— 那是另一个插件，这里
+ *     只读不动。
+ *   - 没测出来按 posix 兜底：探测失败时照旧透传（现状即正确）。兜底不是结论，
+ *     不落永久记录，进程内只缓存 60 秒、稍后重探。
  *
- * 方言与远端 bash 路径都按主机别名缓存在进程内；bash 优先用配置页「远程 bash 路径」
- * 的手填值，空则 `where git` 向上推同树 bin\bash.exe 自动发现，C:\Windows\System32\
- * bash.exe（WSL 存根）明确拒绝，探测（--version 必须自报 pc-msys/pc-cygwin）通过才
- * 启用。发现失败的Readable 原因由 git/remote-transport 带到配置页，指引手填。 */
+ * 三种结论的去向不同：测得的两样都**按工作区永久记录**进部署配置（70-config.js
+ * 的 remoteTransports，键 = 工作区 ssh:// 路径）—— 每个远端工作区只在第一次需要
+ * 时探测一次，之后直接读记录、不再探测；进程内的缓存降级为记录之外的一次兜底
+ * （进程重启后复审记录的那几问）。cmd 记录只在 bash 还探得通时有效，探不通
+ * （或配置页换了手填路径）就重探一次并覆写；posix 记录永久有效不再探。
+ *
+ * cmd 方言要的 bash 路径优先用配置页「远程 bash 路径」的手填值，空则 `where git`
+ * 向上推同树 bin\bash.exe 自动发现，C:\Windows\System32\bash.exe（WSL 存根）明确
+ * 拒绝，探测（--version 必须自报 pc-msys/pc-cygwin）通过才启用。发现失败的原因
+ * 由 git/remote-transport 带到配置页，指引手填。 */
 
 /* `ssh://<alias>/<绝对路径>` 的拆解 —— 与 dsh-ssh-workspace protocol.js 同一条正则：
  * alias 是 DNS 式标签、不含 `/`，所以按第一个 `/` 切开是无歧义的。不是 ssh:// 或
@@ -56,52 +66,61 @@ function remoteRouter() {
   return { engine: engine }
 }
 
-/* ── 方言 ──
+/* ── 方言：三态测量 ──
  *
- * 首选 ssh 插件自己的 remoteDialect(alias)：它在池化连接的记录上按连接缓存、断线
- * 重连会重探，是最权威的一份。引擎没有这个 API 时退化为自己问一句金丝雀
- * `echo %COMSPEC%`：cmd 把它展开成 cmd.exe 的 Windows 路径，POSIX shell 原样回显
- * 字面量 —— 两种方言的答案可区分（与 dsh-ssh-workspace engine.js 同一问法）。
- * 自探的结果在本进程内按 alias 缓存：答案成立时缓存得久（登录 shell 不会自己变），
- * 失败的缓存 60 秒就过期重探 —— 连接刚断时的失败不该被判成永久事实。 */
+ * 答案只有三样：测得 posix、测得 cmd、没测出来按 posix 兜底（state = 'posix' /
+ * 'cmd' / 'posix-fallback'，measured 标出后一种）。首选 ssh 插件自己的
+ * remoteDialect(alias)：它在池化连接的记录上按连接缓存、断线重连会重探，是最
+ * 权威的一份。引擎没有这个 API 时退化为自己问一句金丝雀 `echo %COMSPEC%`：cmd
+ * 把它展开成 cmd.exe 的 Windows 路径，POSIX shell 原样回显字面量 —— 两种方言
+ * 的答案可区分（与 dsh-ssh-workspace engine.js 同一问法）。
+ *
+ * 本进程内按 alias 缓存，只为了别把同一台主机问出老茧（同一主机的几个工作区
+ * 各自首次落记录之前共用这一问）：测得的答案缓存 300 秒（登录 shell 不会自己
+ * 变），兜底只缓存 60 秒就过期重探 —— 连接刚断时的失败不该被判成永久事实，
+ * 而且兜底本来就不落记录，这一问过一会儿还要重来。 */
 const REMOTE_DIALECT_TTL = 300000
 const REMOTE_DIALECT_FAIL_TTL = 60000
 const REMOTE_WINDOWS_PATH_RE = /^[A-Za-z]:[\\/]/
 const remoteDialectCache = new Map()
 
 function remoteDialectStale(entry, now) {
-  if (entry === undefined || !isStr(entry.dialect)) return true
-  return now - entry.at > (entry.dialect === 'cmd' ? REMOTE_DIALECT_TTL : REMOTE_DIALECT_FAIL_TTL)
+  if (entry === undefined || !isStr(entry.state)) return true
+  return now - entry.at > (entry.state === 'posix-fallback' ? REMOTE_DIALECT_FAIL_TTL : REMOTE_DIALECT_TTL)
 }
 
-async function remoteDialectOf(alias) {
+async function measureRemoteDialect(alias) {
   const now = Date.now()
   const cached = remoteDialectCache.get(alias)
-  if (remoteDialectStale(cached, now) !== true) return cached.dialect
+  if (remoteDialectStale(cached, now) !== true) return cached
   const router = remoteRouter()
-  let dialect = 'posix'
+  let answer
   if (router !== undefined && typeof router.engine.remoteDialect === 'function') {
     try {
       const said = await router.engine.remoteDialect(alias)
-      dialect = said === 'cmd' ? 'cmd' : 'posix'
+      answer = said === 'cmd' ? { state: 'cmd', measured: true } : { state: 'posix', measured: true }
     } catch (error) {
-      console.error('dsh-git-idea: 主机 ' + alias + ' 的方言探测失败，按 POSIX 处理', String(error))
-      dialect = 'posix'
+      console.error('dsh-git-idea: 主机 ' + alias + ' 的方言探测失败，按 POSIX 兜底（不落记录，稍后重探）', String(error))
+      answer = { state: 'posix-fallback', measured: false, reason: 'dialect-unknown', detail: String(error) }
     }
-  } else if (router !== undefined) {
+  } else {
     try {
       const canary = await remoteChannelRun(router.engine, alias, 'echo %COMSPEC%', null, null, 15000)
       const value = canary.stdout.text.trim()
-      if (canary.exitCode === 0 && value !== '' && value.indexOf('%COMSPEC%') < 0 && REMOTE_WINDOWS_PATH_RE.test(value)) {
-        dialect = 'cmd'
+      if (canary.timedOut === true || canary.exitCode !== 0 || value === '') {
+        answer = { state: 'posix-fallback', measured: false, reason: 'dialect-unknown', detail: '方言金丝雀没有跑成（' + (canary.timedOut === true ? '超时' : '退出码 ' + String(canary.exitCode)) + '）' }
+      } else if (value.indexOf('%COMSPEC%') < 0 && REMOTE_WINDOWS_PATH_RE.test(value)) {
+        answer = { state: 'cmd', measured: true }
+      } else {
+        answer = { state: 'posix', measured: true }
       }
     } catch (error) {
-      console.error('dsh-git-idea: 主机 ' + alias + ' 的方言金丝雀没有跑成，按 POSIX 处理', String(error))
-      dialect = 'posix'
+      console.error('dsh-git-idea: 主机 ' + alias + ' 的方言金丝雀没有跑成，按 POSIX 兜底（不落记录，稍后重探）', String(error))
+      answer = { state: 'posix-fallback', measured: false, reason: 'dialect-unknown', detail: String(error) }
     }
   }
-  remoteDialectCache.set(alias, { dialect: dialect, at: now })
-  return dialect
+  remoteDialectCache.set(alias, Object.assign({ at: now }, answer))
+  return answer
 }
 
 /* ── 远端 bash 路径 ──
@@ -300,21 +319,165 @@ function invalidateRemoteBash(alias) {
   else remoteBashCache.clear()
 }
 
+/* ── 工作区的永久记录（70-config.js 的 remoteTransports）──
+ *
+ * 每个远端工作区只在第一次需要 transport 时探测一次，结论（测得 posix 或测得
+ * cmd）写进部署配置的 remoteTransports 映射、键是工作区的 ssh:// 拼法 —— 之后
+ * 这个工作区直接读记录，方言与 bash 都不再探。记录是「那台远端是什么机器」的
+ * 事实，不是某次会话的观感：换会话、换浏览器、重启部署都还是同一个答案。
+ * 兜底（没测出来）不落账：它不是结论，落了账反而把一次探测失败判成永久事实。
+ *
+ * 记录怎么审（transportForWorkdir）：
+ *   - posix 记录：永久有效，零探测 —— 直接透传；
+ *   - cmd 记录：bash 先审两道 —— 配置页的手填路径换了没有（换了记录就过期）、
+ *     记录里的 bash 还探不探得通（每进程复审一次，探不通记录就失效）—— 失效
+ *     才重探一次并覆写；
+ *   - 没有记录：首次判定，测得即落账。
+ * 进程内的 memo（remoteTransportMemo）只是记录之外的一次兜底：复审过的结论在
+ * 本进程生命周期里直接复用，一条 git 命令一次探测都不用再付。 */
+
+function remoteTransportKeyOf(workdir) {
+  return repoKeyOf(workdir)
+}
+
+/* 判定结论落账。写的是部署配置文件（住在任何工作区之外），所以要这个会话的
+ * 沙箱策略 —— args 里带着 sessionId（argsAt 放进来的；写命令不带 workdir，
+ * 与 draftSave / saveAppliedRepo 的 argsAt(input, null) 同一个形状）。落账失败
+ * 不拦读：账写不进去顶多是下次多探一轮（进程内 memo 照常兜着），console.error
+ * 说一声就好 —— rpclog 那条「观测不许反过来伤害被观测的东西」的同一条例外。 */
+async function saveRemoteTransportRecord(workdir, record, args) {
+  try {
+    const config = await readConfigFile()
+    const map = Object.assign({}, config.remoteTransports)
+    const key = remoteTransportKeyOf(workdir)
+    const before = map[key]
+    map[key] = record
+    /* 同值不写盘（saveAppliedRepo 同一条纪律）：重复探测得出同一个答案时，
+       一个字节都不该碰配置文件。 */
+    if (before !== undefined && before.dialect === record.dialect && before.bash === record.bash) return
+    const sessionArgs = args != null && isStr(args.sessionId) && args.sessionId.length > 0 ? { sessionId: args.sessionId } : {}
+    const written = await writeConfigFile(Object.assign({}, config, { remoteTransports: map }), sessionArgs)
+    if (written.ok !== true) {
+      console.error('dsh-git-idea: 工作区 ' + workdir + ' 的 transport 判定记录落不了盘（读本身不受影响，下次重探），' + String(written.error))
+    }
+  } catch (error) {
+    console.error('dsh-git-idea: 工作区 ' + workdir + ' 的 transport 判定记录写失败（读本身不受影响，下次重探）', String(error))
+  }
+}
+
+const remoteTransportMemo = new Map()
+
+/* memo 作废：workdir 给空就全清（配置动了手填 bash 时，writeConfigFile 调的全清 —
+ * 每条 cmd 记录都要按新配置重审一遍）；「清除记录」按钮给单条。 */
+function invalidateRemoteTransports(workdir) {
+  if (isStr(workdir) && workdir.length > 0) remoteTransportMemo.delete(workdir)
+  else remoteTransportMemo.clear()
+}
+
+/* 首次判定：三态测量 + 测得即落账。 */
+async function detectRemoteTransport(workdir, args) {
+  const parts = remotePartsOf(workdir)
+  const dialect = await measureRemoteDialect(parts.alias)
+  if (dialect.measured !== true) {
+    return { state: 'posix-fallback', measured: false, origin: 'fallback', reason: dialect.reason, detail: dialect.detail }
+  }
+  if (dialect.state === 'posix') {
+    const record = { dialect: 'posix', bash: '', at: Date.now() }
+    await saveRemoteTransportRecord(workdir, record, args)
+    const entry = { state: 'posix', measured: true, origin: 'probe', at: record.at }
+    remoteTransportMemo.set(workdir, entry)
+    return entry
+  }
+  /* cmd：bash 解析（手填优先、自动发现，remoteBashOf 自带 60 秒失败缓存）。
+     方言测得了、bash 没着落 —— cmd 这个结论可信，bash 的失败原因照旧由
+     remoteBashCache 兜着，下一读重试解析；记录不落（归一化也不收没有 bash 的
+     cmd 记录）。 */
+  const bash = await remoteBashOf(parts.alias)
+  if (!isStr(bash.bash)) {
+    return { state: 'cmd', measured: true, origin: 'probe', bash: '', reason: bash.reason, detail: bash.detail }
+  }
+  const record = { dialect: 'cmd', bash: bash.bash, at: Date.now() }
+  await saveRemoteTransportRecord(workdir, record, args)
+  const entry = { state: 'cmd', measured: true, origin: 'probe', bash: bash.bash, source: bash.source, at: record.at, detail: bash.detail }
+  remoteTransportMemo.set(workdir, entry)
+  return entry
+}
+
+async function transportForWorkdir(workdir, args) {
+  const memo = remoteTransportMemo.get(workdir)
+  if (memo !== undefined) return memo
+  const router = remoteRouter()
+  const config = await readConfigFile()
+  const record = config.remoteTransports != null ? config.remoteTransports[remoteTransportKeyOf(workdir)] : undefined
+  if (record !== undefined && record.dialect === 'posix') {
+    /* posix 记录永久有效：不再探，直接透传。 */
+    const entry = { state: 'posix', measured: true, origin: 'record', at: record.at }
+    remoteTransportMemo.set(workdir, entry)
+    return entry
+  }
+  if (record !== undefined && record.dialect === 'cmd') {
+    const parts = remotePartsOf(workdir)
+    /* 记录先审配置：手填的 bash 换了（或从空到有），记录里的自动发现答案就
+       过期了 —— 重探一次（resolveRemoteBash 手填优先），得出什么覆写什么。 */
+    const configured = cleanRemoteBashPath(config.remoteBashPath)
+    if (configured.length > 0 && configured !== record.bash) {
+      return await detectRemoteTransport(workdir, args)
+    }
+    /* 再审 bash 本身：每进程复审一次（memo 未命中才走到这），探得通就照记录办，
+       探不通记录失效 —— 重探一次并覆写。 */
+    const probe = await probeRemoteBash(router.engine, parts.alias, record.bash)
+    if (probe.ok === true) {
+      const entry = { state: 'cmd', measured: true, origin: 'record', bash: record.bash, at: record.at, detail: probe.detail }
+      remoteTransportMemo.set(workdir, entry)
+      return entry
+    }
+    console.error('dsh-git-idea: 工作区 ' + workdir + ' 的 cmd 记录里的 bash 探不通（' + probe.detail + '），重探一次并覆写')
+    return await detectRemoteTransport(workdir, args)
+  }
+  return await detectRemoteTransport(workdir, args)
+}
+
+/* 清除一个工作区的判定记录（配置页「远程主机」组的按钮）：配置里的条目删掉、
+ * 进程内 memo 作废，下一读重新首次判定。本来就没有记录的同值早退（saveAppliedRepo
+ * 同一条纪律）。方言的进程内缓存也一并作废 —— 清除多半是因为怀疑记录过时
+ * （主机重装过、换过系统），那一问值得重问。 */
+async function clearRemoteTransport(workdir, args) {
+  const config = await readConfigFile()
+  const map = Object.assign({}, config.remoteTransports)
+  const key = remoteTransportKeyOf(workdir)
+  if (map[key] === undefined) {
+    invalidateRemoteTransports(workdir)
+    return { ok: true, workspace: workdir, cleared: false }
+  }
+  delete map[key]
+  const sessionArgs = args != null && isStr(args.sessionId) && args.sessionId.length > 0 ? { sessionId: args.sessionId } : {}
+  const written = await writeConfigFile(Object.assign({}, config, { remoteTransports: map }), sessionArgs)
+  if (written.ok !== true) return written
+  invalidateRemoteTransports(workdir)
+  const parts = remotePartsOf(workdir)
+  if (parts !== undefined) remoteDialectCache.delete(parts.alias)
+  return { ok: true, workspace: workdir, cleared: true }
+}
+
 /* ── transport 的选择 ──
  *
- * invoke() 每次调这里。返回 null = 照旧走 shell 层（本地、POSIX 远端、没有通道）；
- * 返回 route = 走 Git Bash 通道；route.error 非空 = 通道开不出来，抛给调用方
- * （RPC 拒绝 → 面板的 problem 行拿到原因，绝不落成「不是 git 仓库」）。 */
-async function remoteRouteOf(request, sandbox) {
+ * invoke() 每次调这里（args 原样带进来 —— 首次判定落账要用它的 sessionId）。
+ * 返回 null = 照旧走 shell 层（本地、ssh 插件不在场）；返回 route 两种：
+ * kind:'engine' = 走 Git Bash 通道；kind:'passthrough' = POSIX 远端（测得或兜底）
+ * 仍走 shell 层透传，但命令文本里的 ssh://<alias>/ 前缀要摘成本机路径拼法 ——
+ * 片段脚本把 <repo>/<workspace> 原文嵌在命令里，ssh://posix/tmp/x 这个拼法在
+ * 远端文件系统上并不存在，不换写的话 POSIX 远端照样答「不是仓库」（实测）。
+ * 通道没就绪时抛错给调用方（RPC 拒绝 → 面板的 problem 行拿到原因，绝不落成
+ * 「不是 git 仓库」）。 */
+async function remoteRouteOf(request, sandbox, args) {
   const parts = remotePartsOf(request.workdir)
   if (parts === undefined) return null
   const router = remoteRouter()
   if (router === undefined) return null
-  const dialect = await remoteDialectOf(parts.alias)
-  if (dialect !== 'cmd') return null
   /* 会话是「仅可查看」时远端命令本来就该被拒（本地沙箱的边界过不了 SSH，ssh 插件
      在 shell 层把 read-only 一律拒掉）——这条通道绕开了那一层，所以同一道闸在这里
-     自己装一道，口径与其 mode-gate 一致：认得的三种模式之外一律从严。 */
+     自己装一道，而且装在一切探测之前：只读会话连方言/记录复审的通道都不开。
+     口径与 ssh 插件的 mode-gate 一致：认得的三种模式之外一律从严。 */
   const mode = sandbox != null && isStr(sandbox.mode) ? sandbox.mode : undefined
   if (mode !== undefined && mode !== 'workspace-write' && mode !== 'danger-full-access') {
     const why = mode === 'read-only'
@@ -324,11 +487,18 @@ async function remoteRouteOf(request, sandbox) {
     refusal.sandboxDenied = true
     throw refusal
   }
-  const bash = await remoteBashOf(parts.alias)
-  if (!isStr(bash.bash)) {
-    throw new Error('远程主机 ' + parts.alias + ' 的 Git Bash 通道没有就绪（' + bash.reason + '）：' + bash.detail)
+  const transport = await transportForWorkdir(request.workdir, args)
+  if (transport.state !== 'cmd') {
+    return { kind: 'passthrough', alias: parts.alias, remotePath: parts.remotePath }
   }
-  return { engine: router.engine, alias: parts.alias, remotePath: parts.remotePath, bash: bash.bash, source: bash.source }
+  if (!isStr(transport.bash) || transport.bash.length === 0) {
+    throw new Error('远程主机 ' + parts.alias + ' 的 Git Bash 通道没有就绪（' + transport.reason + '）：' + transport.detail)
+  }
+  return {
+    kind: 'engine',
+    engine: router.engine, alias: parts.alias, remotePath: parts.remotePath,
+    bash: transport.bash, source: isStr(transport.source) ? transport.source : '',
+  }
 }
 
 /* ssh:// 拼法 → 远端 bash 认的路径拼法。片段脚本把仓库/工作区路径用 shq 原文嵌进
@@ -369,16 +539,51 @@ async function remoteShellRun(route, request) {
   }
 }
 
-/* 配置页要的那份快照：这个会话的主机、方言、bash、失败原因。 */
-async function remoteTransportSnapshot(alias, refresh) {
+/* 配置页要的那份快照：这个工作区的主机、三态方言结论、Git Bash 通道与永久
+ * 记录的状态。dialect 是生效方言（'posix' / 'cmd' / 'posix-fallback'），measured
+ * 区分「测得」与「兜底」，origin 说结论从哪来（record=永久记录 / probe=本次刚
+ * 测 / memo=进程内复审过 / fallback=兜底），recordedAt 是记录落账的时刻。
+ * refresh（配置页「再检查一次」）作废这个工作区的 memo 与进程内的方言、bash
+ * 缓存：cmd 记录当场复审（bash 重新探测），没有记录的当场重测 —— 记录本身
+ * 不删，删是另一个按钮的事。 */
+async function remoteTransportSnapshot(workdir, refresh, args) {
+  const parts = remotePartsOf(workdir)
+  if (parts === undefined) {
+    return { remote: false, workdir: '', alias: '', dialect: '', measured: false, origin: '', recordedAt: 0, bash: '', source: '', reason: '', detail: '' }
+  }
+  if (refresh === true) {
+    invalidateRemoteTransports(workdir)
+    remoteDialectCache.delete(parts.alias)
+    invalidateRemoteBash(parts.alias)
+  }
   const router = remoteRouter()
-  const dialect = await remoteDialectOf(alias)
-  if (dialect !== 'cmd') {
-    return { alias: alias, dialect: dialect, bash: '', source: '', reason: '', detail: dialect === 'posix' ? '远程是 POSIX 主机：POSIX 脚本原样透传，不需要 Git Bash 通道。' : '' }
-  }
   if (router === undefined) {
-    return { alias: alias, dialect: dialect, bash: '', source: '', reason: 'no-channel', detail: 'ssh-workspace 的命令通道不可用（插件版本太旧或没有接管 shell），Git Bash 通道开不出来。' }
+    /* 通道不在（ssh 插件太旧 / 没接管）：探测无从谈起，但已有的记录还能说。 */
+    const config = await readConfigFile()
+    const record = config.remoteTransports != null ? config.remoteTransports[remoteTransportKeyOf(workdir)] : undefined
+    if (record !== undefined) {
+      return {
+        remote: true, workdir: workdir, alias: parts.alias, dialect: record.dialect, measured: true,
+        origin: 'record', recordedAt: record.at, bash: record.bash, source: '',
+        reason: 'no-channel',
+        detail: '这个工作区的判定记录还在（' + (record.dialect === 'cmd' ? 'cmd，bash ' + record.bash : 'posix') + '），但 ssh-workspace 的命令通道不可用（插件版本太旧或没有接管 shell），探测与通道都开不出来。',
+      }
+    }
+    return {
+      remote: true, workdir: workdir, alias: parts.alias, dialect: '', measured: false, origin: '',
+      recordedAt: 0, bash: '', source: '', reason: 'no-channel',
+      detail: 'ssh-workspace 的命令通道不可用（插件版本太旧或没有接管 shell），方言与 Git Bash 通道都无从判定。',
+    }
   }
-  const bash = await remoteBashOf(alias, refresh === true)
-  return { alias: alias, dialect: dialect, bash: bash.bash, source: bash.source, reason: bash.reason, detail: bash.detail }
+  const transport = await transportForWorkdir(workdir, args)
+  return {
+    remote: true, workdir: workdir, alias: parts.alias,
+    dialect: transport.state, measured: transport.measured === true,
+    origin: isStr(transport.origin) ? transport.origin : '',
+    recordedAt: typeof transport.at === 'number' ? transport.at : 0,
+    bash: isStr(transport.bash) ? transport.bash : '',
+    source: isStr(transport.source) ? transport.source : '',
+    reason: isStr(transport.reason) ? transport.reason : '',
+    detail: isStr(transport.detail) ? transport.detail : '',
+  }
 }

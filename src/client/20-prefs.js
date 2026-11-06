@@ -125,6 +125,12 @@
       branchHistory: { defaultOn: false, maxSessions: 20, workspaces: {} },
       branchPrompts: {},
       branchSessions: {},
+      /* 远程 transport 的判定记录（host 11-remote.js 首次判定后写、70-config.js
+         归一化）。与 repos 同一条先例：配置页保存的是**整份**配置，客户端的
+         归一化把它丢了的话，读者在配置页改一次 git 路径，各远端工作区「首次
+         判定、永久记录」的账就全没了 —— 下一次读全都重新探测。原样搬运、不做
+         清洗 —— 清洗是 Host 那边 normalizeRemoteTransports 的职责。 */
+      remoteTransports: {},
     }
     let pluginConfig = Object.assign({}, PLUGIN_CONFIG_DEFAULTS)
     let pluginConfigPath = ''
@@ -175,6 +181,8 @@
       out.branchHistory = raw.branchHistory != null && typeof raw.branchHistory === 'object' && !Array.isArray(raw.branchHistory) ? raw.branchHistory : {}
       out.branchPrompts = raw.branchPrompts != null && typeof raw.branchPrompts === 'object' && !Array.isArray(raw.branchPrompts) ? raw.branchPrompts : {}
       out.branchSessions = raw.branchSessions != null && typeof raw.branchSessions === 'object' && !Array.isArray(raw.branchSessions) ? raw.branchSessions : {}
+      /* remoteTransports 同 branchSessions 一条先例：原样搬运，Host 那边负责清洗。 */
+      out.remoteTransports = raw.remoteTransports != null && typeof raw.remoteTransports === 'object' && !Array.isArray(raw.remoteTransports) ? raw.remoteTransports : {}
       return out
     }
 
