@@ -21,7 +21,10 @@ const body = fs.readFileSync(process.env.GP_SRC || new URL('../dist/host.js', im
 
 const HOME = '/tmp/gp84-home'
 const REMOTE_ROOT = '/tmp/gp84-remote'
-const R = REMOTE_ROOT + '/code/proj'
+/* 假远端把 D: 盘根安在 REMOTE_ROOT/D:/ —— 脚本文本里的 `D:/code/proj`（重写后的
+ * 拼法）与 cd 的 `D:\code\proj` 映射到同一棵真目录，等于 MSYS 的盘符路径层。 */
+const R = REMOTE_ROOT + '/D:/code/proj'
+const R_OTHER = REMOTE_ROOT + '/D:/code/other'
 const WIN_PROJ = 'D:\\code\\proj'
 const SSH_PROJ = 'ssh://win/' + 'D:/code/proj'
 const SSH_POSIX_R = 'ssh://posix/tmp/gp84-posix'
@@ -29,15 +32,19 @@ const POSIX_R = '/tmp/gp84-posix'
 const GOOD_BASH = 'D:\\soft\\Git\\bin\\bash.exe'
 const ROUTER_KEY = Symbol.for('dsh-ssh-workspace.shell-installed')
 
-/* 假远端：把 Windows 拼法映射进本机的假远端树。 */
+/* 假远端：把 Windows 拼法映射进本机的假远端树（盘符 → REMOTE_ROOT/<盘>:）。 */
 function mapWin(winPath) {
-  const withoutDrive = String(winPath).replace(/^[A-Za-z]:\\/, '')
-  return REMOTE_ROOT + '/' + withoutDrive.split('\\').join('/')
+  const match = /^([A-Za-z]):\\(.*)$/.exec(String(winPath))
+  if (match === null) return String(winPath)
+  return REMOTE_ROOT + '/' + match[1] + ':/' + match[2].split('\\').join('/')
 }
 
 /* 一条真的 `bash -s`：stdin 喂脚本原文（这就是通道该有的全部语义），stdout/stderr/
  * 退出码按 ssh2 通道的形状回。 */
 function realBashRun(cwd, script, cb) {
+  /* 假远端扮演 MSYS 的盘符路径层：脚本文本里 `X:/…` 的文件路径落到假远端树的
+   * REMOTE_ROOT/X:/… 下（真的 Git for Windows bash 里这层由 cygwin 运行时做）。 */
+  const translated = script.replace(/([A-Za-z]):\//g, REMOTE_ROOT + '/$1:/')
   const c = spawn('bash', ['-s'], { cwd: cwd, env: Object.assign({}, process.env, {
     DSH_HOME: HOME + '/.dsh', HOME: HOME,
     GIT_CONFIG_GLOBAL: HOME + '/.gitconfig', GIT_CONFIG_SYSTEM: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
@@ -46,7 +53,7 @@ function realBashRun(cwd, script, cb) {
   c.stdout.on('data', b => o += b); c.stderr.on('data', b => e += b)
   c.on('error', er => cb({ out: o, err: String(er.message), code: 127 }))
   c.on('close', x => cb({ out: o, err: e, code: x }))
-  c.stdin.end(script)
+  c.stdin.end(translated)
 }
 
 function makeEngine(options) {
@@ -164,29 +171,34 @@ const check = (label, value) => {
 /* fixture：假远端树里一个真仓库（两个提交 + 一条未提交改动），本机树里一个 POSIX
    远端的真仓库；「远端家目录」铺一个 68 字节 .git 文件的 worktree 情形不需要 ——
    .git 文件在远端 bash 看来与本地无异（-e 判定），已有套件盖着。 */
-await sh(`rm -rf ${HOME} ${REMOTE_ROOT} ${POSIX_R} && mkdir -p ${HOME} ${REMOTE_ROOT}/code ${R} ${POSIX_R}
+await sh(`rm -rf ${HOME} ${REMOTE_ROOT} ${POSIX_R} && mkdir -p ${HOME} ${R} ${R_OTHER} ${POSIX_R}
 cd ${R} && git init -q -b main && git config user.name T && git config user.email t@t
 echo a1 > f1.txt && git add -A && git commit -qm c1 && echo a2 > f2.txt && git add -A && git commit -qm c2
 echo dirty > f1.txt
+cd ${R_OTHER} && git init -q -b main && git config user.name T && git config user.email t@t
+echo o1 > of.txt && git add -A && git commit -qm o1
 cd ${POSIX_R} && git init -q -b main && git config user.name T && git config user.email t@t
 echo p1 > pf.txt && git add -A && git commit -qm p1`, '/tmp')
 
 console.log('')
 console.log('=== transport 的选择：本地与 POSIX 远端透传，cmd 远端走通道 ===')
 {
+  /* 本地会话：会话 cwd 与读的都是本机路径 —— 通道与方言一次都不该被问。 */
   const engine = makeEngine({ remoteDialect: () => 'cmd', whereGit: 'D:\\soft\\Git\\cmd\\git.exe\n' })
-  const a = makeBody(engine)
+  const a = makeBody(engine, { sessions: { get: () => ({ header: { cwd: POSIX_R } }) } })
   const localRead = await a.H('git/panel')({ sessionId: 's-1', repo: POSIX_R })
   check('本地路径照旧走 shell 层（openChannel 一次都没被调）',
-    localRead.ok === true && engine.calls.channels.length === 0 && a.runs() > 0)
+    localRead.ok === true && engine.calls.channels.length === 0 && engine.calls.dialectCalls === 0 && a.runs() > 0)
   check('本地读拿到真仓库的答案（分支）',
     localRead.ok === true && localRead.branch === 'main')
 
+  /* POSIX 远端会话：透传 shell 层（假 shell 层把 ssh://posix 映射回本机执行）。 */
   const posixEngine = makeEngine({ remoteDialect: () => 'posix' })
-  const b = makeBody(posixEngine)
+  const b = makeBody(posixEngine, { sessions: { get: () => ({ header: { cwd: SSH_POSIX_R } }) } })
   const posixRead = await b.H('git/panel')({ sessionId: 's-2', repo: SSH_POSIX_R })
   check('POSIX 远端照旧透传 shell 层（脚本一字节不改，openChannel 不参与）',
-    posixRead.ok === true && posixEngine.calls.channels.length === 0 && posixRead.branch === 'main')
+    posixRead.ok === true && posixEngine.calls.channels.length === 0 && posixRead.branch === 'main'
+    && posixEngine.calls.dialectCalls >= 1)
 }
 
 console.log('')

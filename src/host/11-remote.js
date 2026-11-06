@@ -213,16 +213,16 @@ const remoteBashCache = new Map()
 
 async function probeRemoteBash(engine, alias, bashPath) {
   const probe = await remoteChannelRun(engine, alias, cmdQuoteWin(bashPath) + ' --version', null, null, 10000)
-  if (probe.timedOut === true) return { ok: false, detail: '探测超时（10 秒）——远端没有响应 ' + bashPath }
+  if (probe.timedOut === true) return { ok: false, detail: bashPath + '：探测超时（10 秒），远端没有响应' }
   const said = probe.stdout.text
   const firstLine = said.split('\n')[0].trim()
   if (firstLine.indexOf('GNU bash, version') !== 0) {
-    return { ok: false, detail: '它不是 bash（--version 的首行是「' + firstLine.slice(0, 120) + '」）' }
+    return { ok: false, detail: bashPath + '：它不是 bash（--version 的首行是「' + firstLine.slice(0, 120) + '」）' }
   }
   if (/pc-(msys|cygwin)/.test(said) !== true) {
-    return { ok: false, detail: '它自报的不是 Git for Windows 一族的 bash（' + firstLine.slice(0, 120) + '）——多半是 WSL 的 bash' }
+    return { ok: false, detail: bashPath + '：它自报的不是 Git for Windows 一族的 bash（' + firstLine.slice(0, 120) + '）——多半是 WSL 的 bash' }
   }
-  if (probe.exitCode !== 0) return { ok: false, detail: '探测退出码 ' + String(probe.exitCode) + '（' + (probe.stderr.text.trim().slice(0, 200) || '无 stderr') + '）' }
+  if (probe.exitCode !== 0) return { ok: false, detail: bashPath + '：探测退出码 ' + String(probe.exitCode) + '（' + (probe.stderr.text.trim().slice(0, 200) || '无 stderr') + '）' }
   return { ok: true, detail: firstLine }
 }
 

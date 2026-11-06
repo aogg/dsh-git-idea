@@ -88,6 +88,13 @@ function normalizeConfig(raw) {
     branchHistory: { defaultOn: false, maxSessions: 20, workspaces: {} },
     branchPrompts: {},
     branchSessions: {},
+    /* 远程 transport 的判定记录（11-remote.js 首次判定后写，normalizeRemoteTransports
+       归一化）：{ "<工作区 ssh:// 路径>": {dialect:'posix'|'cmd', bash, at} }。
+       每个远端工作区只在第一次需要时探测一次登录 shell 方言（Linux/macOS = POSIX，
+       Windows OpenSSH = cmd），结论永久落在这里 —— 之后这个工作区直接读记录，不再
+       探测。跟 repos / appliedRepos 同一个理由放这份配置而不是进程内存：它描述的是
+       「那台远端是什么机器」，换会话、换浏览器、重启部署都还是同一个答案。 */
+    remoteTransports: {},
   }
   if (raw == null || typeof raw !== 'object') return out
   if (isStr(raw.initBranch)) out.initBranch = raw.initBranch.trim().slice(0, 120)
@@ -113,6 +120,7 @@ function normalizeConfig(raw) {
   out.branchHistory = normalizeBranchHistory(raw.branchHistory)
   out.branchPrompts = normalizeBranchPrompts(raw.branchPrompts)
   out.branchSessions = normalizeBranchSessions(raw.branchSessions)
+  out.remoteTransports = normalizeRemoteTransports(raw.remoteTransports)
   return out
 }
 
@@ -379,6 +387,43 @@ function normalizeBranchSessions(raw) {
   return out
 }
 
+/* 远程 transport 的判定记录（normalizeConfig 默认值处那段说明）：键是工作区的
+   ssh:// 拼法（SSH_STORED_RE 口径 —— 本地工作区没有远端半，进不来这个映射），
+   值必须是 {dialect, bash, at} 形状：dialect 只认 'posix' / 'cmd' 两值（三是
+   「没测出来按 POSIX 兜底」，那不是结论，不落记录 —— 11-remote.js 的选择）；
+   bash 是 cmd 方言用的 Git Bash 路径，走 cleanRemoteBashPath 同一套清洗、cmd
+   记录里洗成空的整条丢掉（一条没有 bash 的 cmd 记录每次都得重探，攒着只是
+   假账），posix 记录的 bash 恒为空串；at 是判定时刻（读不出记 0，配置页显示
+   与失效判断都不依赖它成立）。清洗口径与 branchSessions 同一条思路：Host 是
+   这份文件的最后一道关卡，条数封顶 128（BRANCH_HISTORY_WS_MAX 同一个数）、
+   键 trim 后 ≤4096。 */
+const REMOTE_TRANSPORT_WS_MAX = 128
+const REMOTE_TRANSPORT_PATH_MAX = 4096
+
+function normalizeRemoteTransports(raw) {
+  const out = {}
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return out
+  let kept = 0
+  for (const key in raw) {
+    if (!Object.prototype.hasOwnProperty.call(raw, key)) continue
+    if (kept >= REMOTE_TRANSPORT_WS_MAX) break
+    const workspace = key.trim()
+    if (SSH_STORED_RE.test(workspace) !== true || workspace.length > REMOTE_TRANSPORT_PATH_MAX) continue
+    const value = raw[key]
+    if (value == null || typeof value !== 'object' || Array.isArray(value)) continue
+    if (value.dialect !== 'posix' && value.dialect !== 'cmd') continue
+    const bash = value.dialect === 'cmd' && isStr(value.bash) ? cleanRemoteBashPath(value.bash) : ''
+    if (value.dialect === 'cmd' && bash.length === 0) continue
+    out[workspace] = {
+      dialect: value.dialect,
+      bash: bash,
+      at: typeof value.at === 'number' && isFinite(value.at) && value.at >= 0 ? value.at : 0,
+    }
+    kept += 1
+  }
+  return out
+}
+
 /* ── 这份配置文件走 shell，不走文件服务 ──
 
    它住在部署的配置目录里（`<DSH_HOME>/dsh-git-idea.json`），也就是**任何工作区之外**。
@@ -435,8 +480,13 @@ async function writeConfigFile(raw, args) {
     configCache = applyConfig(next)
     if (before !== gitExe) invalidateRepo(null)
     /* 换了一个远端 bash（或清空了它）：按主机别名缓存的发现结果全部作废，下一读
-       按新配置重新解析（gitExe 那条纪律的同款）。 */
-    if (bashBefore !== null && bashBefore !== next.remoteBashPath) invalidateRemoteBash()
+       按新配置重新解析（gitExe 那条纪律的同款）。各工作区的判定记录同样要重审
+       —— cmd 记录里的 bash 与新配置不一致时记录过期、重探覆写（11-remote.js 的
+       transportForWorkdir 负责审），先把进程内的 memo 清掉才有那一审。 */
+    if (bashBefore !== null && bashBefore !== next.remoteBashPath) {
+      invalidateRemoteBash()
+      invalidateRemoteTransports()
+    }
     return { ok: true, path: path, config: next }
   } catch (error) {
     const detail = error != null && error.message !== undefined ? String(error.message) : String(error)
