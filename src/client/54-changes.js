@@ -360,6 +360,32 @@
           nameCell(label, flat))
       }
 
+      /* ── 一条「未跟踪目录里的文件」行 ──
+
+         扁平与树两个视图共用这一份构造：框、? 状态字母、名字。差别只在键、缩进
+         与标签 —— 树视图名字是光秃秃的文件名（路径层级住在上面自己的目录行里），
+         扁平视图一个文件一行，整段相对路径压暗缀在名字右边。 */
+      const insideRow = function (scope, inside, childKey, childDepth, label) {
+        return h('div', {
+          className: rowClass(scope, childKey),
+          key: childKey,
+          title: inside + '（点开看差异）',
+          onClick: function () {
+            scope.onSelect(childKey)
+            scope.onOpenDiff({ path: inside, workCode: '??', untracked: true, staged: false, displayCode: '?' })
+          },
+          onContextMenu: rowCtx(scope, inside, {
+            untracked: true, staged: false, conflict: false,
+            raw: { path: inside, workCode: '??', untracked: true, staged: false, displayCode: '?' },
+          }),
+        },
+          stageBox('box', 'none', '暂存', function () { scope.onSetStaged([{ path: inside, untracked: true }], true) }),
+          indentPad(childDepth),
+          h('span', { className: 'dsh-git-tw' }),
+          h('span', { className: 'dsh-git-st dsh-git-st-U' }, '?'),
+          nameCell(label, true))
+      }
+
       /* A directory git collapsed: one entry, no contents. Ticking it stages
          the whole thing (`git add -- dir` needs no listing); opening it is the
          one read that lists the files, and it happens on the click. The listing
@@ -391,33 +417,73 @@
           } else if (list.length === 0) {
             rows.push(h('div', { key: key + ':none', className: 'dsh-git-trow dsh-git-dim' },
               indentPad(depth + 1), h('span', { className: 'dsh-git-tname' }, '（没有文件，可能都被 .gitignore 排除了）')))
-          } else {
+          } else if (flat === true) {
+            /* 扁平视图：一个文件一行，相对路径整段压暗缀在名字右边 —— 目录不占行，
+               路径只能住在这里（与上方目录行的「tmp/ + dsh/」同一套口径）。 */
             const prefix = path.replace(/\/+$/, '') + '/'
             for (let k = 0; k < list.length; k += 1) {
               const inside = list[k]
+              rows.push(insideRow(scope, inside, key + ':f:' + inside, depth + 1, inside))
+            }
+          } else {
+            /* ── 树视图：中间目录层级长成真正的目录行 ──
+
+               git 折叠的是整个未跟踪目录（`?? dsh/`，一个框管全部），展开时读回来的
+               列表却是光秃秃的文件全路径。以前不分多深都铺成一行行「名字 + 压暗的
+               tmp/」，层级被赶到每行右边的缀尾里：dsh/ 底下十行文件各自拖着 tmp/，
+               读的人得自己在脑子里把目录树拼回去。现在这份列表照变更树自己的规矩
+               （42-tree.js 的 buildTree/flattenTree）折成层级 —— tmp 是一条自己的
+               目录行，和 src 那样的目录行长一个样（三角、框、计数），文件行只留
+               文件名。折叠键落在 key + ':u' 的命名空间里，不与主树的 @组/ 键相撞；
+               多仓库时 scope.collapsed 本来就是按仓库剥出来的视图，各折各的。 */
+            const prefix = path.replace(/\/+$/, '') + '/'
+            const rels = []
+            for (let k = 0; k < list.length; k += 1) {
+              const inside = list[k]
               const relative = inside.indexOf(prefix) === 0 ? inside.slice(prefix.length) : inside
-              const childKey = key + ':f:' + inside
-              rows.push(h('div', {
-                className: rowClass(scope, childKey),
-                key: childKey,
-                title: inside + '（点开看差异）',
-                onClick: function () {
-                  scope.onSelect(childKey)
-                  scope.onOpenDiff({ path: inside, workCode: '??', untracked: true, staged: false, displayCode: '?' })
+              if (relative.length === 0) continue
+              rels.push({ segments: relative.split('/'), data: { path: inside } })
+            }
+            const subtree = buildTree(rels)
+            annotateStaged(subtree)
+            const nestKey = key + ':u'
+            const nested = flattenTree(subtree, depth + 1, nestKey, scope.collapsed, [], nestKey, false)
+            for (let k = 0; k < nested.length; k += 1) {
+              const node = nested[k]
+              if (node.kind === 'dir') {
+                const child = node.data
+                const total = child.total === undefined ? 0 : child.total
+                const stagedCount = child.staged === undefined ? 0 : child.staged
+                const allStaged = total > 0 && stagedCount === total
+                const someStaged = stagedCount > 0 && stagedCount < total
+                /* node.path 带着嵌套自己的命名空间前缀 —— 折叠表认它，菜单与提示的
+                   pathspec 不认：拼回仓库里的真实相对路径（外层目录 + 这一层往下）。 */
+                const barePath = node.path.indexOf(nestKey + '/') === 0
+                  ? node.path.slice(nestKey.length + 1) : node.path
+                const dirPath = path.replace(/\/+$/, '') + '/' + barePath
+                rows.push(h('div', {
+                  className: rowClass(scope, node.id),
+                  key: node.id,
+                  title: dirPath + '（未跟踪的目录，双击展开/折叠）',
+                  onClick: function () { scope.onSelect(node.id) },
+                  onDoubleClick: function () { scope.onToggle(node.path) },
+                  onContextMenu: rowCtx(scope, dirPath, { dir: true, untracked: true, raw: child }),
                 },
-                onContextMenu: rowCtx(scope, inside, {
-                  untracked: true, staged: false, conflict: false,
-                  raw: { path: inside, workCode: '??', untracked: true, staged: false, displayCode: '?' },
-                }),
-              },
-                stageBox('box', 'none', '暂存', function () { scope.onSetStaged([{ path: inside, untracked: true }], true) }),
-                indentPad(depth + 1),
-                h('span', { className: 'dsh-git-tw' }),
-                h('span', { className: 'dsh-git-st dsh-git-st-U' }, '?'),
-                /* The listing is flat, not a tree — a file two levels in is shown
-                   as `deep/b.txt` however deep it really is — so the folder is
-                   always the dimmed part, in both views. */
-                nameCell(flat === true ? inside : relative, true)))
+                  stageBox('box', allStaged ? 'all' : (someStaged ? 'some' : 'none'),
+                    allStaged ? '取消暂存该目录' : '暂存该目录',
+                    function () {
+                      scope.onSetStaged(collectLeaves(child, []).map(function (d) {
+                        return { path: d.path, untracked: true }
+                      }), !allStaged)
+                    }),
+                  indentPad(node.depth),
+                  twisty({ collapsed: node.collapsed, onToggle: function () { scope.onToggle(node.path) } }),
+                  h('span', { className: 'dsh-git-tname' }, node.name),
+                  h('span', { className: 'dsh-git-tdim' }, String(total) + ' 个文件')))
+              } else {
+                const inside = node.data != null && node.data.path != null ? node.data.path : node.name
+                rows.push(insideRow(scope, inside, key + ':f:' + inside, node.depth, node.name))
+              }
             }
           }
         }

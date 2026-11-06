@@ -402,16 +402,32 @@ ok('点开目录里的文件就是它的差异', diffCalls.length - beforeChildD
 toolByTitle(tree, '返回文件列表').props.onClick()
 await wait(10)
 tree = await settle()
+/* 未跟踪目录里的列表在树视图里照变更树自己的规矩折叠成层级：deep 是一条自己的
+   目录行（三角、计数、框，和 src 那样的目录行长一个样），b.txt 只是它底下的文件
+   行 —— 路径层级不再压暗缀在每个文件名右边（那件事只属于扁平视图）。 */
+const insideDeep = changeRow(tree, 'deep')
+ok('多层的中间目录长成自己的目录行（三角 + 计数），不再是每行右边的压暗缀尾',
+  insideDeep !== undefined && byClass(insideDeep, 'dsh-git-tw').length === 1
+  && byClass(insideDeep, 'dsh-git-tdim').length === 1
+  && textOf(byClass(insideDeep, 'dsh-git-tname')[0]) === 'deep')
 const deepRow = changeRow(tree, 'b.txt')
 const deepName = deepRow === undefined ? undefined : byClass(deepRow, 'dsh-git-tname')[0]
-const deepPath = deepRow === undefined ? undefined : byClass(deepRow, 'dsh-git-tpath')[0]
-/* 未跟踪目录里的列表是扁平的，所以带层级的那一个显示成「名字 + 目录」：名字在
-   前，目录在后（深浅两层都一样）。 */
-ok('多层子路径也照常显示，目录跟在名字后面',
-  deepName !== undefined && textOf(deepName).indexOf('b.txt') === 0
-  && deepPath !== undefined && textOf(deepPath) === 'deep/')
+ok('文件行只留文件名，层级住在上一级的目录行里（树视图不再有第二格目录）',
+  deepName !== undefined && textOf(deepName) === 'b.txt'
+  && deepRow !== undefined && byClass(deepRow, 'dsh-git-tpath').length === 0)
+ok('深层文件缩进两层（缩进讲的就是层级）', deepRow !== undefined && padOf(deepRow) === '24px')
+/* 目录行有自己的折叠手势：折掉的是它底下的文件，别层不动。 */
+if (typeof insideDeep.props.onDoubleClick === 'function') insideDeep.props.onDoubleClick()
+await wait(10)
+tree = await settle()
+ok('中间目录行自己能折叠：底下的文件收起来，同层文件不受影响',
+  changeRow(tree, 'b.txt') === undefined && changeRow(tree, 'a.txt') !== undefined)
+byClass(changeRow(tree, 'deep'), 'dsh-git-tw')[0].props.onClick({ stopPropagation: function () {} })
+await wait(10)
+tree = await settle()
+ok('再展开：底下的文件行回来', changeRow(tree, 'b.txt') !== undefined)
+const deepBox = byClass(changeRow(tree, 'b.txt'), 'dsh-git-cbox')[0]
 const beforeChildStage = calls.length
-const deepBox = deepRow === undefined ? undefined : byClass(deepRow, 'dsh-git-cbox')[0]
 if (deepBox !== undefined) deepBox.props.onClick({ stopPropagation: function () {} })
 await wait(10)
 tree = await settle()
