@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process'
 
 /* ── ssh:// 远程工作区 + cmd 方言主机的宿主半侧（11-remote.js）──
  *
- * 真仓库摆在 /tmp/gp84-remote/code/proj，扮演「远端那台 Windows 机器上的目录」；
+ * 真仓库摆在 /tmp/gp84-remote/D:/code/proj，扮演「远端那台 Windows 机器上的目录」；
  * ssh-workspace 的接管面是假的（shell 服务上挂 RemoteShellRouter 同款 Symbol），
  * 但通道语义是真的：
  *   - openChannel 按收到的命令形状分派 —— 探测类（%COMSPEC% 金丝雀、where、
@@ -14,8 +14,12 @@ import { spawn } from 'node:child_process'
  *     不该被调。
  * 发现/拒绝矩阵：手填优先、where git 向上推、System32 的 WSL 存根按路径剔除、
  * pc-linux-gnu 的假 bash 按版本拒绝、失败答案缓存 60 秒、配置改动作废缓存。
- * 会话只读（read-only）时远程命令拒绝，口径与 ssh 插件的 mode-gate 一致。
- * 配置归一化里 ssh:// 键的存取（repos/appliedRepos/drafts）也在这一场。 */
+ * 三方言判定与永久记录：测得 posix / 测得 cmd 按工作区落进配置 remoteTransports，
+ * 新进程零方言探测（posix 记录永久有效；cmd 记录只复审 bash 一次）；记录里的
+ * bash 探不通重探一次并覆写；兜底（没测出来）不落记录、照旧透传。
+ * 会话只读（read-only）时远程命令拒绝且连判定都不做，口径与 ssh 插件的
+ * mode-gate 一致。配置归一化里 ssh:// 键的存取（repos/appliedRepos/drafts/
+ * remoteTransports）也在这一场。 */
 
 const body = fs.readFileSync(process.env.GP_SRC || new URL('../dist/host.js', import.meta.url).pathname, 'utf8')
 
@@ -29,6 +33,7 @@ const WIN_PROJ = 'D:\\code\\proj'
 const SSH_PROJ = 'ssh://win/' + 'D:/code/proj'
 const SSH_POSIX_R = 'ssh://posix/tmp/gp84-posix'
 const POSIX_R = '/tmp/gp84-posix'
+const SSH_FB = 'ssh://fb/tmp/gp84-posix'
 const GOOD_BASH = 'D:\\soft\\Git\\bin\\bash.exe'
 const ROUTER_KEY = Symbol.for('dsh-ssh-workspace.shell-installed')
 
@@ -125,10 +130,12 @@ function makeBody(engine, extra) {
   let localRuns = 0
   function runShell(spec) {
     return new Promise((res) => {
-      /* 假 shell 层：POSIX 远端拼法映射回本机（ssh://posix/tmp/x → /tmp/x），
-         本地路径原样 —— 这正是 patch-shell 对 POSIX 远端的透传语义。 */
+      /* 假 shell 层：ssh:// 远端拼法摘掉 `ssh://<alias>` 前缀映射回本机
+         （ssh://posix/tmp/x 与 ssh://fb/tmp/x 都落到 /tmp/x），本地路径原样 ——
+         这正是 patch-shell 对 POSIX 远端的透传语义（与本插件 POSIX passthrough
+         的命令文本换写是配套的两半）。 */
       let cwd = spec.workdir
-      if (typeof cwd === 'string' && cwd.indexOf('ssh://posix') === 0) cwd = cwd.slice('ssh://posix'.length)
+      if (typeof cwd === 'string' && cwd.indexOf('ssh://') === 0) cwd = cwd.replace(/^ssh:\/\/[^/]+/, '')
       localRuns += 1
       const c = spawn('sh', ['-c', spec.command], { cwd: cwd, env: shellEnv })
       let o = '', e = ''
@@ -205,6 +212,22 @@ console.log('=== transport 的选择：本地与 POSIX 远端透传，cmd 远端
   check('POSIX 远端照旧透传 shell 层（脚本一字节不改，openChannel 不参与）',
     posixRead.ok === true && posixEngine.calls.channels.length === 0 && posixRead.branch === 'main'
     && posixEngine.calls.dialectCalls >= 1)
+
+  /* 新进程（重新求值 body）：posix 记录永久有效 —— 方言一次都不再问，照旧透传。 */
+  const posixEngine2 = makeEngine({ remoteDialect: () => 'posix' })
+  const b2 = makeBody(posixEngine2, { sessions: { get: () => ({ header: { cwd: SSH_POSIX_R } }) } })
+  const posixRead2 = await b2.H('git/panel')({ sessionId: 's-2', repo: SSH_POSIX_R })
+  check('新进程读 posix 记录的工作区：方言零探测、照旧透传（记录永久有效不再探）',
+    posixRead2.ok === true && posixEngine2.calls.dialectCalls === 0
+    && posixEngine2.calls.channels.length === 0 && posixRead2.branch === 'main')
+  const posixSnap2 = await b2.H('git/remote-transport')({ sessionId: 's-2' })
+  const posixStored = await b2.H('git/config')({ sessionId: 's-2' })
+  check('快照说清结论来自记录：origin=record、recordedAt 就是配置里的落账时刻',
+    posixSnap2.ok === true && posixSnap2.origin === 'record' && posixSnap2.measured === true
+    && posixSnap2.recordedAt > 0
+    && posixStored.ok === true && posixStored.config.remoteTransports != null
+    && posixStored.config.remoteTransports[SSH_POSIX_R] != null
+    && posixStored.config.remoteTransports[SSH_POSIX_R].at === posixSnap2.recordedAt)
 }
 
 console.log('')
@@ -238,6 +261,18 @@ console.log('=== cmd 远端：包裹命令形状与真读 ===')
     && stored.config.remoteTransports[SSH_PROJ] != null
     && stored.config.remoteTransports[SSH_PROJ].dialect === 'cmd'
     && stored.config.remoteTransports[SSH_PROJ].bash === GOOD_BASH)
+  /* 新进程（重新求值 body）：cmd 记录直接当家 —— 方言不再问，只复审记录里的
+     bash 一次（探得通就照记录办，不再自动发现）。 */
+  const engine2 = makeEngine({
+    remoteDialect: () => 'cmd', whereGit: 'D:\\soft\\Git\\cmd\\git.exe\n',
+    versions: { 'D:\\soft\\Git\\cmd\\bin\\bash.exe': null },
+  })
+  const c = makeBody(engine2)
+  const read2 = await c.H('git/panel')({ sessionId: 's-1', repo: SSH_PROJ })
+  check('新进程读 cmd 记录的工作区：方言零探测、只复审记录里的 bash 一次，通道照常跑读',
+    read2.ok === true && engine2.calls.dialectCalls === 0
+    && engine2.calls.probes.length === 1 && engine2.calls.probes[0] === GOOD_BASH
+    && engine2.calls.wraps.length > 0 && engine2.calls.wraps[0].bash === GOOD_BASH)
   /* 清除记录：配置里的条目删掉，下一读重新首次判定。 */
   const cleared = await a.H('git/remote-transport-clear')({ sessionId: 's-1' })
   const afterClear = await a.H('git/config')({ sessionId: 's-1' })
@@ -382,11 +417,11 @@ console.log('=== 会话只读：远程命令拒绝，口径与 mode-gate 一致 
   const a = makeBody(engine, { sandboxPolicy: { resolve: () => ({ mode: 'read-only' }) } })
   let roError = null
   await a.H('git/panel')({ sessionId: 's-1', repo: SSH_PROJ }).then(null, function (error) { roError = error })
-  check('read-only 会话拒绝远程命令（不进通道），拒绝里说清怎么解锁',
+  check('read-only 会话拒绝远程命令（判定与通道都不进），拒绝里说清怎么解锁',
     roError !== null && roError.sandboxDenied === true
     && String(roError.message).indexOf('read-only') >= 0
     && String(roError.message).indexOf('workspace-write') >= 0
-    && engine.calls.channels.length === 0)
+    && engine.calls.channels.length === 0 && engine.calls.dialectCalls === 0)
   const unknownMode = makeBody(engine, { sandboxPolicy: { resolve: () => ({ mode: 'future-mode' }) } })
   let fmError = null
   await unknownMode.H('git/panel')({ sessionId: 's-1', repo: SSH_PROJ }).then(null, function (error) { fmError = error })
@@ -458,6 +493,71 @@ console.log('=== git/remote-transport 的其余答案 ===')
   check('POSIX 远端：测得的 posix 结论带着永久记录时刻',
     posixSnap.ok === true && posixSnap.remote === true && posixSnap.dialect === 'posix'
     && posixSnap.measured === true && posixSnap.origin === 'probe' && posixSnap.recordedAt > 0)
+}
+
+console.log('')
+console.log('=== cmd 记录失效：bash 探不通，重探一次并覆写 ===')
+{
+  /* 铺垫：白纸（上一节清过配置）上首次判定一次，落 GOOD_BASH 记录。 */
+  const engine = makeEngine({ remoteDialect: () => 'cmd', whereGit: 'D:\\soft\\Git\\cmd\\git.exe\n' })
+  const a = makeBody(engine)
+  const first = await a.H('git/panel')({ sessionId: 's-1', repo: SSH_PROJ, paths: ['f2.txt'] })
+  const setupStored = await a.H('git/config')({ sessionId: 's-1' })
+  check('（铺垫）首次判定落 GOOD_BASH 记录，读成功',
+    first.ok === true && first.branch === 'main' && engine.calls.dialectCalls === 1
+    && engine.calls.probes.indexOf(GOOD_BASH) >= 0
+    && setupStored.ok === true && setupStored.config.remoteTransports[SSH_PROJ] != null
+    && setupStored.config.remoteTransports[SSH_PROJ].bash === GOOD_BASH)
+
+  /* 新进程里 GOOD_BASH 探不通了（远端重装/搬走）：记录复审失败 → 重探一次
+     （方言重问、候选重试）→ 新答案覆写记录。 */
+  const engine2 = makeEngine({
+    remoteDialect: () => 'cmd', whereGit: 'D:\\soft\\Git\\cmd\\git.exe\n',
+    versions: { [GOOD_BASH]: null },
+  })
+  const b = makeBody(engine2)
+  const again = await b.H('git/panel')({ sessionId: 's-1', repo: SSH_PROJ, paths: ['f2.txt'] })
+  const overwritten = await b.H('git/config')({ sessionId: 's-1' })
+  check('记录里的 bash 探不通：重探一次（方言重问）并覆写成新发现的 bash',
+    again.ok === true && engine2.calls.dialectCalls === 1
+    && engine2.calls.probes.indexOf(GOOD_BASH) >= 0
+    && overwritten.ok === true && overwritten.config.remoteTransports[SSH_PROJ] != null
+    && overwritten.config.remoteTransports[SSH_PROJ].bash === 'D:\\soft\\bin\\bash.exe'
+    && overwritten.config.remoteTransports[SSH_PROJ].dialect === 'cmd')
+  const wrap2 = engine2.calls.wraps[engine2.calls.wraps.length - 1]
+  check('覆写后的通道就用新 bash 跑', wrap2 !== undefined && wrap2.bash === 'D:\\soft\\bin\\bash.exe')
+  /* 覆写过的记录在下一个进程里复审一次就照常当家。 */
+  const engine3 = makeEngine({
+    remoteDialect: () => 'cmd', whereGit: 'D:\\soft\\Git\\cmd\\git.exe\n',
+    versions: { [GOOD_BASH]: null },
+  })
+  const c = makeBody(engine3)
+  const third = await c.H('git/panel')({ sessionId: 's-1', repo: SSH_PROJ, paths: ['f2.txt'] })
+  check('覆写后的记录被后续进程照常采用（复审一次、零方言）',
+    third.ok === true && engine3.calls.dialectCalls === 0
+    && engine3.calls.probes.length === 1 && engine3.calls.probes[0] === 'D:\\soft\\bin\\bash.exe')
+}
+
+console.log('')
+console.log('=== 方言没测出来：按 POSIX 兜底透传，结论不算数、不落记录 ===')
+{
+  const fbEngine = makeEngine({
+    remoteDialect: () => { throw new Error('探测通道断了') },
+    whereGit: 'D:\\soft\\Git\\cmd\\git.exe\n',
+  })
+  const fb = makeBody(fbEngine)
+  const fbRead = await fb.H('git/panel')({ sessionId: 's-7', repo: SSH_FB, paths: ['pf.txt'] })
+  check('兜底读照旧透传 shell 层（通道一次不开、方言问过一次）',
+    fbRead.ok === true && fbRead.branch === 'main'
+    && fbEngine.calls.channels.length === 0 && fbEngine.calls.dialectCalls === 1)
+  const fbSnap = await fb.H('git/remote-transport')({ sessionId: 's-7', sessionCwd: SSH_FB })
+  check('兜底在快照里三态分明：posix-fallback / measured=false / origin=fallback',
+    fbSnap.ok === true && fbSnap.remote === true && fbSnap.dialect === 'posix-fallback'
+    && fbSnap.measured === false && fbSnap.origin === 'fallback')
+  const fbStored = await fb.H('git/config')({ sessionId: 's-7' })
+  check('兜底不落记录（它不是结论）：配置里没有这个工作区的条目',
+    fbStored.ok === true
+    && (fbStored.config.remoteTransports == null || fbStored.config.remoteTransports[SSH_FB] === undefined))
 }
 
 if (failed > 0) {
