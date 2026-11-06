@@ -322,10 +322,14 @@ console.log('=== 手填优先与缓存作废 ===')
   } })
   check('remoteBashPath 能存进配置（cmd 不认的字符被清掉留下原文）',
     saved.ok === true && saved.config.remoteBashPath === 'D:\\my\\own\\bash.exe')
-  const after = await a.H('git/panel')({ sessionId: 's-1', repo: SSH_PROJ })
+  /* 面板整树读有按仓库的读缓存，第二次会一口命令都不跑 —— 换 paths 的部分读
+     （另一个缓存键），逼它真的过一遍 transport。 */
+  const wrapsBefore = engine.calls.wraps.length
+  const after = await a.H('git/panel')({ sessionId: 's-1', repo: SSH_PROJ, paths: ['f2.txt'] })
   const afterWrap = engine.calls.wraps[engine.calls.wraps.length - 1]
   check('配置改动作废缓存：下一读改用手填的 bash',
-    after.ok === true && afterWrap.bash === 'D:\\my\\own\\bash.exe')
+    after.ok === true && engine.calls.wraps.length === wrapsBefore + 1
+    && afterWrap !== undefined && afterWrap.bash === 'D:\\my\\own\\bash.exe')
   const snap = await a.H('git/remote-transport')({ sessionId: 's-1' })
   check('快照标出 source=config', snap.ok === true && snap.bash === 'D:\\my\\own\\bash.exe' && snap.source === 'config')
   /* 手填的探测失败也要说人话。 */
@@ -446,6 +450,7 @@ console.log('=== git/remote-transport 的其余答案 ===')
   const local = await a.H('git/remote-transport')({ sessionId: 's-9' })
   check('本地会话：remote=false（这一组只在远程会话里有答案）',
     local.ok === true && local.remote === false)
+  await resetConfig()
   const posix = makeBody(makeEngine({ remoteDialect: () => 'posix' }), {
     sessions: { get: () => ({ header: { cwd: SSH_POSIX_R } }) },
   })
