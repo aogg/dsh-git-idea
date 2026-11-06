@@ -164,7 +164,7 @@ const check = (label, value) => {
 /* fixture：假远端树里一个真仓库（两个提交 + 一条未提交改动），本机树里一个 POSIX
    远端的真仓库；「远端家目录」铺一个 68 字节 .git 文件的 worktree 情形不需要 ——
    .git 文件在远端 bash 看来与本地无异（-e 判定），已有套件盖着。 */
-await sh(`rm -rf ${HOME} ${REMOTE_ROOT} ${POSIX_R} && mkdir -p ${HOME} ${REMOTE_ROOT}/code
+await sh(`rm -rf ${HOME} ${REMOTE_ROOT} ${POSIX_R} && mkdir -p ${HOME} ${REMOTE_ROOT}/code ${R} ${POSIX_R}
 cd ${R} && git init -q -b main && git config user.name T && git config user.email t@t
 echo a1 > f1.txt && git add -A && git commit -qm c1 && echo a2 > f2.txt && git add -A && git commit -qm c2
 echo dirty > f1.txt
