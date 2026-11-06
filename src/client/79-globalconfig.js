@@ -274,7 +274,7 @@
                   ? ('测得 Windows 主机（登录 shell 是 cmd.exe）：git 命令经 Git Bash 执行 —— ' + text(snap.bash)
                     + (snap.source === 'config' ? '（配置页指定的）' : '（自动发现的）'))
                   + '。' + recordedNote() + '。' + (detail.length > 0 ? ' · ' + detail : '')
-                  : (detail.length > 0 ? detail : '测得 Windows 主机，但 Git Bash 通道还没就绪：在下面手填远端 bash 的绝对路径。')))))))
+                  : (detail.length > 0 ? detail : '测得 Windows 主机，但 Git Bash 通道还没就绪：在下面手填远端 bash 的绝对路径。'))))))
 
       const clearRecord = function () {
         if (clearing) return

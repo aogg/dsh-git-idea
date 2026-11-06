@@ -498,8 +498,12 @@ console.log('=== git/remote-transport 的其余答案 ===')
 console.log('')
 console.log('=== cmd 记录失效：bash 探不通，重探一次并覆写 ===')
 {
-  /* 铺垫：白纸（上一节清过配置）上首次判定一次，落 GOOD_BASH 记录。 */
-  const engine = makeEngine({ remoteDialect: () => 'cmd', whereGit: 'D:\\soft\\Git\\cmd\\git.exe\n' })
+  /* 铺垫：白纸（上一节清过配置）上首次判定一次，落 GOOD_BASH 记录。候选清单里
+     cmd\bin 那个先冒出来，照前几节的口径把它置空，发现才落到 GOOD_BASH。 */
+  const engine = makeEngine({
+    remoteDialect: () => 'cmd', whereGit: 'D:\\soft\\Git\\cmd\\git.exe\n',
+    versions: { 'D:\\soft\\Git\\cmd\\bin\\bash.exe': null },
+  })
   const a = makeBody(engine)
   const first = await a.H('git/panel')({ sessionId: 's-1', repo: SSH_PROJ, paths: ['f2.txt'] })
   const setupStored = await a.H('git/config')({ sessionId: 's-1' })
@@ -513,7 +517,7 @@ console.log('=== cmd 记录失效：bash 探不通，重探一次并覆写 ===')
      （方言重问、候选重试）→ 新答案覆写记录。 */
   const engine2 = makeEngine({
     remoteDialect: () => 'cmd', whereGit: 'D:\\soft\\Git\\cmd\\git.exe\n',
-    versions: { [GOOD_BASH]: null },
+    versions: { 'D:\\soft\\Git\\cmd\\bin\\bash.exe': null, [GOOD_BASH]: null },
   })
   const b = makeBody(engine2)
   const again = await b.H('git/panel')({ sessionId: 's-1', repo: SSH_PROJ, paths: ['f2.txt'] })
@@ -529,7 +533,7 @@ console.log('=== cmd 记录失效：bash 探不通，重探一次并覆写 ===')
   /* 覆写过的记录在下一个进程里复审一次就照常当家。 */
   const engine3 = makeEngine({
     remoteDialect: () => 'cmd', whereGit: 'D:\\soft\\Git\\cmd\\git.exe\n',
-    versions: { [GOOD_BASH]: null },
+    versions: { 'D:\\soft\\Git\\cmd\\bin\\bash.exe': null, [GOOD_BASH]: null },
   })
   const c = makeBody(engine3)
   const third = await c.H('git/panel')({ sessionId: 's-1', repo: SSH_PROJ, paths: ['f2.txt'] })
@@ -545,12 +549,14 @@ console.log('=== 方言没测出来：按 POSIX 兜底透传，结论不算数�
     remoteDialect: () => { throw new Error('探测通道断了') },
     whereGit: 'D:\\soft\\Git\\cmd\\git.exe\n',
   })
-  const fb = makeBody(fbEngine)
+  /* 会话 cwd 就挂在这个工作区上（probeShell 用的是会话目录，不是被检的 repo），
+     面板读才会为 SSH_FB 走 transport。 */
+  const fb = makeBody(fbEngine, { sessions: { get: () => ({ header: { cwd: SSH_FB } }) } })
   const fbRead = await fb.H('git/panel')({ sessionId: 's-7', repo: SSH_FB, paths: ['pf.txt'] })
   check('兜底读照旧透传 shell 层（通道一次不开、方言问过一次）',
     fbRead.ok === true && fbRead.branch === 'main'
     && fbEngine.calls.channels.length === 0 && fbEngine.calls.dialectCalls === 1)
-  const fbSnap = await fb.H('git/remote-transport')({ sessionId: 's-7', sessionCwd: SSH_FB })
+  const fbSnap = await fb.H('git/remote-transport')({ sessionId: 's-7' })
   check('兜底在快照里三态分明：posix-fallback / measured=false / origin=fallback',
     fbSnap.ok === true && fbSnap.remote === true && fbSnap.dialect === 'posix-fallback'
     && fbSnap.measured === false && fbSnap.origin === 'fallback')
