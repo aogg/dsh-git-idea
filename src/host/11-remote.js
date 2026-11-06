@@ -511,9 +511,13 @@ async function remoteRouteOf(request, sandbox, args) {
  * 出现同样的字符串也不是路径。别的别名、git 自己的 `ssh://git@…` 远端 URL 都不在
  * 本主机的这条前缀里，不会误伤。 */
 function remoteScriptText(route, command) {
-  const marker = 'ssh://' + route.alias + '/'
-  if (command.indexOf(marker) < 0) return command
-  return command.split(marker).join('')
+  /* cmd 通道摘 `ssh://<alias>/`（连斜杠一起 —— 余下的 `D:/…` 正是 MSYS 认的拼法）；
+     POSIX 透传摘 `ssh://<alias>`（不连斜杠 —— 余下的 `/tmp/…` 本来就是远端绝对
+     路径，把斜杠吃掉就成了相对路径）。别名按整个词匹配（后面必须紧跟 `/`），
+     `ssh://posix2/...` 不会被 alias=posix 的规则误伤。 */
+  const escaped = String(route.alias).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const pattern = new RegExp('ssh://' + escaped + (route.kind === 'engine' ? '/' : '(?=/)'), 'g')
+  return command.replace(pattern, '')
 }
 
 /* 通道上跑一条：`cd /d "<win路径>" && "<bash>" -s`，POSIX 脚本原文（连同 stdin

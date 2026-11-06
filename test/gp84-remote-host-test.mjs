@@ -167,6 +167,12 @@ const check = (label, value) => {
   if (value !== true) failed += 1
   console.log('  ' + (value ? '✓' : '✗') + ' ' + label)
 }
+/* 各节的 body 各自为政：判定记录落在共享的配置文件里（进程内 configCache 是每
+   个 body 一份，文件却只有一份），上一节留下的记录会替下一节“免探测”——需要
+   「首次判定」的断言前先清一次。 */
+async function resetConfig() {
+  await sh('rm -rf ' + HOME + '/.dsh && mkdir -p ' + HOME + '/.dsh', '/tmp')
+}
 
 /* fixture：假远端树里一个真仓库（两个提交 + 一条未提交改动），本机树里一个 POSIX
    远端的真仓库；「远端家目录」铺一个 68 字节 .git 文件的 worktree 情形不需要 ——
@@ -261,6 +267,7 @@ console.log('=== bash 路径的发现：向上推、System32 拒绝、假 bash �
 
   /* WSL 存根：git 不在（推不出候选）→ where bash 只答 System32 → 按路径剔除，
      不发探测；没有任何可用候选 → 拒绝话里点名原因与出路。 */
+  await resetConfig()
   const stubEngine = makeEngine({
     remoteDialect: () => 'cmd',
     whereGit: undefined, whereBash: 'C:\\Windows\\System32\\bash.exe\n',
@@ -276,6 +283,7 @@ console.log('=== bash 路径的发现：向上推、System32 拒绝、假 bash �
     && (String(stubError && stubError.message).indexOf('no-git-found') >= 0 || String(stubError && stubError.message).indexOf('WSL') >= 0))
 
   /* 伪装的 WSL bash（自报 pc-linux-gnu）：就算混进候选也被 --version 那一问挡下。 */
+  await resetConfig()
   const linuxEngine = makeEngine({
     remoteDialect: () => 'cmd',
     whereGit: 'D:\\soft\\Git\\cmd\\git.exe\n',
@@ -301,6 +309,7 @@ console.log('=== 手填优先与缓存作废 ===')
     remoteDialect: () => 'cmd', whereGit: 'D:\\soft\\Git\\cmd\\git.exe\n',
     versions: { 'D:\\soft\\Git\\cmd\\bin\\bash.exe': null },
   })
+  await resetConfig()
   const a = makeBody(engine)
   /* 先让自动发现把缓存填上。 */
   const first = await a.H('git/panel')({ sessionId: 's-1', repo: SSH_PROJ })
@@ -324,6 +333,7 @@ console.log('=== 手填优先与缓存作废 ===')
     remoteDialect: () => 'cmd',
     versions: { 'D:\\broken\\bash.exe': null },
   })
+  await resetConfig()
   const c = makeBody(badEngine)
   await c.H('git/config-save')({ sessionId: 's-1', config: {
     initBranch: 'main', cherryPickRecord: false, gitPath: '', remoteBashPath: 'D:\\broken\\bash.exe',
@@ -440,9 +450,9 @@ console.log('=== git/remote-transport 的其余答案 ===')
     sessions: { get: () => ({ header: { cwd: SSH_POSIX_R } }) },
   })
   const posixSnap = await posix.H('git/remote-transport')({ sessionId: 's-8' })
-  check('POSIX 远端：dialect=posix，说明不需要通道',
+  check('POSIX 远端：测得的 posix 结论带着永久记录时刻',
     posixSnap.ok === true && posixSnap.remote === true && posixSnap.dialect === 'posix'
-    && String(posixSnap.detail).indexOf('POSIX') >= 0)
+    && posixSnap.measured === true && posixSnap.origin === 'probe' && posixSnap.recordedAt > 0)
 }
 
 if (failed > 0) {
