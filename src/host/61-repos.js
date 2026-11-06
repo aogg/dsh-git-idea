@@ -163,7 +163,10 @@ async function readWorkspaceRepos(input) {
       const root = row.slice(cut + 1)
       /* 序号越界（配置在扫描进行中被改写）或行被通道截半的：丢掉，宁少勿错。 */
       if (!(seq >= 0) || seq >= dirs.length) continue
-      if ((kind !== 'R' && kind !== 'W') || root.length === 0 || root.charAt(0) !== '/') continue
+      /* root 的准入口径用 isStoredPath（70-config.js）：远程工作区的会话里，
+         扫描从 ssh://… 的起点原样带出前缀，仓库根是 `ssh://<alias>/<绝对路径>`
+         的拼法，一样要收。 */
+      if ((kind !== 'R' && kind !== 'W') || root.length === 0 || isStoredPath(root) !== true) continue
       const dir = dirs[seq]
       if (dirRepos[dir] === undefined) dirRepos[dir] = []
       if (dirRepos[dir].indexOf(root) < 0) dirRepos[dir].push(root)
@@ -184,7 +187,7 @@ async function readWorkspaceRepos(input) {
     const kind = row.charAt(0) === 'R' || row.charAt(0) === 'W' ? row.charAt(0) : ''
     if (kind === '') continue
     const root = row.slice(2)
-    if (root.length === 0 || root.charAt(0) !== '/') continue
+    if (root.length === 0 || isStoredPath(root) !== true) continue
     if (found.indexOf(root) < 0) found.push(root)
     if (kind === 'W' && linked.indexOf(root) < 0) linked.push(root)
   }
@@ -235,7 +238,7 @@ async function saveWorkspaceRepo(input) {
   let list = manualReposOf(config, workspace).slice()
   let dirList = repoDirsOf(config, workspace).slice()
   if (add.length > 0) {
-    if (add.charAt(0) !== '/') return { ok: false, error: 'absolute path required', path: add }
+    if (isStoredPath(add) !== true) return { ok: false, error: 'absolute path required', path: add }
     const check = await probeShell(input, 'if [ -e ' + shq(add) + '/.git ]; then echo repo; elif [ -d ' + shq(add) + ' ]; then echo dir; else echo none; fi')
     const kind = check.stdout.trim()
     if (kind === 'none') return { ok: false, error: 'missing', path: add }
@@ -329,7 +332,7 @@ async function saveAppliedRepo(input) {
     return { ok: false, error: 'no-path', workspace: null }
   }
   const repo = input != null && isStr(input.repo) ? input.repo.trim() : ''
-  if (repo.length > 0 && (repo.charAt(0) !== '/' || repo.length > APPLIED_PATH_MAX)) {
+  if (repo.length > 0 && (isStoredPath(repo) !== true || repo.length > APPLIED_PATH_MAX)) {
     return { ok: false, error: 'absolute path required', repo: repo }
   }
   const config = await readConfigFile()

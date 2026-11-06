@@ -69,6 +69,9 @@
       initBranch: 'main', cherryPickRecord: false,
       /* 空 = 用部署 PATH 里的 git。 */
       gitPath: '',
+      /* 远端 Windows 主机的 Git Bash 路径（ssh:// 会话 + cmd 方言主机的通道用）。
+         空 = 自动发现。与 host 70-config.js 的 normalizeConfig 两边同款：缺省空串。 */
+      remoteBashPath: '',
       /* 这三条是插件自己给 git 的实参，不是 git 设置的副本。 */
       fetchPrune: true, pullRebase: false, pushSetUpstream: false,
       /* 会话完成后的两件事（92-chip.js 听 DSH 会话状态，配置页在面板「配置」tab）。
@@ -144,6 +147,7 @@
       if (typeof raw.initBranch === 'string') out.initBranch = raw.initBranch.trim().slice(0, 120)
       out.cherryPickRecord = raw.cherryPickRecord === true
       if (typeof raw.gitPath === 'string') out.gitPath = raw.gitPath.trim().slice(0, 400)
+      if (typeof raw.remoteBashPath === 'string') out.remoteBashPath = raw.remoteBashPath.trim().slice(0, 400)
       out.fetchPrune = raw.fetchPrune !== false
       out.pullRebase = raw.pullRebase === true
       out.pushSetUpstream = raw.pushSetUpstream === true

@@ -250,7 +250,9 @@ function registerBranchHistory(ctx) {
         if (header.origin === 'subagent') return decision
         if (header.parentSession != null) return decision
         const cwd = header.cwd
-        if (!isStr(cwd) || cwd.length === 0 || cwd.charAt(0) !== '/') return decision
+        /* cwd 的口径用 isStoredPath（70-config.js）：ssh:// 远程工作区的会话一样
+           登记 —— 那正是这套账最有用的一类会话。 */
+        if (!isStr(cwd) || cwd.length === 0 || isStoredPath(cwd) !== true) return decision
         const sessionId = session.id
         if (!isStr(sessionId) || sessionId.length === 0) return decision
         /* 防重复（每会话只走一遍）：本轮 claimed 或 surface 历史里已有本插件注入。 */

@@ -213,6 +213,7 @@ git config --global user.email "你的邮箱"
 | 初始化仓库的默认分支 | `main` | 引导页「在此初始化仓库」执行 `git init -b <值>`；留空用 git 自己的默认值 |
 | cherry-pick 时记录来源（`-x`） | 关 | 提交时是否带 `-x` |
 | git 位置 | 空（用 PATH 上的 git） | 面板每一条命令都以这一个词开头；装在不在这条 PATH 上的地方（Homebrew 前缀、IDE 自带的 git、nix profile）时写绝对路径。旁边实时显示它解析到哪、什么版本、能不能跑 |
+| 远程 bash 路径 | 空（自动发现） | ssh:// 会话落在 Windows 远端（登录 shell 是 cmd.exe）时，git 命令改经 Git Bash 执行：这里填远端 `bash.exe` 的绝对路径；留空则 `where git` 向上推同树 `bin\bash.exe` 自动发现（System32 的 WSL 存根拒绝），发现失败的原因显示在旁边。会话是 ssh:// 时上一行的「git 位置」指的是远端机上的 git |
 | fetch 时删掉远端已删的远程分支（`--prune`） | 开 | 关掉就是 `git fetch --all` |
 | pull 用 rebase（`--rebase`） | 关 | 关掉就是 `git pull`（merge） |
 | 推送没有上游的分支时自动设上游（`push -u`） | 关 | 关掉时推送失败后面板问一句「推送并设为上游」 |

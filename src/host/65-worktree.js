@@ -139,7 +139,7 @@ async function addWorktree(input) {
     return { ok: false, error: 'mode 必须是 new（新建分支）/ checkout（检出分支）/ detach（游离检出）三选一' }
   }
   if (path.length === 0) return { ok: false, error: '放置目录必填：新工作区要落在哪个绝对路径（以 / 开头）' }
-  if (path.charAt(0) !== '/') return { ok: false, error: '放置目录必须是绝对路径（以 / 开头），相对路径不收', path: path }
+  if (isStoredPath(path) !== true) return { ok: false, error: '放置目录必须是绝对路径（本地以 / 开头，ssh:// 远程写成 ssh://alias/…），相对路径不收', path: path }
   const name = isStr(asked.name) ? asked.name.trim() : ''
   if (mode !== 'detach' && name.length === 0) {
     return { ok: false, error: mode === 'new' ? '新分支名必填' : '要检出的分支名必填', path: path }
@@ -527,12 +527,12 @@ async function saveWorktreeMain(input) {
   }
   const repo = input != null && isStr(input.repo) && input.repo.trim().length > 0 ? input.repo.trim() : (sessionWorkdir(input) || '')
   if (repo.length === 0) return { ok: false, error: 'no-path' }
-  if (repo.charAt(0) !== '/') return { ok: false, error: 'absolute path required', path: repo }
+  if (isStoredPath(repo) !== true) return { ok: false, error: 'absolute path required', path: repo }
   const key = repoKeyOf(repo)
   const config = await readConfigFile()
   const mains = Object.assign({}, config.worktreeMains)
   if (add.length > 0) {
-    if (add.charAt(0) !== '/') return { ok: false, error: 'absolute path required', path: add }
+    if (isStoredPath(add) !== true) return { ok: false, error: 'absolute path required', path: add }
     if (mains[key] !== add) {
       const check = await probeShell(input, 'if [ -e ' + shq(add) + '/.git ]; then echo repo; elif [ -d ' + shq(add) + ' ]; then echo norepo; else echo none; fi')
       const kind = check.stdout.trim()
@@ -653,7 +653,7 @@ async function ignoredScanSnapshot(input) {
   const repos = []
   for (let i = 0; i < requested.length && repos.length < IGNORED_SCAN_MAX_REPOS; i += 1) {
     const one = isStr(requested[i]) ? requested[i].trim() : ''
-    if (one.length === 0 || one.charAt(0) !== '/' || repos.indexOf(one) >= 0) continue
+    if (one.length === 0 || isStoredPath(one) !== true || repos.indexOf(one) >= 0) continue
     repos.push(one)
   }
   if (repos.length === 0) {

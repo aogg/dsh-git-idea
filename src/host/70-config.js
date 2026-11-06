@@ -23,6 +23,9 @@ function normalizeConfig(raw) {
     /* Which git to run. Empty means "the one on the deployment's PATH", which is
        what every command used before this key existed. */
     gitPath: '',
+    /* 远端 Windows 主机的 Git Bash 路径（ssh:// 会话 + cmd 方言时的 transport 用）。
+       空 = 自动发现。语义说明写在客户端配置页那半（79-globalconfig.js）。 */
+    remoteBashPath: '',
     /* The three choices the plugin itself makes about the network — each one is
        the argument this plugin passes, not a copy of a git setting: `git fetch`
        is `--all --prune` here, pull merges, and a push to a branch with no
@@ -90,6 +93,10 @@ function normalizeConfig(raw) {
   if (isStr(raw.initBranch)) out.initBranch = raw.initBranch.trim().slice(0, 120)
   out.cherryPickRecord = raw.cherryPickRecord === true
   if (isStr(raw.gitPath)) out.gitPath = cleanGitPath(raw.gitPath)
+  /* 远端 Windows 主机的 Git Bash 路径（11-remote.js 的 cmd 方言通道用）。空 =
+     自动发现（where git 向上推 bin\bash.exe，WSL 存根拒绝）。与 gitPath 同一套
+     清洗，另加 cmd 命令行的两样拒收：双引号与 %（见 cleanRemoteBashPath）。 */
+  if (isStr(raw.remoteBashPath)) out.remoteBashPath = cleanRemoteBashPath(raw.remoteBashPath)
   out.fetchPrune = raw.fetchPrune !== false
   out.pullRebase = raw.pullRebase === true
   out.pushSetUpstream = raw.pushSetUpstream === true
@@ -136,6 +143,18 @@ function normalizeQuickCommands(raw) {
    `git/repos` 每次读的时候报出来（missing），配置里先留着原文。 */
 const REPO_MAP_WORKSPACES = 128
 const REPO_MAP_PER_WORKSPACE = 64
+/* 这份配置里一切「路径形」的键与值的准入口径：本地磁盘路径以 / 开头；ssh:// 远程
+   工作区的会话里，仓库与工作区是 `ssh://<alias>/<绝对路径>` 的拼法 —— 61-repos.js
+   的扫描脚本从工作区起点原样带出前缀，appliedRepos、drafts、branchHistory 的键
+   因此也都是它。语义不变：键还是「工作区/仓库的原样拼法」，只是远程拼法从
+   「被静默丢掉」变成「照常存取」。 */
+const SSH_STORED_RE = /^ssh:\/\/[^/]+\//
+
+function isStoredPath(value) {
+  if (!isStr(value)) return false
+  return value.charAt(0) === '/' || SSH_STORED_RE.test(value)
+}
+
 function normalizeRepoMap(raw) {
   const out = {}
   if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return out
@@ -150,7 +169,7 @@ function normalizeRepoMap(raw) {
       const path = list[i]
       if (!isStr(path)) continue
       const trimmed = path.trim()
-      if (trimmed.charAt(0) !== '/' || trimmed.length > 4096) continue
+      if (!isStoredPath(trimmed) || trimmed.length > 4096) continue
       if (clean.indexOf(trimmed) < 0) clean.push(trimmed)
     }
     if (clean.length > 0) { out[key] = clean; kept += 1 }
@@ -175,8 +194,8 @@ function normalizeWorktreeMains(raw) {
     if (kept >= WT_MAIN_MAP_MAX) break
     const worktree = key.trim()
     const main = isStr(raw[key]) ? raw[key].trim() : ''
-    if (worktree.charAt(0) !== '/' || worktree.length > WT_MAIN_PATH_MAX) continue
-    if (main.charAt(0) !== '/' || main.length > WT_MAIN_PATH_MAX) continue
+    if (!isStoredPath(worktree) || worktree.length > WT_MAIN_PATH_MAX) continue
+    if (!isStoredPath(main) || main.length > WT_MAIN_PATH_MAX) continue
     out[worktree] = main
     kept += 1
   }
@@ -203,8 +222,8 @@ function normalizeAppliedRepos(raw) {
     if (kept >= APPLIED_MAP_MAX) break
     const workspace = key.trim()
     const repo = isStr(raw[key]) ? raw[key].trim() : ''
-    if (workspace.charAt(0) !== '/' || workspace.length > APPLIED_PATH_MAX) continue
-    if (repo.charAt(0) !== '/' || repo.length > APPLIED_PATH_MAX) continue
+    if (!isStoredPath(workspace) || workspace.length > APPLIED_PATH_MAX) continue
+    if (!isStoredPath(repo) || repo.length > APPLIED_PATH_MAX) continue
     out[workspace] = repo
     kept += 1
   }
@@ -267,7 +286,7 @@ function normalizeBranchHistory(raw) {
     if (!Object.prototype.hasOwnProperty.call(raw.workspaces, key)) continue
     if (kept >= BRANCH_HISTORY_WS_MAX) break
     const workspace = key.trim()
-    if (workspace.charAt(0) !== '/' || workspace.length > BRANCH_HISTORY_PATH_MAX) continue
+    if (!isStoredPath(workspace) || workspace.length > BRANCH_HISTORY_PATH_MAX) continue
     const value = raw.workspaces[key]
     if (value !== true && value !== false) continue
     out.workspaces[workspace] = value
@@ -296,7 +315,7 @@ function normalizeBranchPrompts(raw) {
     if (!Object.prototype.hasOwnProperty.call(raw, key)) continue
     if (kept >= BRANCH_PROMPT_WS_MAX) break
     const workspace = key.trim()
-    if (workspace.charAt(0) !== '/' || workspace.length > BRANCH_PROMPT_PATH_MAX) continue
+    if (!isStoredPath(workspace) || workspace.length > BRANCH_PROMPT_PATH_MAX) continue
     const value = raw[key]
     if (value == null || typeof value !== 'object' || Array.isArray(value)) continue
     const perWorkspace = {}
@@ -335,7 +354,7 @@ function normalizeBranchSessions(raw) {
     if (!Object.prototype.hasOwnProperty.call(raw, key)) continue
     if (kept >= BRANCH_SESSION_WS_MAX) break
     const workspace = key.trim()
-    if (workspace.charAt(0) !== '/' || workspace.length > BRANCH_SESSION_PATH_MAX) continue
+    if (!isStoredPath(workspace) || workspace.length > BRANCH_SESSION_PATH_MAX) continue
     const value = raw[key]
     if (value == null || typeof value !== 'object' || Array.isArray(value)) continue
     const perWorkspace = {}
@@ -412,8 +431,12 @@ async function writeConfigFile(raw, args) {
        反过来也一样。缓存不作废的话，读者在配置页的全局档里把路径改对了，面板还在拿上一个二进
        制留下的答案说话（这条是 fixture 抓出来的：改完之后同一棵树仍然回答旧的那一份）。 */
     const before = gitExe
+    const bashBefore = configCache !== null ? configCache.remoteBashPath : null
     configCache = applyConfig(next)
     if (before !== gitExe) invalidateRepo(null)
+    /* 换了一个远端 bash（或清空了它）：按主机别名缓存的发现结果全部作废，下一读
+       按新配置重新解析（gitExe 那条纪律的同款）。 */
+    if (bashBefore !== null && bashBefore !== next.remoteBashPath) invalidateRemoteBash()
     return { ok: true, path: path, config: next }
   } catch (error) {
     const detail = error != null && error.message !== undefined ? String(error.message) : String(error)
@@ -454,7 +477,7 @@ function normalizeDrafts(raw) {
   for (const key in raw) {
     if (!Object.prototype.hasOwnProperty.call(raw, key)) continue
     if (kept >= DRAFT_REPOS_MAX) break
-    if (key.length === 0 || key.length > DRAFT_KEY_MAX || key.charAt(0) !== '/') continue
+    if (key.length === 0 || key.length > DRAFT_KEY_MAX || isStoredPath(key) !== true) continue
     const value = raw[key]
     if (!isStr(value)) continue
     const clean = value.slice(0, DRAFT_LEN_MAX)
@@ -471,7 +494,7 @@ function normalizeDrafts(raw) {
 async function draftRead(input) {
   const repo = input != null && isStr(input.repo) ? input.repo.trim() : ''
   const key = repoKeyOf(repo)
-  if (repo.length === 0 || repo.charAt(0) !== '/') return { ok: true, repo: key, message: '' }
+  if (repo.length === 0 || isStoredPath(repo) !== true) return { ok: true, repo: key, message: '' }
   const config = await readConfigFile()
   const found = config.drafts[key]
   return { ok: true, repo: key, message: isStr(found) ? found : '' }
@@ -483,7 +506,7 @@ async function draftRead(input) {
 async function draftSave(input) {
   const repo = input != null && isStr(input.repo) ? input.repo.trim() : ''
   const message = input != null && isStr(input.message) ? input.message : ''
-  if (repo.length === 0 || repo.length > DRAFT_KEY_MAX || repo.charAt(0) !== '/') {
+  if (repo.length === 0 || repo.length > DRAFT_KEY_MAX || isStoredPath(repo) !== true) {
     return { ok: false, error: 'a repository path is required' }
   }
   const key = repoKeyOf(repo)

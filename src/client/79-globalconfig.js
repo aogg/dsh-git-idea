@@ -202,7 +202,89 @@
         h('div', { className: 'dsh-git-set-row' },
           h('span', { className: 'dsh-git-set-label' }, ''),
           h('button', { type: 'button', className: 'dsh-git-btn', onClick: probe }, '再检查一次'),
-          h('span', { className: 'dsh-git-set-hint' }, '面板读、写、初始化用的都是这一个')))
+          h('span', { className: 'dsh-git-set-hint' }, '面板读、写、初始化用的都是这一个；会话工作区是 ssh:// 远程主机时，指的是那台远端机上的 git')))
+    }
+
+    /* ── 远程主机：ssh:// 会话的 Git Bash 通道 ──
+
+       会话工作区是 ssh:// 远程工作区、而那台远端是 Windows OpenSSH 主机（登录
+       shell 是 cmd.exe）时，插件的 POSIX git 脚本在 cmd 里必败，面板只会说「不是
+       git 仓库」。插件的对策是 cmd 方言改走 Git Bash 通道：`cd /d "<路径>" &&
+       "<bash>" -s`，脚本原文从 stdin 喂入。通道要的 bash 在配置里手填，空则远端
+       自动发现（where git 向上推同树 bin\bash.exe；C:\Windows\System32\bash.exe
+       是 WSL 存根，明确拒绝）。这一组把通道的状态与发现失败的原因说给人听 ——
+       reason/detail 沿用 git 位置组的文案风格，失败的出路是下面这个输入框。 */
+    function RemoteTransportGroup(props) {
+      const remembered = useLastSession()
+      const sessionId = props != null && typeof props.sessionId === 'string' && props.sessionId.length > 0
+        ? props.sessionId
+        : remembered
+      const plugin = usePluginConfig()
+      const [draftPath, setDraftPath] = React.useState(plugin.remoteBashPath)
+      const [snap, setSnap] = React.useState(null)
+      const [checking, setChecking] = React.useState(false)
+      React.useEffect(function () { setDraftPath(plugin.remoteBashPath) }, [plugin.remoteBashPath])
+
+      const load = function (refresh) {
+        const payload = refresh === true ? { refresh: true } : {}
+        if (sessionId.length > 0) payload.sessionId = sessionId
+        callHost('git/remote-transport', payload).then(function (data) {
+          setSnap(data)
+          setChecking(false)
+        }, function (failure) {
+          setSnap({ ok: false, remote: false, reason: 'rpc-failed', detail: failureText(failure) })
+          setChecking(false)
+        })
+      }
+      React.useEffect(function () { load(false) }, [sessionId])
+
+      const commitPath = function (value) {
+        setDraftPath(value)
+        const next = Object.assign({}, plugin)
+        next.remoteBashPath = value
+        savePluginConfig(next)
+      }
+
+      const detail = snap == null ? '' : text(snap.detail)
+      const verdict = snap == null
+        ? '正在检查…'
+        : (snap.ok === false
+          ? '读不到通道状态：' + detail
+          : (snap.remote !== true
+            ? '本会话不是 ssh:// 远程工作区 —— 这一组只在远程会话里有答案，本地会话的 git 命令不走这一通道。'
+            : (text(snap.dialect) !== 'cmd'
+              ? '远程是 POSIX 主机（Linux/macOS）：POSIX 脚本原样透传，不需要 Git Bash 通道。'
+              : (text(snap.bash).length > 0
+                ? ('通道就绪：' + text(snap.bash) + (snap.source === 'config' ? '（配置页指定的）' : '（自动发现的）')
+                  + (detail.length > 0 ? ' · ' + detail : ''))
+                : (detail.length > 0 ? detail : '通道还没就绪：在下面手填远端 bash 的绝对路径。')))))
+
+      return h('div', null,
+        h('div', { className: 'dsh-git-set-group' }, '远程主机（ssh:// 会话的 Git Bash 通道）'),
+        h('div', { className: 'dsh-git-set-hint' },
+          '远端是 Windows（登录 shell 是 cmd.exe）时，git 命令改经 Git Bash 执行，这个路径就是通道用的 bash：填 Git for Windows 的 bash.exe 绝对路径（例：D:\\soft\\Git\\bin\\bash.exe），留空则自动发现。System32 下的 bash.exe 是 WSL 存根，不会采用。'),
+
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '远程 bash 路径'),
+          h('input', {
+            className: 'dsh-git-input dsh-git-set-input',
+            placeholder: '留空 = 自动发现（where git 向上推 bin\\bash.exe）',
+            value: draftPath,
+            onChange: function (event) { commitPath(event.target.value) },
+          })),
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, ''),
+          h('span', {
+            className: text(snap != null && snap.remote === true && text(snap.dialect) === 'cmd' && text(snap.bash).length === 0
+              ? 'dsh-git-set-hint dsh-git-warn' : 'dsh-git-set-hint'),
+          }, verdict)),
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, ''),
+          h('button', {
+            type: 'button', className: 'dsh-git-btn', disabled: checking,
+            onClick: function () { setChecking(true); load(true) },
+          }, checking ? '检查中…' : '再检查一次'),
+          h('span', { className: 'dsh-git-set-hint' }, '绕开缓存重新解析远端 bash')))
     }
 
     /* ── 换行符：写在 ~/.gitconfig 里的那两个键 ──
@@ -656,6 +738,8 @@
              「本浏览器」一组。 */
           h('div', { className: 'dsh-git-set-col' },
             h(GitToolchainGroup, { key: 'tool', sessionId: sessionId }),
+
+            h(RemoteTransportGroup, { key: 'remote', sessionId: sessionId }),
 
             h(GitCrlfGroup, { key: 'crlf', sessionId: sessionId }),
 

@@ -1,0 +1,403 @@
+import fs from 'node:fs'
+import { spawn } from 'node:child_process'
+
+/* ── ssh:// 远程工作区 + cmd 方言主机的宿主半侧（11-remote.js）──
+ *
+ * 真仓库摆在 /tmp/gp84-remote/code/proj，扮演「远端那台 Windows 机器上的目录」；
+ * ssh-workspace 的接管面是假的（shell 服务上挂 RemoteShellRouter 同款 Symbol），
+ * 但通道语义是真的：
+ *   - openChannel 按收到的命令形状分派 —— 探测类（%COMSPEC% 金丝雀、where、
+ *     --version）按脚本化的远端答案回答；`cd /d "<win>" && "<bash>" -s` 的包裹
+ *     命令则**真的**在本机 spawn 一个 `bash -s`（stdin 喂脚本原文，cwd 映射到
+ *     假远端树）——面板读、conflict-save 的 stdin 写回，走的都是这条真路。
+ *   - POSIX 方言与本地路径断言「原样透传」：shell.run 接住，openChannel 一次都
+ *     不该被调。
+ * 发现/拒绝矩阵：手填优先、where git 向上推、System32 的 WSL 存根按路径剔除、
+ * pc-linux-gnu 的假 bash 按版本拒绝、失败答案缓存 60 秒、配置改动作废缓存。
+ * 会话只读（read-only）时远程命令拒绝，口径与 ssh 插件的 mode-gate 一致。
+ * 配置归一化里 ssh:// 键的存取（repos/appliedRepos/drafts）也在这一场。 */
+
+const body = fs.readFileSync(process.env.GP_SRC || new URL('../dist/host.js', import.meta.url).pathname, 'utf8')
+
+const HOME = '/tmp/gp84-home'
+const REMOTE_ROOT = '/tmp/gp84-remote'
+const R = REMOTE_ROOT + '/code/proj'
+const WIN_PROJ = 'D:\\code\\proj'
+const SSH_PROJ = 'ssh://win/' + 'D:/code/proj'
+const SSH_POSIX_R = 'ssh://posix/tmp/gp84-posix'
+const POSIX_R = '/tmp/gp84-posix'
+const GOOD_BASH = 'D:\\soft\\Git\\bin\\bash.exe'
+const ROUTER_KEY = Symbol.for('dsh-ssh-workspace.shell-installed')
+
+/* 假远端：把 Windows 拼法映射进本机的假远端树。 */
+function mapWin(winPath) {
+  const withoutDrive = String(winPath).replace(/^[A-Za-z]:\\/, '')
+  return REMOTE_ROOT + '/' + withoutDrive.split('\\').join('/')
+}
+
+/* 一条真的 `bash -s`：stdin 喂脚本原文（这就是通道该有的全部语义），stdout/stderr/
+ * 退出码按 ssh2 通道的形状回。 */
+function realBashRun(cwd, script, cb) {
+  const c = spawn('bash', ['-s'], { cwd: cwd, env: Object.assign({}, process.env, {
+    DSH_HOME: HOME + '/.dsh', HOME: HOME,
+    GIT_CONFIG_GLOBAL: HOME + '/.gitconfig', GIT_CONFIG_SYSTEM: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
+  }) })
+  let o = '', e = ''
+  c.stdout.on('data', b => o += b); c.stderr.on('data', b => e += b)
+  c.on('error', er => cb({ out: o, err: String(er.message), code: 127 }))
+  c.on('close', x => cb({ out: o, err: e, code: x }))
+  c.stdin.end(script)
+}
+
+function makeEngine(options) {
+  const calls = { channels: [], probes: [], wraps: [], dialectCalls: 0, releaseCalls: 0 }
+  const engine = {
+    calls: calls,
+    remoteDialect: typeof options.remoteDialect === 'function'
+      ? function (alias) { calls.dialectCalls += 1; return options.remoteDialect(alias) }
+      : undefined,
+    openChannel: function (alias, command) {
+      calls.channels.push(command)
+      const listeners = {}
+      const fire = function (ev, arg) { const list = listeners[ev] || []; for (let i = 0; i < list.length; i += 1) list[i](arg) }
+      const settle = function (result) {
+        setTimeout(function () {
+          fire('data', Buffer.from(result.out, 'utf8'))
+          fire('stderr:data', Buffer.from(result.err, 'utf8'))
+          fire('exit', result.code)
+          fire('close')
+        }, 5)
+      }
+      /* 命令形状 → 远端答案。探测与金丝雀脚本化回答；包裹命令走真 bash。 */
+      let run
+      if (command === 'echo %COMSPEC%') {
+        run = function (data, cb) {
+          cb({ out: options.comspec === undefined ? 'C:\\Windows\\System32\\cmd.exe' : options.comspec, err: '', code: 0 })
+        }
+      } else if (command === 'where git' || command === 'where bash') {
+        const said = command === 'where git' ? options.whereGit : options.whereBash
+        run = function (data, cb) { cb({ out: said === undefined ? '' : said, err: '', code: said === undefined ? 1 : 0 }) }
+      } else if (/^"[^"]+" --version$/.test(command) === true) {
+        const exe = command.slice(1, command.length - ' --version'.length - 1)
+        run = function (data, cb) {
+          calls.probes.push(exe)
+          const said = options.versions !== undefined && exe in options.versions ? options.versions[exe] : 'GNU bash, version 5.3.15(1)-release (x86_64-pc-cygwin)\nCopyright (C) 2025 Free Software Foundation, Inc.'
+          if (said === null) cb({ out: '', err: 'no such file', code: 1 })
+          else cb({ out: said, err: '', code: 0 })
+        }
+      } else if (command.indexOf('cd /d "') === 0) {
+        const match = /^cd \/d "([^"]+)" && "([^"]+)" -s$/.exec(command)
+        run = function (data, cb) {
+          if (match === null) { cb({ out: '', err: 'unparseable wrap: ' + command, code: 1 }); return }
+          calls.wraps.push({ cwd: match[1], bash: match[2], script: data })
+          const mapped = mapWin(match[1])
+          if (!fs.existsSync(mapped)) { cb({ out: '', err: 'fake remote dir missing: ' + mapped, code: 1 }); return }
+          realBashRun(mapped, data, cb)
+        }
+      } else {
+        run = function (data, cb) { cb({ out: '', err: 'unexpected command: ' + command, code: 1 }) }
+      }
+      const channel = {
+        on: function (ev, cb) { (listeners[ev] = listeners[ev] || []).push(cb); return channel },
+        stderr: { on: function (ev, cb) { (listeners['stderr:' + ev] = listeners['stderr:' + ev] || []).push(cb) } },
+        signal: function () {},
+        close: function () {},
+        end: function (data) { run(Buffer.from(data).toString('utf8'), settle) },
+      }
+      return Promise.resolve({ channel: channel, record: {}, release: function () { calls.releaseCalls += 1 } })
+    },
+  }
+  return engine
+}
+
+function makeBody(engine, extra) {
+  const shellEnv = Object.assign({}, process.env, {
+    DSH_HOME: HOME + '/.dsh', HOME: HOME,
+    GIT_CONFIG_GLOBAL: HOME + '/.gitconfig', GIT_CONFIG_SYSTEM: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
+  })
+  let localRuns = 0
+  function runShell(spec) {
+    return new Promise((res) => {
+      /* 假 shell 层：POSIX 远端拼法映射回本机（ssh://posix/tmp/x → /tmp/x），
+         本地路径原样 —— 这正是 patch-shell 对 POSIX 远端的透传语义。 */
+      let cwd = spec.workdir
+      if (typeof cwd === 'string' && cwd.indexOf('ssh://posix') === 0) cwd = cwd.slice('ssh://posix'.length)
+      localRuns += 1
+      const c = spawn('sh', ['-c', spec.command], { cwd: cwd, env: shellEnv })
+      let o = '', e = ''
+      c.stdout.on('data', b => o += b); c.stderr.on('data', b => e += b)
+      c.on('error', er => res({ exitCode: null, stdout: { text: o }, stderr: { text: String(er.message) } }))
+      c.on('close', x => res({ exitCode: x, stdout: { text: o }, stderr: { text: e } }))
+    })
+  }
+  const handlers = new Map()
+  const services = Object.assign({
+    shell: Object.assign({ resolve: r => r, run: runShell, runs: () => localRuns }, { [ROUTER_KEY]: { engine: engine } }),
+    sessions: { get: () => ({ header: { cwd: SSH_PROJ } }) },
+  }, extra || {})
+  const ctx = { get: n => services[n], effect(cb) { const d = cb(); return typeof d === 'function' ? d : () => {} } }
+  const harness = { handle(n, f) { handlers.set(n, f); return () => {} } }
+  new Function('ctx', 'harness', 'console', 'btoa', 'atob', 'TextEncoder', 'TextDecoder', body)(
+    ctx, harness, console, s => Buffer.from(s, 'binary').toString('base64'),
+    s => Buffer.from(s, 'base64').toString('binary'), TextEncoder, TextDecoder).apply(ctx)
+  return { H: n => handlers.get(n), runs: () => localRuns }
+}
+
+function sh(cmd, cwd) {
+  return new Promise((res) => {
+    const c = spawn('sh', ['-c', cmd], { cwd, env: Object.assign({}, process.env, {
+      DSH_HOME: HOME + '/.dsh', HOME: HOME,
+      GIT_CONFIG_GLOBAL: HOME + '/.gitconfig', GIT_CONFIG_SYSTEM: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
+    }) })
+    let o = '', e = ''
+    c.stdout.on('data', b => o += b); c.stderr.on('data', b => e += b)
+    c.on('close', x => res({ code: x, out: o, err: e }))
+  })
+}
+
+let failed = 0
+const check = (label, value) => {
+  if (value !== true) failed += 1
+  console.log('  ' + (value ? '✓' : '✗') + ' ' + label)
+}
+
+/* fixture：假远端树里一个真仓库（两个提交 + 一条未提交改动），本机树里一个 POSIX
+   远端的真仓库；「远端家目录」铺一个 68 字节 .git 文件的 worktree 情形不需要 ——
+   .git 文件在远端 bash 看来与本地无异（-e 判定），已有套件盖着。 */
+await sh(`rm -rf ${HOME} ${REMOTE_ROOT} ${POSIX_R} && mkdir -p ${HOME} ${REMOTE_ROOT}/code
+cd ${R} && git init -q -b main && git config user.name T && git config user.email t@t
+echo a1 > f1.txt && git add -A && git commit -qm c1 && echo a2 > f2.txt && git add -A && git commit -qm c2
+echo dirty > f1.txt
+cd ${POSIX_R} && git init -q -b main && git config user.name T && git config user.email t@t
+echo p1 > pf.txt && git add -A && git commit -qm p1`, '/tmp')
+
+console.log('')
+console.log('=== transport 的选择：本地与 POSIX 远端透传，cmd 远端走通道 ===')
+{
+  const engine = makeEngine({ remoteDialect: () => 'cmd', whereGit: 'D:\\soft\\Git\\cmd\\git.exe\n' })
+  const a = makeBody(engine)
+  const localRead = await a.H('git/panel')({ sessionId: 's-1', repo: POSIX_R })
+  check('本地路径照旧走 shell 层（openChannel 一次都没被调）',
+    localRead.ok === true && engine.calls.channels.length === 0 && a.runs() > 0)
+  check('本地读拿到真仓库的答案（分支）',
+    localRead.ok === true && localRead.branch === 'main')
+
+  const posixEngine = makeEngine({ remoteDialect: () => 'posix' })
+  const b = makeBody(posixEngine)
+  const posixRead = await b.H('git/panel')({ sessionId: 's-2', repo: SSH_POSIX_R })
+  check('POSIX 远端照旧透传 shell 层（脚本一字节不改，openChannel 不参与）',
+    posixRead.ok === true && posixEngine.calls.channels.length === 0 && posixRead.branch === 'main')
+}
+
+console.log('')
+console.log('=== cmd 远端：包裹命令形状与真读 ===')
+{
+  const engine = makeEngine({ remoteDialect: () => 'cmd', whereGit: 'D:\\soft\\Git\\cmd\\git.exe\n' })
+  const a = makeBody(engine)
+  const read = await a.H('git/panel')({ sessionId: 's-1', repo: SSH_PROJ })
+  check('cmd 远端的整树读成功（真仓库、真通道）：分支与改动数都对',
+    read.ok === true && read.branch === 'main')
+  const wrap = engine.calls.wraps[engine.calls.wraps.length - 1]
+  check('包裹命令是 `cd /d "<远端路径>" && "<bash>" -s`：路径换算成 Windows 反斜杠拼法',
+    wrap !== undefined && wrap.cwd === WIN_PROJ && wrap.bash === GOOD_BASH)
+  check('脚本里的 ssh://win/ 前缀整段摘成远端路径（stdin 数据不在此列），[ -e .git ] 才探得到',
+    wrap.script.indexOf('ssh://win/') < 0 && wrap.script.indexOf(WIN_PROJ.replace('\\', '/')) >= 0
+    && wrap.script.indexOf('[ -e ') >= 0)
+  check('通道用完把连接占用还回去（release 成对出现）',
+    engine.calls.releaseCalls > 0)
+  /* 缓存生效：再读一次，发现/方言都不重探（channels 只增包裹命令，不再有 --version 探测）。 */
+  const probesBefore = engine.calls.probes.length
+  await a.H('git/panel')({ sessionId: 's-1', repo: SSH_PROJ })
+  check('第二次读直接用缓存：bash 探测零次、方言零次',
+    engine.calls.probes.length === probesBefore && engine.calls.dialectCalls === 1)
+}
+
+console.log('')
+console.log('=== bash 路径的发现：向上推、System32 拒绝、假 bash 版本拒绝 ===')
+{
+  const engine = makeEngine({
+    remoteDialect: () => 'cmd',
+    whereGit: 'D:\\soft\\Git\\cmd\\git.exe\n',
+    versions: { 'D:\\soft\\Git\\cmd\\bin\\bash.exe': null },
+  })
+  const a = makeBody(engine)
+  const read = await a.H('git/panel')({ sessionId: 's-1', repo: SSH_PROJ })
+  check('自动发现从 git.exe 所在目录向上推到同树 bin\\bash.exe 并用它跑读',
+    read.ok === true && engine.calls.probes.indexOf('D:\\soft\\Git\\cmd\\bin\\bash.exe') >= 0
+    && engine.calls.probes.indexOf(GOOD_BASH) >= 0)
+
+  const remote = await a.H('git/remote-transport')({ sessionId: 's-1' })
+  check('git/remote-transport 答出通道快照：cmd + 发现来的 bash',
+    remote.ok === true && remote.remote === true && remote.alias === 'win'
+    && remote.dialect === 'cmd' && remote.bash === GOOD_BASH && remote.source === 'discovered')
+
+  /* WSL 存根：git 不在（推不出候选）→ where bash 只答 System32 → 按路径剔除，
+     不发探测；没有任何可用候选 → 拒绝话里点名原因与出路。 */
+  const stubEngine = makeEngine({
+    remoteDialect: () => 'cmd',
+    whereGit: undefined, whereBash: 'C:\\Windows\\System32\\bash.exe\n',
+    versions: {},
+  })
+  const b = makeBody(stubEngine)
+  let stubError = null
+  await b.H('git/panel')({ sessionId: 's-1', repo: SSH_PROJ }).then(null, function (error) { stubError = error })
+  check('System32 的 bash.exe 按路径剔除，一次探测都不发',
+    stubError !== null && stubEngine.calls.probes.length === 0)
+  check('拒绝的话说清 reason（no-git-found / 跳过 WSL 存根）并指路手填',
+    String(stubError && stubError.message).indexOf('win') >= 0
+    && (String(stubError && stubError.message).indexOf('no-git-found') >= 0 || String(stubError && stubError.message).indexOf('WSL') >= 0))
+
+  /* 伪装的 WSL bash（自报 pc-linux-gnu）：就算混进候选也被 --version 那一问挡下。 */
+  const linuxEngine = makeEngine({
+    remoteDialect: () => 'cmd',
+    whereGit: 'D:\\soft\\Git\\cmd\\git.exe\n',
+    versions: {
+      'D:\\soft\\Git\\cmd\\bin\\bash.exe': null,
+      [GOOD_BASH]: 'GNU bash, version 5.1.16(1)-release (x86_64-pc-linux-gnu)\n',
+      'D:\\soft\\bin\\bash.exe': null,
+      'D:\\bin\\bash.exe': null,
+    },
+  })
+  const c = makeBody(linuxEngine)
+  let linuxError = null
+  await c.H('git/panel')({ sessionId: 's-1', repo: SSH_PROJ }).then(null, function (error) { linuxError = error })
+  check('自报 pc-linux-gnu 的假 bash 被版本问挡下（试过候选后拒绝）',
+    linuxError !== null && linuxEngine.calls.probes.indexOf(GOOD_BASH) >= 0
+    && String(linuxError && linuxError.message).indexOf('no-bash-found') >= 0)
+}
+
+console.log('')
+console.log('=== 手填优先与缓存作废 ===')
+{
+  const engine = makeEngine({ remoteDialect: () => 'cmd', whereGit: 'D:\\soft\\Git\\cmd\\git.exe\n' })
+  const a = makeBody(engine)
+  /* 先让自动发现把缓存填上。 */
+  const first = await a.H('git/panel')({ sessionId: 's-1', repo: SSH_PROJ })
+  check('（铺垫）自动发现就绪，读成功', first.ok === true && engine.calls.probes.length > 0)
+  const saved = await a.H('git/config-save')({ sessionId: 's-1', config: {
+    initBranch: 'main', cherryPickRecord: false, gitPath: '', remoteBashPath: 'D:\\my\\own\\bash.exe',
+    fetchPrune: true, pullRebase: false, pushSetUpstream: false, repos: {}, repoDirs: {},
+    quickCommands: [], drafts: {}, worktreeMains: {}, appliedRepos: {}, worktreeDirMappings: [],
+    branchHistory: { defaultOn: false, maxSessions: 20, workspaces: {} }, branchPrompts: {}, branchSessions: {},
+  } })
+  check('remoteBashPath 能存进配置（cmd 不认的字符被清掉留下原文）',
+    saved.ok === true && saved.config.remoteBashPath === 'D:\\my\\own\\bash.exe')
+  const after = await a.H('git/panel')({ sessionId: 's-1', repo: SSH_PROJ })
+  const afterWrap = engine.calls.wraps[engine.calls.wraps.length - 1]
+  check('配置改动作废缓存：下一读改用手填的 bash',
+    after.ok === true && afterWrap.bash === 'D:\\my\\own\\bash.exe')
+  const snap = await a.H('git/remote-transport')({ sessionId: 's-1' })
+  check('快照标出 source=config', snap.ok === true && snap.bash === 'D:\\my\\own\\bash.exe' && snap.source === 'config')
+  /* 手填的探测失败也要说人话。 */
+  const badEngine = makeEngine({
+    remoteDialect: () => 'cmd',
+    versions: { 'D:\\broken\\bash.exe': null },
+  })
+  const c = makeBody(badEngine)
+  await c.H('git/config-save')({ sessionId: 's-1', config: {
+    initBranch: 'main', cherryPickRecord: false, gitPath: '', remoteBashPath: 'D:\\broken\\bash.exe',
+    fetchPrune: true, pullRebase: false, pushSetUpstream: false, repos: {}, repoDirs: {},
+    quickCommands: [], drafts: {}, worktreeMains: {}, appliedRepos: {}, worktreeDirMappings: [],
+    branchHistory: { defaultOn: false, maxSessions: 20, workspaces: {} }, branchPrompts: {}, branchSessions: {},
+  } })
+  const badSnap = await c.H('git/remote-transport')({ sessionId: 's-1' })
+  check('手填的 bash 探测不过：reason=configured-bash-missing，detail 说清现场',
+    badSnap.ok === true && badSnap.remote === true && badSnap.bash === ''
+    && badSnap.reason === 'configured-bash-missing' && String(badSnap.detail).indexOf('D:\\broken\\bash.exe') >= 0)
+  let badError = null
+  await c.H('git/panel')({ sessionId: 's-1', repo: SSH_PROJ }).then(null, function (error) { badError = error })
+  check('读不再落成「不是仓库」：拒绝话带着同样的原因',
+    badError !== null && String(badError.message).indexOf('configured-bash-missing') >= 0)
+}
+
+console.log('')
+console.log('=== stdin 数据随行：conflict-save 的 cat > 写回（真冲突现场） ===')
+{
+  /* 在假远端仓库里铺一场真冲突：side 分支改 f1.txt，main 也改，merge 撞出 unmerged。 */
+  await sh(`cd ${R} && git checkout -qb side main~1 && echo side > f1.txt && git add -A && git commit -qm side1
+git checkout -q main && echo main > f1.txt && git add -A && git commit -qm main2 && git merge -q side || true
+git ls-files -u | head -3`, '/tmp')
+  const unmerged = await sh('git ls-files -u -- f1.txt', R)
+  check('（铺垫）f1.txt 真的处于 unmerged', unmerged.out.trim().length > 0)
+  const engine = makeEngine({ remoteDialect: () => 'cmd', whereGit: 'D:\\soft\\Git\\cmd\\git.exe\n' })
+  const a = makeBody(engine)
+  const saved = await a.H('git/conflict-save')({ sessionId: 's-1', repo: SSH_PROJ, path: 'f1.txt', content: 'resolved-by-通道\n' })
+  check('conflict-save 经通道写回成功（stdin 过 cat >，内容一字节不差）',
+    saved.ok === true && (await sh('cat ' + R + '/f1.txt', '/tmp')).out === 'resolved-by-通道\n')
+  const staged = await sh('git status --porcelain -- f1.txt', R)
+  check('写回后 git add 已把冲突标成已解决（状态是 M 不是 U）',
+    staged.out.trim().indexOf('M ') === 0)
+  await sh(`cd ${R} && git merge --abort 2>/dev/null || true; git checkout -q main`, '/tmp')
+}
+
+console.log('')
+console.log('=== 会话只读：远程命令拒绝，口径与 mode-gate 一致 ===')
+{
+  const engine = makeEngine({ remoteDialect: () => 'cmd', whereGit: 'D:\\soft\\Git\\cmd\\git.exe\n' })
+  const a = makeBody(engine, { sandboxPolicy: { resolve: () => ({ mode: 'read-only' }) } })
+  let roError = null
+  await a.H('git/panel')({ sessionId: 's-1', repo: SSH_PROJ }).then(null, function (error) { roError = error })
+  check('read-only 会话拒绝远程命令（不进通道），拒绝里说清怎么解锁',
+    roError !== null && roError.sandboxDenied === true
+    && String(roError.message).indexOf('read-only') >= 0
+    && String(roError.message).indexOf('workspace-write') >= 0
+    && engine.calls.channels.length === 0)
+  const unknownMode = makeBody(engine, { sandboxPolicy: { resolve: () => ({ mode: 'future-mode' }) } })
+  let fmError = null
+  await unknownMode.H('git/panel')({ sessionId: 's-1', repo: SSH_PROJ }).then(null, function (error) { fmError = error })
+  check('认不得的模式从严拒绝（本地沙箱同款口径）',
+    fmError !== null && fmError.sandboxDenied === true && String(fmError.message).indexOf('future-mode') >= 0)
+}
+
+console.log('')
+console.log('=== 配置归一化：ssh:// 键照常存取，语义不变 ===')
+{
+  const engine = makeEngine({ remoteDialect: () => 'cmd', whereGit: 'D:\\soft\\Git\\cmd\\git.exe\n' })
+  const a = makeBody(engine)
+  const config = {
+    initBranch: 'main', cherryPickRecord: false, gitPath: '', remoteBashPath: '',
+    fetchPrune: true, pullRebase: false, pushSetUpstream: false,
+    quickCommands: [], worktreeDirMappings: [],
+    branchHistory: { defaultOn: false, maxSessions: 20, workspaces: {} }, branchPrompts: {}, branchSessions: {},
+    repos: { [SSH_PROJ]: ['ssh://win/D:/code/proj', '/local/repo', 'relative/junk'] },
+    appliedRepos: { [SSH_PROJ]: 'ssh://win/D:/code/proj', '/local/ws': '/local/repo' },
+    drafts: { 'ssh://win/D:/code/proj': '远程仓库的草稿', '/local/repo': '本地草稿' },
+    worktreeMains: { 'ssh://win/D:/code/wt': 'ssh://win/D:/code/proj' },
+  }
+  const saved = await a.H('git/config-save')({ sessionId: 's-1', config: config })
+  check('ssh:// 键与值原样落盘（不再被「必须以 / 开头」静默丢掉）',
+    saved.ok === true && saved.config.repos[SSH_PROJ][0] === 'ssh://win/D:/code/proj'
+    && saved.config.appliedRepos[SSH_PROJ] === 'ssh://win/D:/code/proj'
+    && saved.config.drafts['ssh://win/D:/code/proj'] === '远程仓库的草稿'
+    && saved.config.worktreeMains['ssh://win/D:/code/wt'] === 'ssh://win/D:/code/proj')
+  check('本地路径键照旧，非路径键照旧拒（relative/junk 丢）',
+    saved.config.repos[SSH_PROJ][1] === '/local/repo' && saved.config.repos[SSH_PROJ].length === 2
+    && saved.config.drafts['/local/repo'] === '本地草稿')
+  const readBack = await a.H('git/draft-read')({ sessionId: 's-1', repo: SSH_PROJ })
+  check('draft-read 按远程仓库键答草稿', readBack.ok === true && readBack.message === '远程仓库的草稿')
+  const applied = await a.H('git/repo-applied-save')({ sessionId: 's-1', repo: 'ssh://win/D:/code/other' })
+  check('repo-applied-save 在远程工作区存得进（工作区键是 ssh:// 拼法）',
+    applied.ok === true && (await a.H('git/repo-applied')({ sessionId: 's-1' })).repo === 'ssh://win/D:/code/other')
+}
+
+console.log('')
+console.log('=== git/remote-transport 的其余答案 ===')
+{
+  const engine = makeEngine({ remoteDialect: () => 'cmd', whereGit: 'D:\\soft\\Git\\cmd\\git.exe\n' })
+  const a = makeBody(engine, { sessions: { get: () => ({ header: { cwd: POSIX_R } }) } })
+  const local = await a.H('git/remote-transport')({ sessionId: 's-9' })
+  check('本地会话：remote=false（这一组只在远程会话里有答案）',
+    local.ok === true && local.remote === false)
+  const posix = makeBody(makeEngine({ remoteDialect: () => 'posix' }), {
+    sessions: { get: () => ({ header: { cwd: SSH_POSIX_R } }) },
+  })
+  const posixSnap = await posix.H('git/remote-transport')({ sessionId: 's-8' })
+  check('POSIX 远端：dialect=posix，说明不需要通道',
+    posixSnap.ok === true && posixSnap.remote === true && posixSnap.dialect === 'posix'
+    && String(posixSnap.detail).indexOf('POSIX') >= 0)
+}
+
+if (failed > 0) {
+  console.error('gp84-remote-host: ' + String(failed) + ' check(s) failed')
+  process.exit(1)
+}

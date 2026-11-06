@@ -1,6 +1,6 @@
 {
   "name": "dsh-git-idea",
-  "version": "0.2.9",
+  "version": "0.3.0",
   "description": "A git plugin for DSH modelled on IDEA's VCS: a git icon beside the permission mode in the composer with the branch and pending-change count, a branch switcher on hover, an IDEA-style VCS panel on click, and a config tab with project and global scopes. Registers no model tools.",
   "type": "module",
   "main": "dist/lib/index.js",
