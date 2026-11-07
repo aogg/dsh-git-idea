@@ -43,6 +43,7 @@ export const TARGETS = [
       'src/host/79-live-watch.js',
       'src/host/79b-file-save.js',
       'src/host/79c-branchhistory.js',
+      'src/host/79d-expose.js',
       'src/host/80-rpc.js',
     ],
   },
