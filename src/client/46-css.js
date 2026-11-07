@@ -926,6 +926,38 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-toast:hover .dsh-git-toast-msg{-webkit-line-clamp:unset}
 .dsh-git-toast-stack{display:none;margin:6px 0 0;padding:6px;max-height:180px;overflow:auto;border-radius:6px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-secondary);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:16px;white-space:pre-wrap;word-break:break-all}
 .dsh-git-toast:hover .dsh-git-toast-stack{display:block}
+/* GitHub Actions 页签（71-gh-pane.js）：顶部一行（⟳ + 授权/配额说明）、过滤 chips、
+    runs 列表行与状态徽标、设备码授权的展示块。徽标色相沿用 diff 带子那套 RGB 的
+    透明底做法（状态语义：绿=成功 红=失败/超时 蓝=运行 黄=排队 灰=取消/跳过）。 */
+.dsh-git-gh{display:flex;flex-direction:column;gap:6px;overflow:auto;padding:10px 12px}
+.dsh-git-gh-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.dsh-git-gh-auth{font-size:11px;line-height:16px}
+.dsh-git-gh-auth-ok{color:var(--dsw-alias-state-success-primary,#3fb950)}
+.dsh-git-gh-auth-no{color:var(--dsw-alias-label-secondary)}
+.dsh-git-gh-authrow{display:flex;align-items:center;gap:8px}
+.dsh-git-gh-problem{padding:6px 8px;border:1px solid var(--dsw-alias-border-l1);border-left:3px solid var(--dsw-alias-state-error-primary);border-radius:6px;color:var(--dsw-alias-label-primary);font-size:11px;line-height:16px;white-space:pre-wrap}
+.dsh-git-gh-chips{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.dsh-git-gh-chip{border:none;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);font-family:inherit;font-size:10px;line-height:16px;padding:1px 8px;border-radius:999px;cursor:pointer;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.dsh-git-gh-chip:hover{color:var(--dsw-alias-label-primary)}
+.dsh-git-gh-chip-on{background:var(--dsw-alias-brand-primary);color:#fff}
+.dsh-git-gh-list{display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;overflow:hidden}
+.dsh-git-gh-row{display:flex;align-items:center;gap:8px;padding:5px 10px;border:none;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-family:inherit;font-size:11px;line-height:16px;text-align:left;cursor:pointer}
+.dsh-git-gh-row:last-child{border-bottom:none}
+.dsh-git-gh-row:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dsh-git-gh-badge{flex:none;display:inline-grid;place-items:center;min-width:38px;height:16px;padding:0 6px;border-radius:999px;font-size:10px;line-height:1}
+.dsh-git-gh-badge-ok{background:rgba(63,185,80,.16);color:var(--dsw-alias-state-success-primary,#3fb950)}
+.dsh-git-gh-badge-fail{background:rgba(214,69,69,.16);color:var(--dsw-alias-state-error-primary)}
+.dsh-git-gh-badge-run{background:rgba(74,125,207,.18);color:var(--dsw-alias-state-info-primary,#58a6ff)}
+.dsh-git-gh-badge-queue{background:rgba(214,160,34,.16);color:var(--dsw-alias-state-warning-primary,#d6a022)}
+.dsh-git-gh-badge-cancel,.dsh-git-gh-badge-skip{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}
+.dsh-git-gh-row-name{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.dsh-git-gh-row-meta{flex:none;color:var(--dsw-alias-label-secondary);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px}
+.dsh-git-gh-row-sha{opacity:.8}
+.dsh-git-gh-row-time{flex:none;margin-left:auto;color:var(--dsw-alias-label-secondary);font-size:10px;white-space:nowrap}
+.dsh-git-gh-device{display:flex;flex-direction:column;gap:4px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px}
+.dsh-git-gh-device-code{display:flex;align-items:center;gap:8px}
+.dsh-git-gh-usercode{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:16px;font-weight:600;letter-spacing:2px;color:var(--dsw-alias-label-primary)}
+.dsh-git-gh-device-open,.dsh-git-gh-device-go{display:flex;align-items:center;gap:8px}
 `)
     }, 'dsh-git-idea panel styles')
 

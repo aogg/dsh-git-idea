@@ -131,6 +131,19 @@
          判定、永久记录」的账就全没了 —— 下一次读全都重新探测。原样搬运、不做
          清洗 —— 清洗是 Host 那边 normalizeRemoteTransports 的职责。 */
       remoteTransports: {},
+      /* ── GitHub Actions（面板「Actions」页签，客户端 71-gh-pane.js / host
+          71-gh-http.js）。五格与 repos 同一条先例：ghToken 在客户端永远只有哨兵
+          {saved:true, tail:'abcd4'} 或空串（真值只住 Host 那份 dsh-git-idea.json，
+          git/config 的答复里就被换掉了）；ghOAuthClientId / ghProxy 是读者手填的
+          两格文本；ghRepos（工作区 → "owner/repo" 覆盖）与 ghWorkflows（工作区 →
+          yaml 路径数组）照 appliedRepos 的 map 形状。全部原样搬运、不做清洗 ——
+          清洗是 Host 那边 cleanGhToken / normalizeGhRepos / normalizeGhWorkflows
+          的职责。 */
+      ghToken: '',
+      ghOAuthClientId: '',
+      ghProxy: '',
+      ghRepos: {},
+      ghWorkflows: {},
     }
     let pluginConfig = Object.assign({}, PLUGIN_CONFIG_DEFAULTS)
     let pluginConfigPath = ''
@@ -183,6 +196,16 @@
       out.branchSessions = raw.branchSessions != null && typeof raw.branchSessions === 'object' && !Array.isArray(raw.branchSessions) ? raw.branchSessions : {}
       /* remoteTransports 同 branchSessions 一条先例：原样搬运，Host 那边负责清洗。 */
       out.remoteTransports = raw.remoteTransports != null && typeof raw.remoteTransports === 'object' && !Array.isArray(raw.remoteTransports) ? raw.remoteTransports : {}
+      /* GitHub Actions 五格同 remoteTransports 一条先例：原样搬运。ghToken 特别的
+         一句：它可能是哨兵对象（{saved:true, tail}）—— 那正是「宿主存着 token」的
+         样子，照原样收下，保存整份配置时再原样传回，宿主见到哨兵就保留旧值。 */
+      const ghTokenRaw = raw.ghToken
+      out.ghToken = typeof ghTokenRaw === 'string' ? ghTokenRaw
+        : (ghTokenRaw != null && typeof ghTokenRaw === 'object' && !Array.isArray(ghTokenRaw) ? ghTokenRaw : '')
+      out.ghOAuthClientId = typeof raw.ghOAuthClientId === 'string' ? raw.ghOAuthClientId : ''
+      out.ghProxy = typeof raw.ghProxy === 'string' ? raw.ghProxy : ''
+      out.ghRepos = raw.ghRepos != null && typeof raw.ghRepos === 'object' && !Array.isArray(raw.ghRepos) ? raw.ghRepos : {}
+      out.ghWorkflows = raw.ghWorkflows != null && typeof raw.ghWorkflows === 'object' && !Array.isArray(raw.ghWorkflows) ? raw.ghWorkflows : {}
       return out
     }
 

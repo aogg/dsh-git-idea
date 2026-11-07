@@ -95,6 +95,16 @@ function normalizeConfig(raw) {
        探测。跟 repos / appliedRepos 同一个理由放这份配置而不是进程内存：它描述的是
        「那台远端是什么机器」，换会话、换浏览器、重启部署都还是同一个答案。 */
     remoteTransports: {},
+    /* ── GitHub Actions（客户端 71-gh-pane.js / host 71-gh-http.js）──
+       ghToken 只住这份文件（客户端只见哨兵 {saved:true, tail}，见 71-gh-http.js 的
+       ghConfigForClient / ghMergeSentinelToken）；ghOAuthClientId 是设备码「网页授权」
+       用的 OAuth App Client ID；ghProxy 本版本是占位（空 = 直连，说明见 71-gh-http.js
+       顶部）。ghRepos（工作区 → "owner/repo" 覆盖，可看别的仓库）与 ghWorkflows
+       （工作区 → yaml 路径数组，客户端过滤 runs 用）与 appliedRepos 同一条先例：
+       键值清洗归 Host（normalizeGhRepos / normalizeGhWorkflows），客户端原样搬运。 */
+    ghToken: '', ghOAuthClientId: '', ghProxy: '',
+    ghRepos: {},
+    ghWorkflows: {},
   }
   if (raw == null || typeof raw !== 'object') return out
   if (isStr(raw.initBranch)) out.initBranch = raw.initBranch.trim().slice(0, 120)
@@ -121,6 +131,14 @@ function normalizeConfig(raw) {
   out.branchPrompts = normalizeBranchPrompts(raw.branchPrompts)
   out.branchSessions = normalizeBranchSessions(raw.branchSessions)
   out.remoteTransports = normalizeRemoteTransports(raw.remoteTransports)
+  /* GitHub Actions 的五格（71-gh-http.js）。ghToken 这里只收字符串 —— 客户端传回的
+     哨兵对象在 writeConfigFile 里已被 ghMergeSentinelToken 换回真值（或空），到不了
+     这一步的非字符串一律当没有。 */
+  out.ghToken = cleanGhToken(raw.ghToken)
+  out.ghOAuthClientId = cleanGhClientId(raw.ghOAuthClientId)
+  out.ghProxy = cleanGhProxy(raw.ghProxy)
+  out.ghRepos = normalizeGhRepos(raw.ghRepos)
+  out.ghWorkflows = normalizeGhWorkflows(raw.ghWorkflows)
   return out
 }
 
@@ -454,7 +472,11 @@ async function readConfigFile() {
 async function writeConfigFile(raw, args) {
   const path = await configPath()
   if (path === null) return { ok: false, error: '无法确定配置目录', stderr: '读不出部署的配置目录' }
-  const next = normalizeConfig(raw)
+  /* 哨兵合并（71-gh-http.js 的 ghMergeSentinelToken）必须在 normalizeConfig 之前：
+     客户端整份保存的配置里 ghToken 若是 {saved:true, tail} 哨兵，这里要换成
+     configCache 里的真值，normalizeConfig 才收得到字符串 —— 哨兵对象本身活不过
+     normalizeConfig 那一道（非字符串一律当没有），先换再洗。 */
+  const next = normalizeConfig(ghMergeSentinelToken(raw))
   try {
     /* `mkdir -p` 先来一次：`DSH_HOME` 可以指到一个还不存在的目录，而重定向不会替
        你建目录。`printf %s` 而不是 heredoc —— 值里可能有引号、反斜杠、换行，`shq`

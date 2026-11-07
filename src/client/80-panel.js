@@ -1417,6 +1417,47 @@
         savePluginConfig(next)
       }
 
+      /* ── 「GitHub Actions」组（项目档）的草稿与保存 ──
+
+         两格都按生效仓库（props.effective，appliedRepos 的同一个键口径）分键：
+         ghRepos[workspace] = "owner/repo" 覆盖（看别的仓库的 Actions 用），
+         ghWorkflows[workspace] = yaml 路径数组（页签里的过滤 chips，runs 按
+         run.path 等值过滤）。草稿用 null 表示「还没动过」—— 框里显示配置里已存
+         的那份；Blur/Enter 才落盘（setPlugin 有 400ms 去抖，这里只管别把没打完的
+         字写进去）。形状的清洗归宿主（71-gh-http.js 的 normalizeGhRepos / 
+         normalizeGhWorkflows），这里原样搬运 —— 非法的值下一轮配置读回时就被
+         清掉了（「原样搬运、清洗归 Host」的项目铁律）。 */
+      const ghWorkspace = effective
+      const ghSaved = ghOverrideOfConfig(plugin, ghWorkspace)
+      const [ghRepoDraft, setGhRepoDraft] = React.useState(null)
+      const ghWorkflowsSaved = ghWorkflowsOfConfig(plugin, ghWorkspace)
+      const [ghWfDraft, setGhWfDraft] = React.useState(null)
+      const saveGhRepo = function () {
+        const value = (ghRepoDraft != null ? ghRepoDraft : ghSaved).trim()
+        if (value === ghSaved) return
+        const map = plugin.ghRepos != null && typeof plugin.ghRepos === 'object' && !Array.isArray(plugin.ghRepos)
+          ? Object.assign({}, plugin.ghRepos) : {}
+        if (value.length === 0) delete map[ghWorkspace]
+        else map[ghWorkspace] = value
+        setPlugin('ghRepos', map)
+      }
+      const saveGhWorkflows = function () {
+        const text = (ghWfDraft != null ? ghWfDraft : ghWorkflowsSaved.join(', '))
+        const list = []
+        const parts = text.split(/[\s,]+/)
+        for (let i = 0; i < parts.length; i += 1) {
+          const one = parts[i]
+          if (ghIsStr(one) && one.length > 0 && list.indexOf(one) < 0) list.push(one)
+        }
+        const same = list.length === ghWorkflowsSaved.length && ghWorkflowsSaved.every(function (one, i) { return one === list[i] })
+        if (same === true) return
+        const map = plugin.ghWorkflows != null && typeof plugin.ghWorkflows === 'object' && !Array.isArray(plugin.ghWorkflows)
+          ? Object.assign({}, plugin.ghWorkflows) : {}
+        if (list.length === 0) delete map[ghWorkspace]
+        else map[ghWorkspace] = list
+        setPlugin('ghWorkflows', map)
+      }
+
       /* 全局配置 GitIdentityGroup 的 source() 同款：值 + 它来自哪个文件。 */
       const source = function (value, origin) {
         const one = text(value)
@@ -1971,6 +2012,44 @@
               h(GitIgnoredScanGroup, {
                 key: 'ignored-scan', sessionId: sessionId,
                 repos: targetRepo.length > 0 ? [targetRepo] : [], labels: cfgLabels })))),
+
+        /* ── 「GitHub Actions」组（插件级，键跟着生效仓库走）：ghRepos 覆盖与
+           ghWorkflows 过滤清单。放在「仓库」组外框之后、页尾 —— 它的键是**生效
+           仓库**（面板正在看的那个，带 ● 的行），与本页编辑目标（pick）是两回事，
+           不收进外框；也不往身份组前面插（页面前半是身份/远端的既有输入顺序，
+           gp49 按前两个 input 断言）。 */
+        h('div', { className: 'dsh-git-set-group' },
+          'GitHub Actions' + (targetShortName.length > 0 ? '（生效仓库 ' + targetShortName + '）' : '')),
+        h('div', { className: 'dsh-git-set-hint' },
+          '「Actions」页签读哪个仓库的运行记录：默认取 origin（要是 github.com）；在下面填 owner/repo（或整条 https / git@ / ssh:// 地址，面板记下的是 owner/repo 两段）就能看**别的**仓库的 Actions —— 配了覆盖的仓库不问 origin。留空 = 跟随 origin。'),
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '仓库覆盖'),
+          h('input', {
+            className: 'dsh-git-input dsh-git-set-input',
+            placeholder: 'owner/repo（如 mays-hi/dsh-git-idea）',
+            value: ghRepoDraft != null ? ghRepoDraft : ghSaved,
+            disabled: ghWorkspace.length === 0,
+            onChange: function (event) { setGhRepoDraft(event.target.value) },
+            onBlur: saveGhRepo,
+            onKeyDown: function (event) { if (event.key === 'Enter') saveGhRepo() },
+          }),
+          ghSaved.length > 0 ? h('span', { className: 'dsh-git-set-hint' }, '已配覆盖：' + ghSaved) : null),
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '只看这些 workflow'),
+          h('input', {
+            className: 'dsh-git-input dsh-git-set-input',
+            placeholder: ghWorkflowsSaved.length > 0 ? '逗号或空格分隔，留空 = 全部' : '.github/workflows/ci.yml, .github/workflows/release.yml',
+            value: ghWfDraft != null ? ghWfDraft : ghWorkflowsSaved.join(', '),
+            disabled: ghWorkspace.length === 0,
+            title: '填 workflow 的 yaml 路径；页签顶部会按这份清单给过滤 chips，runs 按 run.path 等值过滤，不发额外请求',
+            onChange: function (event) { setGhWfDraft(event.target.value) },
+            onBlur: saveGhWorkflows,
+            onKeyDown: function (event) { if (event.key === 'Enter') saveGhWorkflows() },
+          })),
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, ''),
+          h('span', { className: 'dsh-git-set-hint' },
+            '按生效仓库分键保存（换浏览器一致）；清空即删除该键。授权（token）在全局配置档的「GitHub 授权」组里。')),
 
         note.length > 0 ? h('div', { className: 'dsh-git-set-row dsh-git-set-hint' }, note) : null,
         problem.length > 0 ? h('div', { className: 'dsh-git-set-row dsh-git-error' }, problem) : null)
@@ -3076,6 +3155,34 @@
          git/wt-main-save 那边（配置页保存）在 Host 侧已按 tag 失效 'wt-main' 一格，
          这里保存成功后 props.onChanged() → bump() 推 freshAt，effect 重读拿到的必是
          新账。 */
+      /* ── GitHub Actions 页签的显示判定（71-gh-pane.js）──
+
+         origin 是不是 github.com 要问远端（git/remotes，74-identity.js 的
+         remotesSnapshot：一条 `git remote -v`，Host 不缓存）；ghRepos 里这个工作区
+         配了 owner/repo 覆盖时无条件显示，不用问。判定是打开页签之前的事，所以这
+         条读挂在面板级（仓库一换就重问），不是页签挂了才读 —— 那样按钮永远等不到
+         该不该出现的答案。 */
+      const [ghRemoteSnap, setGhRemoteSnap] = React.useState(null)
+      React.useEffect(function () {
+        if (!repoOk || props.ready !== true) return undefined
+        let alive = true
+        setGhRemoteSnap(null)
+        callHost('git/remotes', base(appliedRepo)).then(function (data) {
+          if (alive !== true) return
+          setGhRemoteSnap(data)
+        }, function () {
+          if (alive !== true) return
+          setGhRemoteSnap({ ok: false, insideRepo: false, remotes: [] })
+        })
+        return function () { alive = false }
+      }, [appliedRepo, repoOk, sessionId, props.ready])
+      /* 「Actions」页签的显示判定：ghRepos 里这个工作区配了覆盖就无条件显示；
+         否则要 origin 是 github.com（ghRemotesHaveGithub 读上面那条 git/remotes
+         答复）。远端还没读到时不显示 —— 按钮晚到一帧没关系，不该出现的按钮先闪
+         一下才有关系。声明跟着 ghRemoteSnap 走（先声明后使用，TDZ 教过一遍了）。 */
+      const ghTabVisible = ghOverrideOfConfig(plugin, effectiveRepo).length > 0
+        || (ghRemoteSnap != null && ghRemoteSnap.ok === true && ghRemoteSnap.insideRepo === true
+          && ghRemotesHaveGithub(ghRemoteSnap.remotes))
       const [wtMain, setWtMain] = React.useState(null)
       React.useEffect(function () {
         if (!repoOk || props.ready !== true) return undefined
@@ -5003,7 +5110,15 @@
                  插件与这台机器 —— 原先 DSH 设置面板里的那一页搬到了这里。 */
               h('button', { type: 'button', className: 'dsh-git-tab' + (tab === 'config' ? ' dsh-git-tab-on' : ''),
                 title: '项目配置与全局配置：项目管眼前这个仓库（会话完成后自动刷新/推送、提交身份、换行符与远端），全局管插件与这台机器（初始化分支、远程同步、快捷命令、git 位置、提交身份、本浏览器外观）',
-                onClick: function () { setTab('config'); setDiffTarget(null); setMergeTarget(null) } }, '配置')),
+                onClick: function () { setTab('config'); setDiffTarget(null); setMergeTarget(null) } }, '配置'),
+              /* GitHub Actions：只在「origin 是 github.com」或「ghRepos 配了覆盖」时
+                 出现（ghTabVisible，判定在上面的 ghRemoteSnap 那块）。切页签同样
+                 收起 diff 与合并的钻下 —— 与其它四个按钮同一套手势。 */
+              ghTabVisible === true
+                ? h('button', { type: 'button', className: 'dsh-git-tab' + (tab === 'gh' ? ' dsh-git-tab-on' : ''),
+                  title: 'GitHub Actions：这个仓库（或项目配置里覆盖的仓库）的 workflow 运行记录',
+                  onClick: function () { setTab('gh'); setDiffTarget(null); setMergeTarget(null) } }, 'Actions')
+                : null),
         needsSetup ? null : syncGroup,
         needsSetup ? null : branchChip,
         h('span', { key: 'grow', className: 'dsh-git-grow' }),
@@ -5307,6 +5422,13 @@
              生效仓库 —— 都从这里递进去，配置页自己不再解一遍。 */
           repoList: repoList, effective: effectiveRepo,
           onChanged: function () { bump() },
+        })
+      } else if (tab === 'gh') {
+        /* GitHub Actions（71-gh-pane.js）：懒加载就是它自己 —— 组件挂载才发
+           git/gh-actions，未授权时连这条也不发（页内只有手动 ⟳）。 */
+        body = h(GhActionsPane, {
+          sessionId: sessionId, effective: effectiveRepo,
+          sessionAware: props.sessionAware === true,
         })
       } else {
         /* ── 右栏（CommitDetail）的窄屏折叠：三种形态，宽屏只有第三种 ──

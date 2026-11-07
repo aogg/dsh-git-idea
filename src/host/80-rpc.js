@@ -145,7 +145,9 @@ onRpc('git/flush', function (input) {
 onRpc('git/config', function () {
   return configPath().then(function (path) {
     return readConfigFile().then(function (config) {
-      return { ok: true, path: path, config: config }
+      /* ghToken 哨兵化（71-gh-http.js 的 ghConfigForClient）：浏览器只见
+         {saved:true, tail}，真值一个字符都不出宿主。 */
+      return { ok: true, path: path, config: ghConfigForClient(config) }
     })
   })
 })
@@ -153,8 +155,16 @@ onRpc('git/config', function () {
 onRpc('git/config-save', function (input) {
   /* 带上会话：这份文件在任何工作区之外，写它的策略来自这个会合（`sandboxFor`）。
      没有会话时拿到的是部署默认那份（workspace-write），写到 ~/.dsh 会被拒 —— 而现在
-     被拒会在答复里说出来，不再是一个安静的 no-op。 */
-  return writeConfigFile(input != null ? input.config : null, argsAt(input, null))
+     被拒会在答复里说出来，不再是一个安静的 no-op。客户端传回的 ghToken 哨兵在
+     writeConfigFile 里换回真值（71-gh-http.js 的 ghMergeSentinelToken）；答复里的
+     config 同样哨兵化 —— adoptPluginConfig 拿它更新内存里的整份配置，真值不能
+     跟着答复漏出去。 */
+  return writeConfigFile(input != null ? input.config : null, argsAt(input, null)).then(function (result) {
+    if (result != null && result.ok === true && result.config != null) {
+      return Object.assign({}, result, { config: ghConfigForClient(result.config) })
+    }
+    return result
+  })
 })
 
 /* 提交信息草稿（70-config.js 的 drafts）：按生效仓库的根路径一仓一份，读改写都
@@ -230,6 +240,16 @@ onRpc('git/global-config-save', function (input) { return globalConfigSave(input
 onRpc('git/remotes', function (input) { return remotesSnapshot(input) })
 
 onRpc('git/remotes-save', function (input) { return remotesSave(input) })
+
+/* GitHub Actions（71-gh-http.js）：runs 的一次读取（owner/repo 按「ghRepos 覆盖 →
+   origin 解析」定，带不带 token 都照发，错误已归类）与设备码两条 github.com 端点的
+   单次转发。三条都是设置/读类的动作，不进「命令」页（identity-save 同一个先例）；
+   轮询节奏由浏览器的用户操作驱动，宿主没有定时器也没有后台循环。 */
+onRpc('git/gh-actions', function (input) { return ghActionsSnapshot(input) })
+
+onRpc('git/gh-device-start', function (input) { return ghDeviceStart(input) })
+
+onRpc('git/gh-device-poll', function (input) { return ghDevicePoll(input) })
 
 /* Never cached: its whole purpose is to observe change. `paths` narrows the
    working-tree half of the signature to what is on screen — see watchCommand for

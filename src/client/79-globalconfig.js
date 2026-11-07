@@ -130,6 +130,92 @@
        每一行命令都以同一个词开头，而那个词默认来自部署的 PATH。装在不在这条 PATH 上的
        地方（Homebrew 前缀、IDE 自带的 git、nix profile）时，面板以前只会说「这台机器
        上找不到 git」—— 既是错的，也没给出下一步。所以它是个设置。 */
+    /* ── GitHub 授权（全局档的一组）：token 与设备码「网页授权」的入口 ──
+
+       ghToken 手贴（fine-grained 或 classic PAT），也可以在「Actions」页签里走设备
+       码流程（那需要先配 OAuth App 的 Client ID）。token 的存储与展示都在宿主那半
+       （71-gh-http.js 的哨兵约定）：这一格的输入框只收「新贴的值」—— 框里是空的
+       就什么都不写，配置里现有的 token（客户端只见哨兵）原样留着；「清除授权」才
+       把空串写进去。两个都空 = 未授权，Actions 页签就只剩匿名能看的那部分。 */
+    function GitGhAuthGroup() {
+      const plugin = usePluginConfig()
+      const [tokenDraft, setTokenDraft] = React.useState('')
+      const [clientDraft, setClientDraft] = React.useState(
+        plugin != null && typeof plugin.ghOAuthClientId === 'string' ? plugin.ghOAuthClientId : '')
+      const [proxyDraft, setProxyDraft] = React.useState(
+        plugin != null && typeof plugin.ghProxy === 'string' ? plugin.ghProxy : '')
+      React.useEffect(function () {
+        setClientDraft(plugin != null && typeof plugin.ghOAuthClientId === 'string' ? plugin.ghOAuthClientId : '')
+      }, [plugin != null ? plugin.ghOAuthClientId : ''])
+      React.useEffect(function () {
+        setProxyDraft(plugin != null && typeof plugin.ghProxy === 'string' ? plugin.ghProxy : '')
+      }, [plugin != null ? plugin.ghProxy : ''])
+
+      const setPluginKey = function (key, value) {
+        const next = Object.assign({}, plugin)
+        next[key] = value
+        savePluginConfig(next)
+      }
+      const commitToken = function (value) {
+        setTokenDraft(value)
+        /* 只有真贴了内容才写：空串不是「清空 token」的意思（那有专门的按钮）——
+           不然归一化把哨兵顶掉，一次误触的退格就把授权抹了。 */
+        if (value.trim().length > 0) setPluginKey('ghToken', value.trim())
+      }
+      const authorized = ghTokenAuthorized(plugin)
+      const tail = ghTokenTail(plugin)
+
+      return h('div', null,
+        h('div', { className: 'dsh-git-set-group' }, 'GitHub 授权'),
+        h('div', { className: 'dsh-git-set-hint' },
+          '「Actions」页签用它读 GitHub API：未授权也能看公共仓库（匿名 60 次/小时），授权后 5000 次/小时，私有仓库只有授权后读得到。'),
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, '令牌（PAT）'),
+          h('input', {
+            className: 'dsh-git-input dsh-git-set-input',
+            placeholder: authorized === true
+              ? '已保存（尾号 ' + (tail.length > 0 ? tail : '----') + '）—— 贴新 token 覆盖'
+              : '贴 GitHub PAT（fine-grained 或 classic）',
+            value: tokenDraft,
+            onChange: function (event) { commitToken(event.target.value) },
+          }),
+          authorized === true
+            ? h('button', {
+              type: 'button', className: 'dsh-git-btn',
+              title: '删掉已保存的 token，回到未授权（匿名）',
+              onClick: function () { setTokenDraft(''); setPluginKey('ghToken', '') },
+            }, '清除授权')
+            : null),
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, ''),
+          h('span', { className: 'dsh-git-set-hint' },
+            'token 只保存在部署配置目录旁的 dsh-git-idea.json 里；浏览器与界面日志里只有尾 4 位。手贴后立刻生效（输入框留在原地，方便核对贴没贴全）。')),
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, 'OAuth Client ID'),
+          h('input', {
+            className: 'dsh-git-input dsh-git-set-input',
+            placeholder: 'OAuth App 的 Client ID（可选）',
+            value: clientDraft,
+            onChange: function (event) { setPluginKey('ghOAuthClientId', event.target.value) },
+          })),
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, ''),
+          h('span', { className: 'dsh-git-set-hint' },
+            '填了它，「Actions」页签才会出现「用 GitHub 网页授权」按钮（设备码方式：不用手贴 token，网页确认一次，token 由宿主直接收进配置）。')),
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, 'API 代理'),
+          h('input', {
+            className: 'dsh-git-input dsh-git-set-input',
+            placeholder: '留空 = 直连 api.github.com',
+            value: proxyDraft,
+            onChange: function (event) { setPluginKey('ghProxy', event.target.value) },
+          })),
+        h('div', { className: 'dsh-git-set-row' },
+          h('span', { className: 'dsh-git-set-label' }, ''),
+          h('span', { className: 'dsh-git-set-hint' },
+            '当前版本此格仅作占位（配了也仍是直连）；部署在代理链后面时，给 DSH 进程的环境加 NODE_USE_ENV_PROXY=1，让 Node 的 fetch 走环境代理。')))
+    }
+
     function GitToolchainGroup(props) {
       /* 面板把手里的 session id 递下来（GitIdentityGroup 同一个先例）；组件单独渲染
          （测试）时退回 lastSession。探测跟着会话的沙箱策略走 —— 面板里真正跑起来的
@@ -776,6 +862,10 @@
                 },
               }),
               h('span', { className: 'dsh-git-set-hint' }, '1–50，默认 20；注入时取该分支最近 N 条（不含当前会话）'))),
+
+            /* GitHub 授权（71-gh-pane.js 的哨兵约定在这里的「令牌」一格落地）：
+               「Actions」页签的读数凭据与设备码授权的 Client ID 都在这一组。 */
+            h(GitGhAuthGroup, { key: 'gh-auth' }),
 
           /* 右列：git 与这台机器（组件根上还各有一层自己的包装 div），末尾收
              「本浏览器」一组。 */

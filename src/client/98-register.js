@@ -58,6 +58,10 @@
           /* suppressible：推送是同一次完成的第二名 —— chip 在场时它必然晚 chip 一步
              到，5 秒内 chip 边沿（或欠账补发）刚刷过就让路（92-chip.js 的护栏）。 */
           runCompleteRefresh(sessionId, true)
+          /* GitHub Actions 页签的完成刷新（71-gh-pane.js）：面板没开着就是空操作，
+             开着且已授权（ghToken）才发一次 git/gh-actions —— 与上面的整树刷新同
+             一个事件，各刷各的数据，不发明新的监听点，也没有轮询。 */
+          ghCompleteRefresh()
           return
         }
         if (message.kind === 'live-open') {
