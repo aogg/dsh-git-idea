@@ -10,6 +10,34 @@
     const PANEL_ANCHOR_SAFETY = 1    /* 亚像素取整的余量：头部差 1px 被裁也看得难受 */
     const PANEL_MIN_HEIGHT = 160     /* 下限：极端情况下宁可顶部被裁一点，也不能面板缩没 */
 
+    /* ── 这个仓库是不是浅克隆（⇣ 右键菜单两项的可用性）──
+
+       数字来自 Host 的面板读（`git rev-parse --is-shallow-repository`，塞在同一条
+       读脚本里，见 host/62-panel.js 的 PANEL_SHALLOW_PREFIX 与 host/64-history.js）：
+       一个布尔，跟着**每一次**面板读（全树与路径读都带）落地刷新。取全量 / 浅取这类
+       会改变它本身的动作之后，面板再把下一次读推成全树读（见 ctxFetchItems 与
+       runOpApply 的 needFull 那两句），菜单因此不会停在旧答案上。
+
+       存成模块级（不在面板 state 里），是因为菜单是「右键那一刻」才渲染的 —— 它读
+       当下的值，与面板的渲染节奏无关。
+
+       三态：true（浅克隆）/ false（完整克隆）/ undefined（还没读到过）。
+       「不知道」绝不能当 false 用：那会把两项置灰在一个其实该能点的仓库上，而且
+       挂着的理由是错的。 */
+    const repoShallowState = {}
+    function setRepoShallow(repo, value) {
+      const key = text(repo)
+      if (key.length === 0 || typeof value !== 'boolean') return
+      repoShallowState[key] = value
+    }
+    function repoShallowOf(repo) {
+      const key = text(repo)
+      return key.length > 0 && typeof repoShallowState[key] === 'boolean' ? repoShallowState[key] : undefined
+    }
+    /* 浅取那两项共用的深度：与「历史一页 200 条」（40-format.js 的 PAGE_COMMITS）
+       是同一个数 —— 读者在两处看到的「200」说的是同一件事。 */
+    const FETCH_SHALLOW_DEPTH = 200
+
     /* 面板 absolute 定位在输入区 overlay 槽位的容器里，那个容器随输入框移动（新会话
        居中、发送第一条消息后落底）。可用高度要量它，不能量面板自己：面板的 top 会随
        钳制后的高度变化，拿自己当锚点就成了自我反馈。offsetParent 会跳过不生成盒子的
@@ -2120,10 +2148,15 @@
       /* ── 头部同步组（⟳⇣↓↑）各自的运行中标记 ──
 
          busy 是面板级的：一抬起来四个键一起 40% 透明、提交框/右键菜单/快捷命令全部
-         锁死。同步组的一次点击只有那一个键在干活，不该连坐整个面板 —— 所以各记各的
-         （函数式更新，一次只翻一个键），按钮的禁用与转圈都从这份算；fetch/pull/
-         ↷/push 另外彼此串行（panelBox.syncs 那条链），⟳ 等它自己触发的全树读落地。 */
+         锁死。同步组的一次点击只有那一个键在干活，不该连坐整个面板。
+
+         ⇣ ↓ ↷ ↑ 四个键的「谁在跑」住在 78-actions.js 的共享层里（syncActionRunning
+         + useSyncActionRunning）：chip 悬停卡片上的同一批按钮写的是同一份状态，所以
+         卡片里按下的 pull 会让面板的 ↓ 跟着转、跟着禁用 —— 两处不会各说各话。
+         ⟳ 不进那一份：它补的是「把屏上这份读重来一遍」，不是一条 git 动作，两个
+         surface 也没有第二个 ⟳。 */
       const [syncRunning, setSyncRunning] = React.useState({})
+      const syncActionRuns = useSyncActionRunning()
       const setSyncKey = function (key, on) {
         setSyncRunning(function (previous) {
           if (previous[key] === on) return previous
@@ -2419,6 +2452,11 @@
             /* 只问几条路径的那种读有多贵：贵到一定程度就说明父目录扫进了大树，这个仓库
                从此收窄（见 pathsOfInterest）。 */
             if (full !== true) pathsReadSpent(resolved, Math.round(Date.now() - started))
+            /* 浅克隆与否（⇣ 右键菜单那两项靠它置灰）：两条读路都带这个字段
+               （Host 把它塞在面板自己那条脚本里，见 62-panel.js 的
+               PANEL_SHALLOW_PREFIX），所以路径读也顺手刷新它 —— 答复里没带
+               （老版本 Host、读不动 git）就保持旧值。 */
+            if (reply != null) setRepoShallow(resolved, reply.shallow)
             if (full) {
               /* 全树那一次花了多久，读数记下来。 */
               const cost = Math.round(Date.now() - started)
@@ -2788,15 +2826,22 @@
       /* ── 同步组的运行中包装器（⇣↓↷↑，⟳ 纯读不进链）──
 
          先立标记再发起：动作排在链里等前一个跑完时，按钮已经在转了 —— 点下去的那
-         一帧就得到「收到了」的反馈，而不是等前一个结束才亮。防抖在这里：转着的键
-         再点直接忽略。链画法同 queueMutation：上一次 fetch 失败不许把排在后面的
-         pull 毒死；标记在这次动作自己的 promise 落地时熄，不是整条链跑完才熄。 */
+         一帧就得到「收到了」的反馈，而不是等前一个结束才亮。防抖、串行链、标记熄灭
+         的时机全在 78-actions.js 的 runSyncAction 里（那一份与 chip 分支卡共用同一
+         条链、同一份运行中状态 —— 两处同时点不会开两条 git 命令）。⟳ 走本地的
+         setSyncKey：它不是一条 git 动作，熄灯挂在全树读落地（refreshDone）上。 */
+      const syncRunningKey = function (key) {
+        if (key === 'refresh') return syncRunning[key] === true
+        return syncActionRuns[key] === true
+      }
       const runSync = function (key, go) {
-        if (syncRunning[key] === true) return
-        setSyncKey(key, true)
-        if (key === 'refresh') { go(); return }
-        const next = panelBox.syncs.then(go, go)
-        panelBox.syncs = next.then(function () { setSyncKey(key, false) }, function () { setSyncKey(key, false) })
+        if (syncRunningKey(key) === true) return null
+        if (key === 'refresh') {
+          setSyncKey('refresh', true)
+          go()
+          return null
+        }
+        return runSyncAction(key, go)
       }
 
       /* ── 「有会话刚跑完」的那声铃（92-chip.js 敲，这里听）──
@@ -2850,7 +2895,13 @@
         setError(null)
         setOkNote('')
         setNeedsUpstream(false)
-        panelBox.needFull = REWRITES_TREE.indexOf(method) >= 0
+        /* 不覆盖已经立起来的 needFull：顶栏 ⇣ 右键那两项（取全量历史 / 浅取近 N
+           条）在发命令之前就把 needFull 立起来 —— 它们改的是**历史深度**，而
+           「这个仓库是不是浅克隆」只跟着全树读回来（host 64-history.js）。一行
+           覆盖的话，那次读会退回路径读、答复里没有 shallow，菜单就停在旧答案上
+           （取全量之后两项还亮着）。REWRITES_TREE 说的是「这次动作非全树不可」，
+           不是「这次动作必须把之前的要求撤销」。 */
+        panelBox.needFull = panelBox.needFull === true || REWRITES_TREE.indexOf(method) >= 0
         const request = base(appliedRepo)
         if (payload != null) Object.assign(request, payload)
         return rpc(method, request).then(function (reply) {
@@ -2873,21 +2924,26 @@
             setPullPick(null)
           }
           setError(failureText(failure))
-          if (method === 'git/push' && failureText(failure).indexOf('upstream') >= 0) {
+          if (method === 'git/push') {
             /* 「这个分支还没有上游」是一次可以自己走完的失败：设置里开了这一条时，
                就把横幅本来要问的那一步直接做掉（同一个请求，带上 setUpstream）。问过
                的那一次不再自动重试 —— 它要是也失败，横幅照旧出现，读者还有得按。
-               远端不取 refs.remote[0]：ctxPush 的同一条规则（guessPushRemote，origin
-               优先 → 唯一远端 → 都不满足就不猜）—— 多远端而无 origin 的仓库里，
-               瞎猜会把 -u 绑到一个读者没挑过的远端；这时不自动补推，横幅照旧出现。 */
-            const retry = payload == null || payload.setUpstream !== true
-            const remote = guessPushRemote(refs)
-            if (plugin.pushSetUpstream === true && retry && remote.length > 0 && currentName.length > 0) {
+               规则本体是 pushRetryPlanOf（78-actions.js）：面板与 chip 分支卡共用
+               同一份，猜远端的口径（origin 优先 → 唯一远端 → 都不满足就不猜）也在
+               那里，两处不会各猜各的。 */
+            const plan = pushRetryPlanOf({
+              message: failureText(failure),
+              alreadySetUpstream: payload != null && payload.setUpstream === true,
+              pushSetUpstream: plugin.pushSetUpstream === true,
+              refs: refs,
+              currentName: currentName,
+            })
+            if (plan.retry === true) {
               /* 重试把键带下去、promise 接回来：链上的等待以重试落地为准，别让 ⟳⇣↓↑
                  的运行中标记在重试还没跑时就熄掉。 */
-              return runOp('git/push', { setUpstream: true, remote: remote, branch: currentName }, syncKey)
+              return runOp('git/push', plan.payload, syncKey)
             }
-            setNeedsUpstream(true)
+            if (plan.needsUpstream === true) setNeedsUpstream(true)
           }
           bump()
         })
@@ -2896,28 +2952,33 @@
       /* 判断本身只吃一份 refs 答复：refs 还没读到过（首帧、刚换仓库、上次读失败）
          时由 runOp 先补一次读再进来，别因为缓存未到就弹层。syncKey 只是过路键，
          原样交给 runOpApply —— 走到「打开选择层、不发 rpc」的分支时什么也不返回，
-         同步组的运行中标记随即熄（选择层本身就是下一步反馈）。 */
-      const decidePull = function (refsData, payload, syncKey) {
-        const current = refsData != null && refsData.ok === true && Array.isArray(refsData.current) && refsData.current.length > 0
-          ? text(refsData.current[0]) : ''
-        /* detached：refs.current 空、work.detached 是 true —— 两道都挡。 */
-        if (work == null || work.ok !== true || work.detached === true || current.length === 0) {
-          runOpApply('git/pull', payload, syncKey)
+         同步组的运行中标记随即熄（选择层本身就是下一步反馈）。
+
+         **规则本体不在这里**：``pullPlanOf``（78-actions.js）是面板与 chip 分支卡
+         共用的那一份 —— 两边各自准备输入（这半边读 work/refs，卡片读自己那张卡的
+         分支行），判断与「绑哪个上游」只写一次。这里只把它的三种结论落成面板的三种
+         界面：apply → 发 rpc；read-refs → 补读一次再进来；pick → 打开远端分支选择层。 */
+      const decidePull = function (refsData, payload, syncKey, alreadyReadRefs) {
+        const plan = pullPlanOf({
+          payload: payload,
+          hasUpstream: work != null && work.ok === true && text(work.upstream).length > 0,
+          workKnown: work != null && work.ok === true && work.detached !== true,
+          refs: refsData,
+        })
+        if (plan.kind === 'apply') { runOpApply('git/pull', plan.payload, syncKey); return }
+        if (plan.kind === 'read-refs' && alreadyReadRefs !== true) {
+          /* 补读一次 refs 再进来。第二次仍旧读不动就直接拉 —— 没有这道闸，一份
+             永远读不动的 refs 会变成一条原地打转的补读循环（gp51 的 ok:false 那条
+             用例就是这么把它逼出来的）。 */
+          callHost('git/refs', base(appliedRepo)).then(function (data) {
+            setRefs(data)
+            decidePull(data, payload, syncKey, true)
+          }, function () {
+            runOpApply('git/pull', payload, syncKey)
+          })
           return
         }
-        /* 未出生分支（unborn）：refs.current 说得出名字，但 refs/heads 里没有它 ——
-           set-upstream 无从谈起，照旧。 */
-        const local = Array.isArray(refsData.local) ? refsData.local : []
-        let born = false
-        for (let i = 0; i < local.length; i += 1) {
-          if (text(local[i].data) === current) { born = true; break }
-        }
-        if (born !== true) { runOpApply('git/pull', payload, syncKey); return }
-        const match = upstreamMatchInRefs(refsData, current)
-        if (match != null) {
-          runOpApply('git/pull', Object.assign({}, payload == null ? {} : payload, { setUpstream: match }), syncKey)
-          return
-        }
+        if (plan.kind === 'read-refs') { runOpApply('git/pull', payload, syncKey); return }
         setPullPick({})
       }
 
@@ -2934,7 +2995,8 @@
         if (refs == null || refs.ok !== true) {
           return callHost('git/refs', base(appliedRepo)).then(function (data) {
             setRefs(data)
-            decidePull(data, payload, syncKey)
+            /* 刚读过一次：再读不动就直接拉（alreadyReadRefs 挡住第二次补读）。 */
+            decidePull(data, payload, syncKey, true)
           }, function () {
             runOpApply(method, payload, syncKey)
           })
@@ -4692,14 +4754,28 @@
          which is about the selected commit. The middle toolbar keeps only what
          the selection scopes. */
       /* 五个键的禁用只看「自己是不是在跑」，不再看面板级 busy：一个键转圈时，其余
-         四个照常可点（点了进 panelBox.syncs 排队），提交框、右键菜单、快捷命令也
+         四个照常可点（点了进共享那条链排队），提交框、右键菜单、快捷命令也
          全程照常 —— busy 不再为这五个动作抬起来。 */
-      const syncRunningKey = function (key) { return syncRunning[key] === true }
       const syncGroup = h('div', { className: 'dsh-git-sync' },
         tool('refresh', '⟳', '重新读取仓库（忽略缓存）', function () { runSync('refresh', refresh) },
           { disabled: !repoOk || syncRunningKey('refresh'), running: syncRunningKey('refresh') }),
-        tool('fetch', '⇣', 'fetch：从所有远端取回最新引用', function () { runSync('fetch', function () { return runOp('git/fetch', null, 'fetch') }) },
-          { disabled: !repoOk || syncRunningKey('fetch'), running: syncRunningKey('fetch') }),
+        tool('fetch', '⇣', 'fetch：从所有远端取回最新引用（右键：取全量历史 / 浅取近 200 条）', function () { runSync('fetch', function () { return runOp('git/fetch', null, 'fetch') }) },
+          { disabled: !repoOk || syncRunningKey('fetch'), running: syncRunningKey('fetch'),
+            /* 右键：浅克隆那两件（取全量历史 / 浅取近 N 条）摆在光标处。菜单与顶栏
+               ↑ 的推送菜单共用同一块 ContextMenu 浮层（光标锚定、点外/Esc/滚动/
+               resize 关闭全是白拿的），内容在 ctxFetchItems 里按「这个仓库是不是浅
+               克隆」收放。仓库没读出来时左键本来就是禁的，右键也不开菜单 —— 与 ↑
+               同一条规矩。 */
+            onContextMenu: function (event) {
+              event.preventDefault()
+              event.stopPropagation()
+              if (repoOk !== true) return
+              setCtxMenu({
+                kind: 'fetch',
+                x: event != null && typeof event.clientX === 'number' ? event.clientX : 0,
+                y: event != null && typeof event.clientY === 'number' ? event.clientY : 0,
+              })
+            } }),
         tool('pull', '↓', 'pull：拉取并合入当前分支', function () { runSync('pull', function () { return runOp('git/pull', null, 'pull') }) },
           { disabled: !repoOk || syncRunningKey('pull'), running: syncRunningKey('pull'), badge: behind }),
         /* 「rebase 更新」：↓ 的变基款。更新即变基 —— `git pull --rebase`（Host 无视
@@ -5796,6 +5872,66 @@
           },
         }, '显示待推送列表'),
       ]
+      /* ── 顶栏 ⇣ 的右键菜单内容（kind === 'fetch'）──
+
+         浅克隆仓库缺的是「更早的提交」，补它有两件 git 自己的动作，都放进这个菜单
+         而不是让读者去对话里敲命令（左键 fetch 仍是原来那条 `fetch --all`，一个
+         字节不动）：
+
+           · 取全量历史 —— `git fetch --all --unshallow`：把 .git/shallow 里的边界
+             全部补齐，本地从此有完整历史（Host 那边 argv 才成形，见 80-rpc.js）。
+           · 浅取近 200 条 —— `git fetch --all --depth=200`：深度改写成 200 条，
+             比全量小得多，够看「最近这段发生了什么」。
+
+         非浅克隆仓库：两项都置灰，title 说清原因（**为什么**置灰必须写在悬停里，
+         而不是让人点一下再从 git 的 stub 里读「--unshallow on a complete repository
+         does not make sense」）。选择置灰而不是「只在浅克隆时才画出来」，是因为
+        一右键就换一张菜单会让人以为右键坏了；置灰的那一行顺便把「这个仓库本来就是
+         完整的」这条信息交代了。
+
+         运行态与左键同一套：runSync('fetch', …) 的转圈、再点保护、错误条全共用，
+         所以菜单里的动作跑起来时，⇣ 自己就在转 —— 不会出现「菜单说在跑、按钮没反应」。
+         动作进「命令」页（Host 的 cmdrec 记 argv 与退出码），成功/失败落在面板顶上
+         那条 oknote / 错误条里（与其余同步动作同一个位置）。 */
+      const fetchSyncGuard = !repoOk || syncRunningKey('fetch')
+      const shallowKnown = repoShallowOf(appliedRepo)
+      const shallowWhy = shallowKnown === true
+        ? ''
+        : shallowKnown === false
+          ? '这个仓库是完整克隆（不是浅克隆），取全量历史没有意义 —— git 会以「--unshallow on a complete repository does not make sense」拒绝'
+          : '还没读到这个仓库是不是浅克隆（等面板读完这次工作区）'
+      const ctxFetchItems = ctxMenu === null || ctxMenu.kind !== 'fetch' ? [] : [
+        h('button', {
+          key: 'unshallow', type: 'button', className: 'dsh-git-menu-item',
+          title: shallowKnown === true
+            ? 'git fetch --all --unshallow：把浅克隆的边界补齐，取回全部历史（从此 git log 能看到更早的提交）'
+            : shallowWhy,
+          disabled: fetchSyncGuard || shallowKnown !== true,
+          onClick: function (event) {
+            stopEvent(event)
+            setCtxMenu(null)
+            /* 取全量之后「是不是浅克隆」这件事变了：让紧跟着的那次读走全树，答复里
+               才带着新的 shallow（路径读不带这个字段），菜单不会停在旧答案上。历史
+               深度都变了，顺带把工作区整棵重新量一遍也是对的。 */
+            panelBox.needFull = true
+            runSync('fetch', function () { return runOp('git/fetch', { unshallow: true }, 'fetch') })
+          },
+        }, '取全量历史'),
+        h('button', {
+          key: 'depth', type: 'button', className: 'dsh-git-menu-item',
+          title: shallowKnown === true
+            ? 'git fetch --all --depth=' + String(FETCH_SHALLOW_DEPTH) + '：把历史深度改成最近 '
+              + String(FETCH_SHALLOW_DEPTH) + ' 条（比全量小得多，够看最近这段发生了什么）'
+            : shallowWhy,
+          disabled: fetchSyncGuard || shallowKnown !== true,
+          onClick: function (event) {
+            stopEvent(event)
+            setCtxMenu(null)
+            panelBox.needFull = true
+            runSync('fetch', function () { return runOp('git/fetch', { depth: FETCH_SHALLOW_DEPTH }, 'fetch') })
+          },
+        }, '浅取近 ' + String(FETCH_SHALLOW_DEPTH) + ' 条'),
+      ]
       const ctxCommitItems = ctxMenu === null ? [] : ctxMenu.kind === 'commit' ? [
         h('button', {
           key: 'pick', type: 'button', className: 'dsh-git-menu-item', disabled: !canAct,
@@ -6396,7 +6532,8 @@
               key: 'ctx', open: true, x: ctxPos.left, y: ctxPos.top,
               onClose: function () { setCtxMenu(null) },
             }, ctxMenu.kind === 'file' ? ctxFileItems
-              : ctxMenu.kind === 'push' ? ctxPushItems : ctxCommitItems)
+              : ctxMenu.kind === 'push' ? ctxPushItems
+                : ctxMenu.kind === 'fetch' ? ctxFetchItems : ctxCommitItems)
           : null)
     }
 

@@ -469,3 +469,138 @@
           h('button', { key: 'new', type: 'button', className: 'dsh-git-btn', onClick: startNew }, '新增'),
           h('span', { key: 'n', className: 'dsh-git-menu-dim' }, '保存在插件配置里，这个菜单和「配置 → 全局配置」共用同一份')))
     }
+
+    /* ── 仓库级同步动作（⇣ ↓ ↑）：面板顶栏与 chip 分支卡共用的唯一一份 ──
+
+       同一件事曾经有两份实现：面板顶栏那套（80-panel.js 的 runSync + runOp）和
+       输入框 chip 悬停卡片那套（70-branchpicker.js 的 act + pullAction）。两份各写
+       一遍的结果不是「差不多」，是**不一样**：
+
+         · 运行中标记各记各的 —— 面板里按下 ↓、卡片里再按 ⇣，两条 git 网络命令
+           同时开跑（一个在 fetch、一个在 pull，抢同一个 ref 锁）；
+         · 串行链只有面板有 —— 卡片连点两下 ⇣ 也不排队；
+         · 推送撞上「还没有上游」时，只有面板会自动补一次 set-upstream 并抬横幅，
+           卡片只把 git 的原话甩在卡上；
+         · pull 的上游规则本该一条（没有 upstream 且远端有同名 → 绑定后拉），
+           卡片里是另一段几乎一样的代码，改一处忘一处。
+
+       这里把「一个同步动作是什么」写成一份：谁在跑（running）、怎么排队（chain）、
+       请求长什么样（request）、push 撞上没上游怎么补（pushRetryPlanOf）、pull 该
+       裸拉还是先绑上游（pullPlanOf）。UI 只管「往哪张脸上写消息」—— 面板写顶部
+       的 oknote / 错误条，卡片写卡上那行 note，动作本身一份就够。
+
+       ★ 两个 surfaces 的 setState 是各自的，所以这里只放**事实**（谁在跑）与
+         **决策**（纯函数），不放任何 React 状态。 */
+    /* 受这份状态管的动作键。面板顶栏的同步组（⇣↓↷↑）与卡片那排按钮都按这一份判断
+       「这一格是同步动作吗」—— 卡片里原先写着 `id === 'fetch' || 'pull' || 'push'`
+       第二份清单，加一个动作就得记得改两处。 */
+    const SYNC_ACTION_KEYS = ['fetch', 'pull', 'push', 'rebase']
+    const syncActionRunning = {}
+    const syncActionSignal = createSignal(function () {
+      /* 每次通知都回一个新对象（调用方按引用比较）：只删键的场合，回同一个对象
+         会让 React 的 useSyncExternalStore 家族以为没变。 */
+      return Object.assign({}, syncActionRunning)
+    })
+    /* 订阅「哪个同步动作在跑」的 hook：面板与卡片都调它，于是任一处的点击都会让
+       另一处跟着变灰/转圈 —— 这正是「可用性判断一致」的那一半。 */
+    const useSyncActionRunning = syncActionSignal.use
+
+    function syncActionIsRunning(key) {
+      return syncActionRunning[key] === true
+    }
+
+    function markSyncAction(key, on) {
+      if (on === true) {
+        if (syncActionRunning[key] === true) return
+        syncActionRunning[key] = true
+      } else {
+        if (syncActionRunning[key] !== true) return
+        delete syncActionRunning[key]
+      }
+      syncActionSignal.notify()
+    }
+
+    /* 一条链，两个入口共用：卡片发出的 pull 与面板发出的 fetch 排同一队。链本身
+       不携带 reject（一次失败的 fetch 不许毒死后面排着的 pull），与面板原来那条
+       panelBox.syncs 是完全同一套语义。 */
+    let syncActionChain = Promise.resolve()
+
+    /* 发起一个同步动作。返回这次动作的 promise（UI 可以不管它）；同一个 key 正在
+       跑时返回 null —— 再点一次就是一次点击，不是第二条命令。 */
+    function runSyncAction(key, go) {
+      if (syncActionIsRunning(key) === true) return null
+      markSyncAction(key, true)
+      const next = syncActionChain.then(go, go)
+      syncActionChain = next.then(
+        function () { markSyncAction(key, false) },
+        function () { markSyncAction(key, false) })
+      return next
+    }
+
+    /* ── push 撞上「还没有上游」时的唯一一份决策 ──
+
+       git 的原话（"The current branch X has no upstream branch" / "no upstream
+       configured"）出现在失败文本里就是这件事。三种走法，两个入口共用：
+         · 已经带过 setUpstream 了 → 不再自动补推（问过的那一次就是最后一次），
+           只立「需要上游」的横幅；
+         · 设置里「自动设上游」关着 → 同上；
+         · 开着、且猜得出该绑谁（guessPushRemote：origin 优先 → 唯一远端 → 都不
+           满足就不猜）→ 带 setUpstream 补推一次。
+       猜不出来时不补推：多远端而无 origin 的仓库里，瞎猜会把上游绑到读者没挑过的
+       远端（ctxPush 同一条规矩）。 */
+    function pushRetryPlanOf(spec) {
+      const input = spec == null ? {} : spec
+      const message = text(input.message)
+      const noUpstream = message.toLowerCase().indexOf('upstream') >= 0
+      if (noUpstream !== true) return { retry: false, needsUpstream: false, payload: null, why: '' }
+      const already = input.alreadySetUpstream === true
+      if (already === true) {
+        return { retry: false, needsUpstream: true, payload: null, why: '刚刚就是在设上游，不再自动重试' }
+      }
+      if (input.pushSetUpstream !== true) {
+        return { retry: false, needsUpstream: true, payload: null, why: '设置里没开「自动设上游」' }
+      }
+      const remote = guessPushRemote(input.refs)
+      const branch = text(input.currentName)
+      if (remote.length === 0) {
+        return { retry: false, needsUpstream: true, payload: null, why: '仓库有多个远端且没有 origin —— 猜不出该绑哪个' }
+      }
+      if (branch.length === 0) {
+        return { retry: false, needsUpstream: true, payload: null, why: '当前没有分支名（游离 HEAD）' }
+      }
+      return { retry: true, needsUpstream: false, payload: { setUpstream: true, remote: remote, branch: branch }, why: '' }
+    }
+
+    /* ── pull 的「先绑上游还是直接拉」唯一一份决策 ──
+
+       规则（与 80-panel.js 原先的 decidePull 一字不差，只是搬到这里让卡片也能用）：
+         · 已经指定了 setUpstream（选择层挑完那条）→ 照发的就是它，不再判断；
+         · 上游已知且非空 → 直接 pull；
+         · 上游未知（面板首帧 / work 没读出来）→ 直接 pull，别在旧数据上猜；
+         · refs 还没读到 → 先去读一次（read-refs），读完再进来判断；
+         · 游离 HEAD（refs.current 空）或分支还没出生 → 直接 pull，git 自己会拒绝；
+         · refs 里有同名远端分支 → 带上 setUpstream 一次跑完（绑 + 拉）；
+         · 没有同名 → pick：让各自的 UI 打开远端分支选择（面板是覆盖层，卡片是卡片
+           里就地换成列表）—— 那是两种界面形状，不是一个动作的两种实现。 */
+    function pullPlanOf(spec) {
+      const input = spec == null ? {} : spec
+      const payload = input.payload == null ? null : input.payload
+      if (payload != null && payload.setUpstream != null) return { kind: 'apply', payload: payload }
+      if (input.hasUpstream === true) return { kind: 'apply', payload: payload }
+      if (input.workKnown !== true) return { kind: 'apply', payload: payload }
+      const refs = input.refs
+      if (refs == null || refs.ok !== true) return { kind: 'read-refs', payload: payload }
+      const current = Array.isArray(refs.current) && refs.current.length > 0 ? text(refs.current[0]) : ''
+      if (current.length === 0) return { kind: 'apply', payload: payload }
+      const local = Array.isArray(refs.local) ? refs.local : []
+      let born = false
+      for (let i = 0; i < local.length; i += 1) {
+        if (text(local[i].data) === current) { born = true; break }
+      }
+      if (born !== true) return { kind: 'apply', payload: payload }
+      const match = upstreamMatchInRefs(refs, current)
+      if (match != null) {
+        return { kind: 'apply', payload: Object.assign({}, payload == null ? {} : payload, { setUpstream: match }), match: match }
+      }
+      return { kind: 'pick', currentName: current, payload: payload }
+    }

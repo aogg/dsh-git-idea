@@ -140,12 +140,23 @@ async function readPanel(input, target, paths) {
   let noGit = false
   let unsafeOwner = false
   let needsIdentity = false
+  /* true / false / null（没读到）。null 与 false 是两件事，见下面 reply.shallow 那一段。 */
+  let shallowAnswer = null
   const body = []
   for (let i = 1; i < lines.length; i += 1) {
     const line = lines[i]
     if (line === PANEL_NO_GIT) { noGit = true; continue }
     if (line === PANEL_UNSAFE_OWNER) { unsafeOwner = true; continue }
     if (line === PANEL_NO_IDENT) { needsIdentity = true; continue }
+    /* 浅克隆那一问（62-panel.js 的 PANEL_SHALLOW_PREFIX）：它和这次读在**同一条**
+       shell 里跑，所以答复从这里拆出来，不能让这一行落进 status 正文
+       （parseStatusV2 会把不认识的行原样吞掉，但那不是依赖它的理由）。 */
+    if (line.indexOf(PANEL_SHALLOW_PREFIX) === 0) {
+      const said = line.slice(PANEL_SHALLOW_PREFIX.length).trim().toLowerCase()
+      if (said === 'true') shallowAnswer = true
+      else if (said === 'false') shallowAnswer = false
+      continue
+    }
     if (line.indexOf('RC:') === 0) { exitCode = parseInt(line.slice(3), 10); continue }
     if (line.indexOf('S:') === 0) { if (sequencer === null) sequencer = line.slice(2); continue }
     body.push(line)
@@ -182,6 +193,22 @@ async function readPanel(input, target, paths) {
        these handlers directly, with no validation in between.) */
     needsIdentity: needsIdentity === true,
   }
+  /* ── 这是不是一个浅克隆（shallow）──
+
+     顶栏 ⇣ 的右键菜单里有「取全量历史」（git fetch --unshallow）和「浅取近 N 条」
+     （git fetch --depth=N）：完整克隆上跑 --unshallow，git 自己就以「--unshallow
+     on a complete repository does not make sense」收场，所以那两项该不该置灰，
+     客户端必须先知道这件事。
+
+     它由 panelCommand 的同一条脚本答（62-panel.js 的 PANEL_SHALLOW_PREFIX，
+     `$gd` 守卫内），**不是这里另起一次 spawn** —— 整树读一次只起一个 shell 是这
+     套读的既有形状，gp34a / gp84 都把它写成了断言；为一个布尔值多开一条通道，
+     等于让每次轮询多付一次（远端就是一次往返）。
+
+     读不出来（老 git、非仓库、命令失败）时**不写这个键**：读不出来和「不是浅克隆」
+     是两件事，把不知道说成 false 会让菜单把两项置灰在一个其实该能点的仓库上。
+     客户端见到 undefined 就保持旧值。 */
+  if (shallowAnswer !== null) reply.shallow = shallowAnswer
   /* A pathspec answer is about those paths and nothing else. It says so, and it
      names them, so the client can fold it into the snapshot it already has
      instead of mistaking it for the whole working tree. The whole-tree answer

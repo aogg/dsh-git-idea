@@ -225,6 +225,10 @@
 .dsh-git-ref-head{background:var(--dsw-alias-brand-primary);color:#fff}
 .dsh-git-ref-remote{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);border:1px solid var(--dsw-alias-border-l1)}
 .dsh-git-ref-tag{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-state-warn-primary);border:1px solid var(--dsw-alias-border-l1)}
+/* 浅克隆边界（git 的 grafted）：它不是一个引用，所以既不用 HEAD 的实心品牌色，也
+   不用远程/标签那种实线药丸 —— 虚线边 + 更淡的字，读起来就是「这里是一条界线」。
+   整句解释在 title 里（40-format.js 的 SHALLOW_REF_TIP），不只靠颜色说话。 */
+.dsh-git-ref-shallow{background:transparent;color:var(--dsw-alias-label-tertiary);border:1px dashed var(--dsw-alias-border-l2);font-weight:500;cursor:help}
 .dsh-git-logwrap{position:relative}
 .dsh-git-more{display:flex;align-items:center;justify-content:center;gap:10px;padding:8px;font-size:11px;border-top:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2)}
 .dsh-git-graph{position:absolute;left:0;top:0;pointer-events:none}
@@ -435,13 +439,22 @@ textarea.dsh-git-input{resize:vertical}
    overflow 从此与它无关。宽高写死 100vw/100vh 而不是 inset:0 —— 页面级 transform/
    filter（玻璃皮肤）会把 fixed 的 inset 尺寸换成祖先 padding 盒、层塌成 0
    （better-sidebar 在 [data-dsh-panel-host] 上踩过并在注释里记下的同一个坑）。
-   z-index 95 的上下文（实测 better-sidebar 源码，只读参考）：它的 body 级侧栏宿主
-   [data-dsh-panel-host] 是 25（格内 40/90 都被罩住）、它 portal 到 body 的浮窗/
-   锚定卡是 90、DSH 的 ui-cordis 插件面板是 30，应用的对话框栈在 100+ —— 95 压过
-   侧栏一切常驻面，又不挡应用自己的对话框。overflow:hidden 只防浮层把 document 撑出
-   滚动区；pointer-events:none 让空层不挡点击 —— 面板自带 pointer-events:auto，
-   悬停卡片在这里补一句。 */
-.dsh-git-float{position:fixed;left:0;top:0;right:0;height:100vh;overflow:hidden;pointer-events:none;z-index:95}
+
+   ── 层级：顶层（top layer），不是数字 ──
+   有东西要显示时，宿主带 popover="manual" 并被 showPopover() 提进 HTML 的顶层
+   （16-portal.js 的 gitFloatPromote）：那一层按「进入顺序」叠放，永远在文档里所有
+   z-index 之上，所以 DSH 会话顶栏（以及这台机器上别的插件写的 1300 /
+   2147483000）都盖不到本插件的面板与卡片；收起时退出顶层，DSH 自己的对话框
+   （1000）、toast 与菜单照旧在最上面。z-index 95 只是**没有 Popover API 的内核**
+   的兜底（老内核、bridge、单测的迷你 DOM），有顶层时它不参与比较。
+
+   进顶层后浏览器会按 UA 样式给 popover 元素一套默认盒（position:fixed; inset:0;
+   margin:auto; border; padding; background; overflow:auto）—— 下面逐条覆盖回本层
+   本来要的样子：铺满视口、无边框无底色、不滚、不吃点击。overflow:hidden 只防浮层
+   把 document 撑出滚动区；pointer-events:none 让空层不挡点击 —— 面板自带
+   pointer-events:auto，悬停卡片在这里补一句。 */
+.dsh-git-float{position:fixed;left:0;top:0;right:0;width:100vw;height:100vh;inset:0;margin:0;border:0;padding:0;overflow:hidden;pointer-events:none;z-index:95;background:transparent;color:inherit}
+.dsh-git-float[popover]{width:100vw;height:100vh;max-width:none;max-height:none;inset:0;margin:0;border:0;padding:0;overflow:hidden;background:transparent;color:inherit}
 .dsh-git-float .dsh-git-switch{pointer-events:auto}
 .dsh-git-branch-chip{display:inline-flex;align-items:center;gap:4px;max-width:220px;flex:none;padding:2px 8px;border-radius:999px;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-primary);font-size:11px;line-height:16px;cursor:pointer;font-family:inherit}
 .dsh-git-branch-chip:hover{background:var(--dsw-alias-interactive-bg-hover)}

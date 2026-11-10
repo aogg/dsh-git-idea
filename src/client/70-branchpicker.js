@@ -241,6 +241,9 @@
     function BranchPicker(props) {
       const version = useDataVersion()
       useBranchPrefs()
+      /* 同步动作（⇣↓↑）的「谁在跑」来自共享层（78-actions.js）：面板与卡片订阅
+         同一份，所以任一处按下按钮，另一处立刻变灰、转圈。 */
+      const syncActionRuns = useSyncActionRunning()
       /* 首帧的列表：内存新账优先；内存没有（刷新后必然如此）就回落盘账垫底
          （62-branchstate.js 的 restoreBranches，纯读）—— 刷新后第一次悬停/打开
          面板就有上次的列表可画，不用等 git/branches 那一程。盘账绝不写回
@@ -454,10 +457,200 @@
         choose(row != null ? text(row.name) : '', useStash)
       }
 
-      /* The repository-wide actions live in the same palette, so "fetch" or "push"
+      /* ── 仓库级同步动作（⇣ ↓ ↑）：与面板顶栏**同一份实现** ──
+
+         The repository-wide actions live in the same palette, so "fetch" or "push"
          can be typed rather than hunted for in the toolbar. They keep the card
          open and report inline, which is what makes them safe to fire off in a
-         row. */
+         row.
+
+         实现搬进了 78-actions.js 的 runSyncAction：
+           · 运行中标记、串行链、防重复点击是模块级的一份 —— 卡片里按 ⇣ 时，面板的
+             ⇣ 也转、也禁；两处同时点不会各发一条 git 命令；
+           · push 撞上「还没有上游」时按 pushRetryPlanOf 自动补一次 set-upstream
+             （设置开着的话），与面板顶栏 ↑ 完全同一条路 —— 以前卡片只会把 git 的
+             原话甩在卡上；
+           · 成功后的刷新也一致：bumpData（两边共用），pull 这种会重写工作区的动作
+             再敲一次整树重读的铃（ringTreeReload），面板下一次读因此是全树读，而
+             不是只问屏上那几条路径。
+
+         卡上留下的东西只有「这一次发生在卡片里」的那部分：note / error 两行。
+         文案沿用「<label> 完成」的既有形状（标签由调用点给）。 */
+      const runCardSync = function (key, method, payload, label, options) {
+        const opts = options == null ? {} : options
+        if (busy === true) return
+        if (syncActionIsRunning(key) === true) return
+        setBusy(true)
+        setError(null)
+        setNote(opts.pending != null ? opts.pending : null)
+        const started = runSyncAction(key, typeof opts.go === 'function'
+          ? opts.go
+          : function () {
+            return rpc(method, request(payload), label + ' 失败').then(function () { return null }, function (failure) {
+              return failure
+            })
+          })
+        /* runSyncAction 返回 null = 同一动作正在跑（上面已经拦过，留个兜底）：
+           这时什么也不做，让在跑的那一次自己收尾。 */
+        if (started === null) { setBusy(false); return }
+        started.then(function (outcome) {
+          setBusy(false)
+          if (outcome == null) {
+            bumpData()
+            if (opts.fullTree === true) ringTreeReload()
+            /* 动作自己的收尾（比如「绑定并拉取」成功后把卡内那张远端分支选择收掉）：
+               UI 是各自的脸，动作只管通知它成没成。 */
+            if (typeof opts.onOk === 'function') opts.onOk()
+            setNote(opts.done != null ? opts.done : label + ' 完成')
+            return
+          }
+          /* 失败：答复里带着 ok:false 的（命令跑了但 git 拒绝）也要重读一次，
+             与面板 runOpApply 的 bump 同一个口径。 */
+          if (outcome.reply !== undefined) bumpData()
+          setError(failureText(outcome))
+        })
+      }
+
+      /* ── 推送（这张卡里的 ↑）──
+
+         一次推送收到两种结果：成了，或者失败了但这条失败是「这个分支还没有上游」
+         —— 后者在面板顶栏 ↑ 那边是能自己走完的一步（设置里开着「自动设上游」时补
+         一次带 -u 的推送）。这里走同一条路，判定**只调用一次那份函数**：
+         pushRetryPlanOf（78-actions.js）就是面板与这张卡共用的唯一一份规则，
+         猜远端的口径（origin 优先 → 唯一远端 → 都不猜）也在那里。
+
+         第一问不带 refs：它先只回答「这是不是没有上游那件事」——不是的话，git 的
+         原话直接上屏，一个 refs 都不读。是的话再读一次 refs（猜远端要它）问第二
+         遍，由同一份函数给出补推该带什么；它说别补（多远端没 origin / 设置没开 /
+         游离 HEAD）就把第一次的失败照原样报出来。这一条补读只发生在**推送失败**
+         的场合，第二次问话仍然只有那一份实现，不是第二套判断。 */
+      const pushOnce = function (payload) {
+        return rpc('git/push', request(payload), 'push 失败').then(function () { return null }, function (failure) {
+          return failure
+        })
+      }
+      const pushGo = function () {
+        return pushOnce(null).then(function (outcome) {
+          if (outcome == null) return null
+          const said = failureText(outcome)
+          const first = pushRetryPlanOf({
+            message: said,
+            alreadySetUpstream: false,
+            pushSetUpstream: pluginConfig.pushSetUpstream === true,
+            refs: null,
+            currentName: '',
+          })
+          if (first.needsUpstream !== true) return outcome
+          return rpc('git/refs', request(null), '读不到分支列表').then(function (refsData) {
+            const current = refsData != null && refsData.ok === true
+              && Array.isArray(refsData.current) && refsData.current.length > 0
+              ? text(refsData.current[0]) : ''
+            const plan = pushRetryPlanOf({
+              message: said,
+              alreadySetUpstream: false,
+              pushSetUpstream: pluginConfig.pushSetUpstream === true,
+              refs: refsData,
+              currentName: current,
+            })
+            if (plan.retry !== true) return outcome
+            return pushOnce(plan.payload)
+          }, function () { return outcome })
+        })
+      }
+      const pushAction = function () {
+        runCardSync('push', 'git/push', null, 'push', { go: pushGo })
+      }
+
+      /* ── 拉取（这张卡里的 ↓）──
+
+         已有 upstream 照旧直接 pull，一字不变。没有时先问一次 refs：远端有同名
+         分支就带 setUpstream 一次跑完（绑定 + 拉取，set-upstream-to 的 argv 在
+         Host 那半）；没有同名就把列表区域换成远端分支选择（pick），点行绑定并
+         拉取。refs 读不动就按老路裸 pull —— git 的拒绝原话照旧上屏。
+
+         「先绑还是直接拉」这一条判断不写在这里：pullPlanOf（78-actions.js）是面板
+         与卡片共用的那一份，两种界面形状（面板的覆盖层 / 卡片里就地换列表）是 UI
+         的差别，不是动作的差别。 */
+      const pullBound = function (match) {
+        runCardSync('pull', 'git/pull', { setUpstream: match }, '拉取', {
+          pending: '正在绑定上游 ' + match.remote + '/' + match.branch + ' 并拉取…',
+          done: '已绑定上游 ' + match.remote + '/' + match.branch + ' 并拉取',
+          fullTree: true,
+          /* 绑定成功 → 卡内那张远端分支选择收掉，回到正常的分支列表（与面板成功
+             之后 setPullPick(null) 是同一件事）。 */
+          onOk: function () { setPick(false) },
+        })
+      }
+      /* 把一份计划落地。refs 只补读一次（attempt：'read-refs' 第二次再出现就地裸
+         拉）：refs 一直读不动时，没有这道闸就是一条无限重试的循环 —— 它比「直接
+         拉」错得多，git 自己的拒绝原话才是读者该看到的东西。 */
+      const followPullPlan = function (plan, alreadyReadRefs) {
+        if (plan.kind === 'apply') {
+          runCardSync('pull', 'git/pull', plan.payload == null ? null : plan.payload,
+            plan.match != null ? '拉取' : 'pull', {
+              pending: plan.match != null ? '正在绑定上游 ' + plan.match.remote + '/' + plan.match.branch + ' 并拉取…' : null,
+              done: plan.match != null ? '已绑定上游 ' + plan.match.remote + '/' + plan.match.branch + ' 并拉取' : 'pull 完成',
+              fullTree: true,
+            })
+          return
+        }
+        if (plan.kind === 'read-refs' && alreadyReadRefs !== true) {
+          setBusy(true)
+          rpc('git/refs', request(null), '读不到分支列表').then(function (refsData) {
+            setBusy(false)
+            followPullPlan(pullPlanOf({
+              payload: plan.payload,
+              hasUpstream: false,
+              workKnown: true,
+              refs: refsData,
+            }), true)
+          }, function () {
+            setBusy(false)
+            runCardSync('pull', 'git/pull', plan.payload == null ? null : plan.payload, 'pull', { fullTree: true })
+          })
+          return
+        }
+        if (plan.kind === 'read-refs') {
+          /* 补读过一次还是读不动：裸 pull，让 git 自己说话。 */
+          runCardSync('pull', 'git/pull', plan.payload == null ? null : plan.payload, 'pull', { fullTree: true })
+          return
+        }
+        setPick(true)
+      }
+      const pullAction = function () {
+        if (busy === true) return
+        const row = all.find(function (one) { return one.current === true })
+        /* 已有 upstream：行为一字不变，照旧直接 pull。没有当前行（detached /
+           unborn，这张卡的列表不收它）：也照旧直接 pull。两种都由共用那份判断
+           收掉（hasUpstream / workKnown），这里只把「卡片知道的事实」交给它。 */
+        const plan = pullPlanOf({
+          payload: null,
+          hasUpstream: row != null && text(row.upstream).length > 0,
+          workKnown: row != null,
+          refs: null,
+        })
+        if (plan.kind === 'apply') {
+          runCardSync('pull', 'git/pull', null, 'pull', { fullTree: true })
+          return
+        }
+        /* refs 这里还没有：先读一次，回来再按同一份判断决定绑/挑。 */
+        setBusy(true)
+        rpc('git/refs', request(null), '读不到分支列表').then(function (refsData) {
+          setBusy(false)
+          followPullPlan(pullPlanOf({
+            payload: null,
+            hasUpstream: row != null && text(row.upstream).length > 0,
+            workKnown: row != null,
+            refs: refsData,
+          }))
+        }, function () {
+          setBusy(false)
+          runCardSync('pull', 'git/pull', null, 'pull', { fullTree: true })
+        })
+      }
+
+      /* 不在「同步动作」那一份里的卡片动作（合并到当前分支 = git/sequence 等）：
+         就地反馈、不开链、不与面板共享运行中标记 —— 它们本来就是卡片自己的手势。 */
       const act = function (method, payload, label) {
         if (busy === true) return
         setBusy(true)
@@ -471,57 +664,6 @@
           setBusy(false)
           if (failure.reply !== undefined) bumpData()
           setError(failureText(failure))
-        })
-      }
-
-      /* ── 拉取（这张卡里的 ↓）──
-
-         已有 upstream 照旧直接 pull，一字不变。没有时先问一次 refs：远端有同名
-         分支就带 setUpstream 一次跑完（绑定 + 拉取，set-upstream-to 的 argv 在
-         Host 那半）；没有同名就把列表区域换成远端分支选择（pick），点行绑定并
-         拉取。refs 读不动就按老路裸 pull —— git 的拒绝原话照旧上屏。 */
-      const pullBound = function (match) {
-        if (busy === true) return
-        setBusy(true)
-        setError(null)
-        setNote('正在绑定上游 ' + match.remote + '/' + match.branch + ' 并拉取…')
-        rpc('git/pull', request({ setUpstream: match }), '拉取失败').then(function () {
-          setBusy(false)
-          bumpData()
-          setPick(false)
-          setNote('已绑定上游 ' + match.remote + '/' + match.branch + ' 并拉取')
-        }, function (failure) {
-          setBusy(false)
-          bumpData()
-          const said = failureText(failure)
-          /* 远端分支其实不在（refs 数据过期，git 说 "does not exist"）：不裸报错，
-             落到选择层让读者挑一个真的在的。 */
-          if (said.indexOf('does not exist') >= 0) {
-            setError('上游 ' + match.remote + '/' + match.branch + ' 在远端已经不存在（列表过期），请在下面重新选择：')
-            setPick(true)
-            return
-          }
-          setError(said)
-        })
-      }
-      const pullAction = function () {
-        if (busy === true) return
-        const row = all.find(function (one) { return one.current === true })
-        /* 已有 upstream：行为一字不变，照旧直接 pull。 */
-        if (row != null && text(row.upstream).length > 0) { act('git/pull', {}, 'pull'); return }
-        /* 没有当前行：detached（没有名字）或还没出生（unborn，这张卡列表不收它）
-           —— set-upstream 无从谈起，照旧直接 pull。 */
-        if (row == null) { act('git/pull', {}, 'pull'); return }
-        const current = text(row.name)
-        setBusy(true)
-        rpc('git/refs', request(null), '读不到分支列表').then(function (refsData) {
-          setBusy(false)
-          const match = upstreamMatchInRefs(refsData, current)
-          if (match != null) { pullBound(match); return }
-          setPick(true)
-        }, function () {
-          setBusy(false)
-          act('git/pull', {}, 'pull')
         })
       }
 
@@ -643,9 +785,9 @@
       /* 记号跟面板一致：面板头部的同步组就是 ⇣ / ↓ / ↑ 这几个字符，这里不再
          另画一套 SVG。一个动作一种画法，两个地方看起来才是同一套。 */
       const actionDefs = [
-        { id: 'fetch', glyph: '⇣', short: '获取', label: '获取远端最新（fetch）', run: function () { act('git/fetch', {}, 'fetch') } },
+        { id: 'fetch', glyph: '⇣', short: '获取', label: '获取远端最新（fetch）', run: function () { runCardSync('fetch', 'git/fetch', null, 'fetch') } },
         { id: 'pull', glyph: '↓', short: '拉取', badge: behindNow > 0 ? (behindNow > 99 ? '99+' : String(behindNow)) : undefined, label: '拉取当前分支（pull）', run: function () { pullAction() } },
-        { id: 'push', glyph: '↑', short: '推送', badge: aheadNow > 0 ? (aheadNow > 99 ? '99+' : String(aheadNow)) : undefined, label: '推送当前分支（push）', run: function () { act('git/push', {}, 'push') } },
+        { id: 'push', glyph: '↑', short: '推送', badge: aheadNow > 0 ? (aheadNow > 99 ? '99+' : String(aheadNow)) : undefined, label: '推送当前分支（push）', run: function () { pushAction() } },
       ]
       actionDefs.push({ id: 'new', glyph: '+', short: '新建分支', label: '新建分支…', run: function () { setCreating({ at: '', value: '' }) } })
       const actions = []
@@ -857,13 +999,21 @@
         /* 面板那几个 tool 的角标就是一个数字药丸，这里也照那个样子：记号已经
            是 ⇣/↓/↑ 了，角标再带一个箭头就成了「↓拉取↓1」。 */
         if (def.badge !== undefined) parts.push(h('span', { key: 'b', className: 'dsh-git-bs-chip-n' }, def.badge))
+        /* 同步动作（⇣↓↑）的禁用与转圈跟面板顶栏共用同一份运行中状态：卡片里按下
+           之后按钮立刻变灰，面板那一格也一样；别人（面板）在跑时这里同样点不动。
+           「哪些 id 算同步动作」读 78-actions.js 的 SYNC_ACTION_KEYS —— 那张表是
+           一份，不是在这里再列一次 fetch/pull/push。
+           其它动作（新建分支 / 合并）只看卡片自己的 busy。 */
+        const syncBusy = SYNC_ACTION_KEYS.indexOf(def.id) >= 0
+          ? syncActionRuns[def.id] === true
+          : false
         chips.push(h('button', {
           key: 'a:' + def.id, type: 'button',
           className: 'dsh-git-bs-chip'
             + (on ? ' dsh-git-bs-chip-on' : '')
             + (def.id === 'new' ? ' dsh-git-bs-chip-new' : ''),
-          title: def.label,
-          disabled: busy === true,
+          title: syncBusy === true ? def.label + '（运行中…）' : def.label,
+          disabled: busy === true || syncBusy === true,
           onMouseEnter: function () { setIndex(i) },
           onClick: function (event) { stopEvent(event); def.run() },
         }, parts))

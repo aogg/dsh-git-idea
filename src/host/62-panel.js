@@ -131,6 +131,25 @@ function branchIdentityShell(target) {
    that fixes it, instead of "not a Git repository". */
 const PANEL_UNSAFE_OWNER = 'O:safedir'
 
+/* ── 这个仓库是不是浅克隆：跟着整树读一起回来的一行 ──
+
+   面板顶栏 ⇣ 的右键菜单里有「取全量历史」（git fetch --unshallow）和「浅取近 N
+   条」（git fetch --depth=N）：完整克隆上跑 --unshallow，git 自己就以
+   「--unshallow on a complete repository does not make sense」收场，所以那两项
+   该不该置灰，客户端必须先知道这件事。
+
+   这一问放在 panelCommand 那一段脚本里（同一个 `$gd` 守卫内），**不另起一次
+   spawn**：整树读一次只起一个 shell 是这套读的既有形状（gp34a 把「一次读 = 一次
+   spawn」写成断言，gp84 又把「远端读的包裹命令只有一条」写成断言）。一个布尔值
+   为它多开一条通道，等于让每次轮询都多付一次远端往返。
+   方言也没问题：这一行只用 `$(...)` / `printf` / `2>/dev/null`，与同脚本里其它行
+   完全同一套写法（cmd 主机的脚本本来就是交给 Git Bash 的 `-s` 跑的，见 11-remote.js）。
+
+   答复是 `SH:true` / `SH:false`；读不出来（老 git、非仓库、命令失败）时那一行是
+   `SH:`，Host 据此**不写** reply.shallow —— 「不知道」和「不是浅克隆」是两件事，
+   把不知道说成 false 会让菜单把两项置灰在一个其实该能点的仓库上。 */
+const PANEL_SHALLOW_PREFIX = 'SH:'
+
 function safeDirectoryShell(target) {
   const quoted = shq(target)
   return [
@@ -250,7 +269,12 @@ function panelCommand(target, paths) {
     '  fi',
     "  printf '%s\n' \"$out\"",
     "  printf 'RC:%s\n' \"$rc\"",
+    /* 浅克隆与否（上面 PANEL_SHALLOW_PREFIX 那一格说清了为什么在这里、而不是另起
+       一次读）：只在 `$gd` 里问 —— 不在仓库里时这一问没有意义，git 还会为它去问
+       一个不存在的仓库。放在 identity 那一条**前面**：那条后面紧跟 `fi`，是
+       gp34a 的判据形状。 */
     '  if [ -n "$gd" ]; then',
+    "    printf '" + PANEL_SHALLOW_PREFIX + "%s\\n' \"$(" + gitCmd() + ' -C ' + quoted + ' rev-parse --is-shallow-repository 2>/dev/null)"',
     sequencerShell(),
     identityShell(target),
     '  fi',

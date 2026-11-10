@@ -122,6 +122,29 @@
     function refKind(label) {
       if (label.indexOf('HEAD') === 0) return 'head'
       if (label.indexOf('tag: ') === 0) return 'tag'
+      if (label === SHALLOW_REF) return 'shallow'
       return 'remote'
+    }
+
+    /* ── `grafted`：git 的浅克隆边界标记，不是引用 ──
+
+       `%D`（git log --pretty=format:%D）在浅克隆的边界提交上会多带一项 `grafted`
+       —— 它不是分支也不是标签，是「这条提交的父提交这次克隆没取回来」的记号。
+       以前它就和 origin/main 一起进了那排小圆标，屏幕上出现一个英文的灰色小标签，
+       谁也说不清那是什么意思。
+
+       所以：**认得它、说中文、说清楚怎么办**。三项一起换 ——
+         · 文本：「浅克隆」（列上一眼看得懂，且不挤掉同一行的 ref 装饰）；
+         · 类名：dsh-git-ref-shallow（虚线边的灰色药丸，与 remote/tag 都不撞）；
+         · 悬浮：一句话讲透含义与出路（那一行自己的 title 里也会再说一次，
+           见 50-log.js 的 shallowRefTip）。
+       识别只认同名整串（git 自己写的就是这一串），别的引用名一个字都不动。 */
+    const SHALLOW_REF = 'grafted'
+    const SHALLOW_BADGE = '浅克隆'
+    const SHALLOW_REF_TIP = '浅克隆边界提交：更早的提交这次克隆没有取回来，本地历史到这里为止'
+      + '（git log 的 grafted 标记）。要看到更早的提交，用面板顶栏 ⇣ 取回按钮右键「取全量历史」'
+
+    function shallowRefTip() {
+      return SHALLOW_REF_TIP
     }
 

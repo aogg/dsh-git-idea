@@ -79,14 +79,30 @@
          「今天 HH:mm」这一层，哪一分钟提交的要看这里。 */
       const when = fullDate(commit.date)
       const chips = []
+      /* 浅克隆边界（git 的 grafted）：git 的原始说法换成中文小标签，并带上说明。
+         同一个数组里其它装饰（HEAD -> main / origin/main / tag: v1）一个字都不动，
+         只是每一项的 kind 可能变成 'shallow'（40-format.js 的 refKind）。 */
+      let shallowBoundary = false
       for (let k = 0; k < refs.length; k += 1) {
-        chips.push(h('span', { className: 'dsh-git-ref dsh-git-ref-' + refKind(refs[k]), key: 'r' + k }, refs[k]))
+        const kind = refKind(refs[k])
+        if (kind === 'shallow') {
+          shallowBoundary = true
+          chips.push(h('span', {
+            className: 'dsh-git-ref dsh-git-ref-shallow', key: 'r' + k,
+            title: shallowRefTip(),
+          }, SHALLOW_BADGE))
+          continue
+        }
+        chips.push(h('span', { className: 'dsh-git-ref dsh-git-ref-' + kind, key: 'r' + k }, refs[k]))
       }
       return h('div', {
         className: 'dsh-git-crow'
           + (props.selected === true ? ' dsh-git-crow-sel' : '')
           + (props.multi === true ? ' dsh-git-crow-multi' : ''),
-        title: commit.hash + '\n' + commit.subject + (when.length > 0 ? '\n' + when : ''),
+        /* 边界提交的行悬浮提示多说一句「为什么下面就没有了」：灰标签上的 title 要
+           悬停到那个小圆标上才看得到，整行才是大家真正会停的地方。 */
+        title: commit.hash + '\n' + commit.subject + (when.length > 0 ? '\n' + when : '')
+          + (shallowBoundary === true ? '\n' + shallowRefTip() : ''),
         /* 事件一起回给面板：Ctrl/Cmd+点击是「挑进/移出多选」，普通点击照旧单选 ——
            区分只在这一层做，行自己不解读修饰键。 */
         onClick: function (event) { props.onPick(commit.hash, event) },

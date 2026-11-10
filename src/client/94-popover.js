@@ -54,12 +54,34 @@
       }
     })()
 
+    /* ── 把浮层宿主提进顶层（top layer）的那一下 ──
+
+       只做一件事、不渲染任何东西：让「宿主已可见」发生在面板子树的布局测量之前。
+       挂着 useLayoutEffect 而不是 useEffect —— 进顶层必须赶在这一帧画出来之前，
+       否则打开的瞬间会闪一帧「还看不见」。
+
+       幂等：gitFloatPromote / gitFloatWithdraw 都先问一句现在是什么状态（重复
+       showPopover 会抛 InvalidStateError，那两个函数各自兜着并记日志）。没有
+       host（没有 portal）或宿主已经被换掉（watchdog 重建，epoch 变）时按新 host
+       再来一次。 */
+    function GitFloatTopLayer(props) {
+      const host = props.host
+      const show = props.show === true
+      useLayoutEffect(function () {
+        if (host == null) return undefined
+        if (show === true) gitFloatPromote(host)
+        else gitFloatWithdraw(host)
+        return undefined
+      }, [host, show, props.epoch])
+      return null
+    }
+
     function GitPopover(props) {
       const isOpen = useOpen()
       const mode = useSwitchMode()
       /* 浮层代数：看门狗修浮层时 bump 一下，这里跟着重渲染，把面板搬进（可能的）
          新 host —— 没有这一条，「无人触发重渲染」的场合就得等读者点两下图标。 */
-      useGitFloatEpoch()
+      const floatEpoch = useGitFloatEpoch()
       /* 分支卡片上那个「几个改动」也来自全局那一份读数：同一个数字在面板、chip 和这张
          卡片上必须是同一个。 */
       useTreeVersion()
@@ -74,6 +96,35 @@
       const escape = gitFloatEscape()
       const floated = escape != null
       const [probeBox] = React.useState(function () { return { node: null } })
+      /* ── 顶层（top layer）：有东西要显示才进，收起就出 ──
+
+         面板打开或悬停卡片开着时，把 body 上的浮层宿主提进 HTML 的 top layer
+         （16-portal.js 的 gitFloatPromote）—— 那一层不参与 z-index 竞争，所以 DSH
+         会话顶栏、以及这台机器上别的插件写的 1300 / 2147483000 都盖不到本插件的
+         面板与卡片。
+
+         只在「有东西要显示」时进：关着的时候一点也不占用顶层，DSH 自己的对话框
+         （z-index 1000）、toast 与菜单照旧在最上面 —— 数字不必调大，也不会把别人
+         的界面挡在上面。
+
+         这一步交给 GitFloatTopLayer **那个空组件**做，而不是在这里写一条
+         useLayoutEffect：React 的布局副作用是子先父后，父组件那一条会晚于面板
+         子树自己的布局测量跑，而收起的 popover 宿主是 display:none —— 面板里
+         「量容器 clientWidth 判断窄屏」（54-changes.js 的 useNarrowWidth）就会量到
+         0、在打开的那一帧按宽屏画（拖窄过的面板因此会闪一下展开态）。它被放在
+         portal 里、面板之前那一位：兄弟节点按次序提交，它的布局副作用因此**先于**
+         面板子树的任何测量跑完，宿主在那之前就已经可见。
+         没有 portal（floated=false）或没有 Popover API 时它什么都不做，行为与从前
+         一字不差（z-index 95 兜底）。 */
+      const surfaceShown = isOpen === true || mode === 'hover'
+      const topLayerEl = h(GitFloatTopLayer, {
+        key: 'top',
+        host: floated === true && escape != null ? escape.host : null,
+        show: surfaceShown,
+        /* floatEpoch 进 props：浮层被看门狗重建过之后，新的 host 要重新进顶层，
+           否则面板搬进一个还没 showPopover 的宿主里，等于没提上去。 */
+        epoch: floatEpoch,
+      })
       /* 悬停卡片的高度上界（像素，null = 不钳）。卡片和面板挂在同一个锚点上、
          同样 bottom:100% 向上生长，hero 相位（新会话输入框居中）时卡片顶同样会被会话
          滚动体裁掉 —— 面板是靠钳高度让列表少显示几行，卡片同款：把量到的可见空间
@@ -274,7 +325,11 @@
 
       if (floated !== true) return h('div', { className: 'dsh-git-layer' }, guardedEl)
       /* 浮层路径：面板和卡片搬进 body 级浮层；探针留在槽位里当锚 —— 它必须还在
-         主对话的框里，量出来的才是输入框的位置。 */
+         主对话的框里，量出来的才是输入框的位置。
+
+         portal 的子节点是**两**个：先进顶层的那个空组件，然后才是面板与卡片。
+         React 按兄弟次序提交副作用，所以「宿主可见」一定发生在面板子树的布局测量
+         之前（见上面 surfaceShown 那一段）。 */
       return h('div', { className: 'dsh-git-layer' },
         h('div', {
           key: 'probe',
@@ -284,5 +339,5 @@
             width: '1px', height: '1px', pointerEvents: 'none',
           },
         }),
-        escape.portal(guardedEl, escape.host))
+        escape.portal([topLayerEl, guardedEl], escape.host))
     }

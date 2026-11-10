@@ -7,13 +7,16 @@
        要么带着记忆宽度溢出被裁 —— 显示不全。这一层把弹层的渲染搬到 document.body
        上一个视口大小的定点层（.dsh-git-float，样式在 46-css.js）：position:fixed、
        pointer-events:none（弹层自己再打开）、overflow:hidden（浮层不把 document
-       撑出滚动区）、z-index 95。
+       撑出滚动区）。
 
-       z-index 95 的上下文（实测 better-sidebar 的源码，只读参考）：它的侧栏宿主
-       [data-dsh-panel-host] 是 body 级 fixed 层 z-index 25，格内的 40/90 都被这层
-       罩住；它自己 portal 到 body 的浮窗（FloatingWindow）与锚定卡（AnchoredPopover）
-       是 90；DSH 的 ui-cordis 插件面板是 fixed 30；应用的对话框栈在 100+。95 恰好
-       压过 better-sidebar 的一切常驻面，又不挡应用自己的对话框。
+       ── 层级：顶层（top layer，见下面的 gitFloatPromote）──
+       光有 body 级 + z-index 还不够：DSH 会话自己的顶栏、以及这台机器上别的插件
+       （实测 ssh-workspace 用到 1300、ao-local 用到 2147483000）都会把「挑一个大
+       一点的数」变成一场赌。所以有东西要显示时把宿主提进 HTML 的 top layer
+       （popover=manual + showPopover）：那一层不参与 z-index 竞争，永远在文档里所有
+       z-index 之上；收起即退出顶层，DSH 自己的对话框（1000）、toast 与菜单照旧在
+       最上面。z-index 95（46-css.js）只剩「没有 Popover API 的内核」的兜底，
+       这个数沿用旧值，不再承担「盖过谁」的职责。
 
        createPortal 的来源：真包构建（dist/client/client.js）的模块表里有 react-dom
        （渲染器自己就 require 它），用 require 拿；个别环境只给了全局 ReactDOM 就
@@ -73,6 +76,91 @@
       timerOf().timeout(function () { bumpGitFloat() }, 0)
     }
 
+    /* ── 把这一层提到「顶层」（top layer）：盖住 DSH 自己的顶栏 ──
+
+       症状：点 chip 弹出来的面板 / 悬停卡片贴到屏幕上方时，被 DSH 会话自己的顶栏
+       （.wSkVaW_header，含「对话 / 轨迹 / …」那条 tab 栏）盖掉一截。
+
+       为什么不是把 z-index 数字再调大一点：
+         · DSH 自己的内容级层已经占了一片数：会话 tab 栏 z-index:1、交互面板 30、
+           菜单 100 / 1100、弹窗 1000、toast 1100（实测 dsh-web-frontend 与
+           dsh-client-ui-* 的产物）；同一台机器上还装着别的插件，layer 更是各写各的
+           —— 这个部署里 ssh-workspace 用到 1300、ao-local 用到 2147483000。
+           挑一个比它们都大的数，只是在赌下一个插件不会写更大。
+         · 反过来，数字挑大了就会盖住 DSH 自己的对话框与 toast —— 那是真的把别人的
+           界面挡坏。
+
+       HTML 的 top layer 是「不参与 z-index 竞争」的那一层（popover / dialog 用的就是
+       它）：在顶层里的元素按「进入顺序」叠放，永远在文档里所有 z-index 之上，包括
+       上面那些四位数五位数。所以这里给 body 上的浮层宿主加 `popover="manual"`
+       并 showPopover()：
+         · manual = 没有「点外面就关」（light dismiss），开合仍由本插件的 open /
+           hover 状态说了算；
+         · 不挡点击：宿主本身 pointer-events:none（46-css.js），能点的只有它里面
+           真正打开的面板与卡片；
+         · 只在**本插件有东西要显示**（面板打开 / 悬停卡片开着）时才进顶层，
+           收起即 hidePopover() —— 关着的时候一点也不占用顶层，DSH 的对话框、
+           toast、菜单照旧在最上面（它们晚进顶层，或者本来就在文档之上）。
+       浏览器没有 Popover API（旧内核、单测的迷你 DOM）时安静退回 z-index 95 的老
+       路，一个字都不会崩：能问就问，问不到就照旧。 */
+    const GIT_FLOAT_POPOVER_ATTR = 'popover'
+
+    function gitFloatTopLayerSupported(host) {
+      if (host == null) return false
+      if (typeof host.showPopover !== 'function' || typeof host.hidePopover !== 'function') return false
+      /* 属性是这一层真正被理解的前提：老内核里 showPopover 不存在，这一句只是
+         双保险。 */
+      return typeof host.setAttribute === 'function'
+    }
+
+    function gitFloatIsTopLayerOpen(host) {
+      try {
+        return typeof host.matches === 'function' && host.matches(':popover-open') === true
+      } catch (error) {
+        /* 认不出 :popover-open 的内核（或测试里的假节点）：当作「没开」，于是下面
+           会照常 showPopover，异常在调用处另有兜底。 */
+        return false
+      }
+    }
+
+    /* 进/出顶层。两个方向都幂等：重复进不会抛 InvalidStateError（那是 showPopover
+       在已开时抛的），重复出也不会。 */
+    function gitFloatPromote(host) {
+      if (gitFloatTopLayerSupported(host) !== true) return false
+      try {
+        if (host.getAttribute(GIT_FLOAT_POPOVER_ATTR) !== 'manual') {
+          host.setAttribute(GIT_FLOAT_POPOVER_ATTR, 'manual')
+        }
+        if (gitFloatIsTopLayerOpen(host) === true) return true
+        host.showPopover()
+        return true
+      } catch (error) {
+        /* 真内核里会抛的情形：宿主已经不在文档里（watchdog 会重建）、或这个元素
+           不被允许进顶层。回退到 z-index 的老路 —— 但那是一次真实的状态变化，
+           值得留一行日志（05-telemetry.js 的 diagLog）。 */
+        diagLog('float-toplayer', {
+          detail: '浮层进顶层失败，退回 z-index 95',
+          message: error != null && error.message !== undefined ? String(error.message) : String(error),
+        })
+        return false
+      }
+    }
+
+    function gitFloatWithdraw(host) {
+      if (!gitFloatTopLayerSupported(host)) return false
+      try {
+        if (gitFloatIsTopLayerOpen(host) !== true) return false
+        host.hidePopover()
+        return true
+      } catch (error) {
+        diagLog('float-toplayer', {
+          detail: '浮层退出顶层失败（留在顶层不影响点击，也不遮挡别的内容）',
+          message: error != null && error.message !== undefined ? String(error.message) : String(error),
+        })
+        return false
+      }
+    }
+
     /* GitPopover 渲染期问一次的入口。null = 这个环境没有可用的 portal（没有
        document.body、没有 react-dom）：调用方照旧走旧路。层是惰性单例：body 上
        只挂一个，多次渲染、多个会话的弹层共用。 */
@@ -88,6 +176,10 @@
       if (portal == null) return null
       const host = document.createElement('div')
       host.className = 'dsh-git-float'
+      /* popover 属性在第一帧就带上：showPopover 由 94-popover.js 的 effect 按
+         「有没有东西要显示」调用（渲染期不改 DOM 的显示状态）。这里只把属性写好，
+         免得第一次 showPopover 时才改属性、触发一次多余的重排。 */
+      if (gitFloatTopLayerSupported(host) === true) host.setAttribute(GIT_FLOAT_POPOVER_ATTR, 'manual')
       body.appendChild(host)
       gitFloatLayerBox = { portal: portal, host: host }
       return gitFloatLayerBox

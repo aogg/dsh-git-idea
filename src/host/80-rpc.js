@@ -604,6 +604,36 @@ async function netConfig() {
 
 onRpc('git/fetch', async function (input) {
   const config = await netConfig()
+  /* ── 三个变体，同一条命令 ──
+
+     左键 ⇣ 一直是 `fetch --all`（开了 fetchPrune 再加 --prune）。浅克隆仓库还需要
+     另外两条 git 自己才有的动作，它们是 ⇣ 右键菜单的两项（客户端只说「要什么」，
+     argv 在这里才成形 —— 与 pull 的几个变体同一个规矩）：
+
+       · unshallow（取全量历史）→ `fetch --all --unshallow`：把 .git/shallow 里那些
+         边界补齐，本地从此有全部历史。实测（--depth=1 克隆的仓库）一条命令就从
+         rev-list --count 2 涨到 277，并清空 shallow 文件。
+       · depth === N（浅取近 N 条）→ `fetch --all --depth=N`：把深度改写成 N。
+       · 都没有（默认）→ 原样，一个字不改。
+
+     --unshallow 与 --depth 互斥（git 自己会拒绝），两个都给时以 unshallow 为准：
+     读者点的是「取全量」，那才是意图。depth 只认正整数，其余一律拒绝 —— 不把
+     一个来路不明的数喂进 argv（这里是数组，切不开命令，但 git 会把 --depth=0 当
+     合法值并做出读者没要的事）。 */
+  const prune = config.fetchPrune === true
+  const unshallow = input != null && input.unshallow === true
+  if (unshallow) {
+    return panelMutate(input, prune ? ['fetch', '--all', '--unshallow', '--prune'] : ['fetch', '--all', '--unshallow'],
+      { net: true, spawn: NET_SPAWN, desc: '取全量历史' })
+  }
+  if (input != null && input.depth !== undefined && input.depth !== null) {
+    const depth = typeof input.depth === 'number' ? input.depth : NaN
+    if (!isFinite(depth) || depth < 1 || Math.floor(depth) !== depth || depth > 1000000) {
+      return { ok: false, error: 'bad-value', repo: repoFrom(input, null), stdout: '', stderr: '浅取的深度要是一个正整数（1..1000000）', exitCode: null }
+    }
+    const argv = prune ? ['fetch', '--all', '--depth=' + String(depth), '--prune'] : ['fetch', '--all', '--depth=' + String(depth)]
+    return panelMutate(input, argv, { net: true, spawn: NET_SPAWN, desc: '浅取近 ' + String(depth) + ' 条' })
+  }
   return panelMutate(input, config.fetchPrune === true ? ['fetch', '--all', '--prune'] : ['fetch', '--all'], { net: true, spawn: NET_SPAWN, desc: '取回' })
 })
 
