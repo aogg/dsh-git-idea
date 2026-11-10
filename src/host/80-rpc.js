@@ -278,10 +278,13 @@ onRpc('git/branches', function (input) { return branchesSnapshot(input) })
 onRpc('git/worktrees', function (input) { return worktreesSnapshot(input) })
 
 /* worktree 的主目录（65-worktree.js 下半）：git/wt-main 是「这个目录是什么身份、
-    它的主仓库在哪」的一次性读（读缓存 tag 'wt-main'，随整仓失效）；git/wt-main-save
-    把读者纠正过的主目录写进插件配置（70-config.js 的 worktreeMains），答复带最新
-    一份 wt-main 读数。主仓库被删/搬走的 worktree 靠这两条认路 —— 说明页那块
-    WorktreeMainSetup 与配置页的「worktree 主目录」组吃的都是它们。 */
+    它的主仓库在哪」的一次性读（读缓存 tag 'wt-main'，随整仓失效）；答复另带映射
+    三件套 —— mappedRule（命中的映射规则）、mainVia（config 来源下的 'manual' /
+    'mapping'）、autoRecorded（映射命中且候选存在时本次已自动写进配置）、以及手动
+    答案失效时的 mappingSuggestion。git/wt-main-save 把读者纠正过的主目录写进插件
+    配置（70-config.js 的 worktreeMains，来源账 worktreeMainsMeta 同一份写盘维护），
+    答复带最新一份 wt-main 读数。主仓库被删/搬走的 worktree 靠这两条认路 —— 说明页
+    那块 WorktreeMainSetup 与配置页的「worktree 主目录」组吃的都是它们。 */
 onRpc('git/wt-main', function (input) { return wtMainSnapshot(input) })
 
 onRpc('git/wt-main-save', function (input) { return saveWorktreeMain(input) })

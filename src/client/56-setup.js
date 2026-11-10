@@ -61,6 +61,7 @@
     function WorktreeMainSetup(props) {
       const sessionId = props.sessionId
       const target = text(props.initial)
+      const plugin = usePluginConfig()
       const [snap, setSnap] = React.useState(null)
       const [draft, setDraft] = React.useState('')
       const [busy, setBusy] = React.useState(false)
@@ -132,6 +133,20 @@
          「多半被删了或搬走了」不是事实，话得换成「另一台机器的目录已换算」，
          出路（打开主目录）也已经摆在下面。 */
       const viaMapping = snap.mainMapped === true
+      /* 来源与自动记录的旗标（host 65-worktree.js 的 mainVia / autoRecorded）：
+         config 来源下 mainVia==='mapping' 表示这条答案是映射命中后 Host 自动记录
+         的（不是读者手写的，说「手动配置」就是说谎）；autoRecorded 表示这一读刚
+         把它写进了配置 —— 提示一句「下次直接识别」。 */
+      const fromAutoRecord = snap.mainSource === 'config' && snap.mainVia === 'mapping'
+      const autoRecorded = snap.autoRecorded === true
+      /* 手动答案失效时的顺手指路（host 65-worktree.js 的 mappingSuggestion）：配置
+         的主目录已不在，而映射恰能把 gitlink 路径换算到一个在的目录 —— 只预填，
+         存不存是读者的事。 */
+      const suggestion = snap.mappingSuggestion != null ? snap.mappingSuggestion : null
+      /* 全局配置的目录映射清单（20-prefs.js 原样搬运的那格）：只读画出来、命中显示
+         那条 —— 读者在这里就能看到「面板按哪条规则换算的」；增删改去全局配置。 */
+      const mappings = Array.isArray(plugin.worktreeDirMappings) ? plugin.worktreeDirMappings : []
+      const hitRule = snap.mappedRule != null ? snap.mappedRule : null
       return h('div', { className: 'dsh-git-setup-sub' },
         h('div', { className: 'dsh-git-setup-h' }, '这是一个 worktree（链接工作区）'),
         h('div', { className: 'dsh-git-hint' },
@@ -156,6 +171,23 @@
               onClick: function () { props.onOpen(mainDir) },
             }, '打开这个目录')
             : null),
+        /* 来源一句话（只在该说的时候出现，不说谎）：这条答案是映射命中后自动记录
+           的，或者这一读刚自动记录的 —— 各自一句话，别的来源不占行。 */
+        fromAutoRecord || autoRecorded
+          ? h('div', { className: 'dsh-git-hint' },
+            (fromAutoRecord ? '主目录来自目录映射命中后的自动记录' + (autoRecorded ? '；' : '。') : '')
+            + (autoRecorded ? '已自动记录到项目配置（下次直接识别）。' : ''))
+          : null,
+        suggestion != null
+          ? h('div', { className: 'dsh-git-set-row' },
+            h('span', { className: 'dsh-git-set-label' }, '顺手指路'),
+            h('span', { className: 'dsh-git-hint' }, '配置的主目录已不在；目录映射换算到 ' + text(suggestion.path)),
+            h('button', {
+              type: 'button', className: 'dsh-git-btn',
+              title: '把换算结果填进下面的输入框（只预填，保存还要你点）',
+              onClick: function () { setDraft(text(suggestion.path)); setNote('') },
+            }, '填入'))
+          : null,
         h('div', { className: 'dsh-git-set-row' },
           h('span', { className: 'dsh-git-set-label' }, '配置主目录'),
           clearable('wtmain', h('input', {
@@ -180,7 +212,28 @@
             }, '清除配置')
             : null,
           note.length > 0 ? h('span', { className: 'dsh-git-hint' }, note) : null),
-        problem.length > 0 ? h('div', { className: 'dsh-git-hint dsh-git-error' }, problem) : null)
+        problem.length > 0 ? h('div', { className: 'dsh-git-hint dsh-git-error' }, problem) : null,
+        /* ── 目录映射（只读清单，块尾）：这个页面最常见的来路正是「gitlink 记着
+            另一台机器的路径」，哪条规则命中、有哪些规则可配，读者理应在这就看得见
+            —— 空清单直说「还没有」，命中那条标出来；增删改去全局配置（那一页有
+            完整编辑器，这里只读不重复造一套）。行样式借全局配置编辑器同一套
+            （46-css.js 的 dsh-git-wdm-*），命中标注一条新 class。 ── */
+        h('div', { className: 'dsh-git-setup-maps' },
+          h('div', { className: 'dsh-git-setup-h' }, '目录映射'),
+          mappings.length === 0
+            ? h('div', { className: 'dsh-git-hint' },
+              '还没有目录映射规则。这个 worktree 的 .git 里记着另一台机器的路径时，配一条规则面板才能换算出本机的主目录。')
+            : mappings.map(function (one, i) {
+              const from = text(one != null && one.from)
+              const to = text(one != null && one.to)
+              const hit = hitRule != null && from === text(hitRule.from) && to === text(hitRule.to)
+              return h('div', { key: 'wdm-' + String(i), className: 'dsh-git-wdm-row' },
+                h('span', { className: 'dsh-git-wdm-from', title: from }, from),
+                h('span', { className: 'dsh-git-hint' }, '→'),
+                h('span', { className: 'dsh-git-wdm-to', title: to }, to),
+                hit ? h('span', { className: 'dsh-git-wdm-hit' }, '命中：主目录按这条规则换算') : null)
+            }),
+          h('div', { className: 'dsh-git-hint' }, '增删改在 配置 → 全局配置 → worktree → 目录映射。')))
     }
 
     function RepoSetup(props) {

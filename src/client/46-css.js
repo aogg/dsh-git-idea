@@ -268,6 +268,10 @@ textarea.dsh-git-input{resize:vertical}
    .dsh-git-set-row / .dsh-git-set-label（配置页同一套），不再另写一套行样式。 */
 .dsh-git-setup-sub{display:flex;flex-direction:column;gap:8px;margin-top:6px;padding-top:12px;border-top:1px solid var(--dsw-alias-border-l1)}
 .dsh-git-setup-sub .dsh-git-setup-h{font-size:12px}
+/* 说明页「worktree 主目录」块尾部的只读目录映射清单（56-setup.js WorktreeMainSetup）：
+    说明页那一列已经是 gap:8 的小纵列，这里只是给清单自己的行距（gap:4，比块本体
+    紧一点 —— 行与 hint 都是 11px 小字，同一档间距会显得松散），不另立布局体系。 */
+.dsh-git-setup-maps{display:flex;flex-direction:column;gap:4px}
 .dsh-git-wtmain-path{flex:0 1 auto;min-width:0;max-width:100%;overflow:auto;white-space:nowrap}
 .dsh-git-hint{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary)}
 .dsh-git-danger{color:var(--dsw-alias-state-error-primary)}
@@ -854,6 +858,10 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-wdm-row .dsh-git-btn,.dsh-git-qc-row .dsh-git-btn{flex:none}
 .dsh-git-wdm-from{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:var(--dsw-alias-label-secondary)}
 .dsh-git-wdm-to{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
+/* 命中标注（56-setup.js 说明页的目录映射清单）：这是清单里唯一要跳出压暗灰的一格
+    —— 「面板这次就是按这条换算的」是读者找的答案，用品牌色小字把它顶出来；不换行
+    不抢 from → to 的宽（flex:none），行放不下时从 from 那格借地方（它们 min-width:0）。 */
+.dsh-git-wdm-hit{flex:none;font-size:11px;color:var(--dsw-alias-brand-primary)}
 .dsh-git-qc-empty{padding:6px 2px;font-size:11px;line-height:18px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dsw-alias-label-secondary)}
 .dsh-git-qc-inrow{display:flex;align-items:center;gap:8px}
 .dsh-git-qc-inhint{flex:none;width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--dsw-alias-label-secondary)}

@@ -252,9 +252,11 @@ console.log('== mainSource=config：配置里的主目录压过自动识别 ==')
     JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')).worktreeMains[WT] === MAIN)
   const probesAfterSave = probes(g.runs).length
   check('save 自己的收尾读恰好落一次探针（答复就是它带回的新账）', probesAfterSave === 1)
+  /* 0.5.0 起 save 的收尾读刻意不走缓存（要带 skipAutoRecord，见 65-worktree.js）：
+     这一读因此重新落一次探针 —— 答复仍与 save 的一致（WT 是 linked，不涉自动记录）。 */
   const again = await g.H('git/wt-main')({ repo: WT })
-  check('再读与 save 答复一致（save 已把新账放回缓存，同一格命中不再落探针）',
-    probes(g.runs).length === probesAfterSave
+  check('再读与 save 答复一致（收尾读不占缓存，这一读重新落一次探针；答复仍是 config 账）',
+    probes(g.runs).length === probesAfterSave + 1
     && again.mainDir === MAIN && again.mainSource === 'config' && again.configured === MAIN && again.mainOk === true)
 
   fs.writeFileSync(CONFIG_FILE, JSON.stringify({ worktreeMains: { [WT]: GONE } }))

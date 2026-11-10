@@ -103,6 +103,14 @@
          没了 —— 那正是主仓库被删/搬走后读者唯一亲手给对的答案。原样搬运、不做
          清洗 —— 清洗是 Host 那边 normalizeWorktreeMains 的职责。 */
       worktreeMains: {},
+      /* worktreeMains 的来源账（host 65-worktree.js 映射命中后自动写、saveWorktreeMain
+         同步维护）：键与本体一一对应，值 {via:'mapping', from, to, at} 说「这条答案
+         是目录映射命中后 Host 自动记录的，当时命中的是哪条规则」。与 worktreeMains
+         同一条先例：配置页保存的是**整份**配置，客户端的归一化把它丢了的话，读者
+         在配置页改一次 git 路径，各 worktree「答案是怎么来的」的账就全没了 —— 说明
+         页与配置页的来源小字从此说不出「自动记录（目录映射）」。原样搬运、不做
+         清洗 —— 清洗是 Host 那边 normalizeWorktreeMainsMeta 的职责。 */
+      worktreeMainsMeta: {},
       /* 生效仓库的跨浏览器记忆（按工作区分键，host 61-repos.js 的 appliedRepoSnapshot
          读、saveAppliedRepo 写）。与 repos 同一条先例：配置页保存的是**整份**配置，
          客户端的归一化把它丢了的话，读者在配置页改一次 git 路径，各工作区记住的
@@ -182,6 +190,9 @@
       out.drafts = raw.drafts != null && typeof raw.drafts === 'object' && !Array.isArray(raw.drafts) ? raw.drafts : {}
       /* worktreeMains 同 repos/drafts 一条先例：原样搬运，Host 那边负责清洗。 */
       out.worktreeMains = raw.worktreeMains != null && typeof raw.worktreeMains === 'object' && !Array.isArray(raw.worktreeMains) ? raw.worktreeMains : {}
+      /* worktreeMainsMeta 同 worktreeMains 一条先例：原样搬运，Host 那边负责清洗
+         （normalizeWorktreeMainsMeta）。 */
+      out.worktreeMainsMeta = raw.worktreeMainsMeta != null && typeof raw.worktreeMainsMeta === 'object' && !Array.isArray(raw.worktreeMainsMeta) ? raw.worktreeMainsMeta : {}
       /* appliedRepos 同 repos/drafts/worktreeMains 一条先例：原样搬运，Host 那边负责清洗。 */
       out.appliedRepos = raw.appliedRepos != null && typeof raw.appliedRepos === 'object' && !Array.isArray(raw.appliedRepos) ? raw.appliedRepos : {}
       /* worktreeDirMappings 是数组款的原样搬运（repos 一族是对象款）：条目形状与

@@ -63,6 +63,16 @@ function normalizeConfig(raw) {
        项目走，而不是跟着某台浏览器；客户端 20-prefs.js 同样照 repos 的先例原样
        搬运，配置页一次整份保存不至于把手工配置的主目录抹掉。 */
     worktreeMains: {},
+    /* worktreeMains 的来源账（65-worktree.js 的 readWtMain 自动写、saveWorktreeMain
+       同步维护）：{ "<worktree绝对路径>": {via:'mapping', from, to, at} }。与
+       worktreeMains 本体一一对应 —— 本体只说「主目录在哪」，这一格说「这个答案
+       是怎么来的」：via 只认 'mapping'（目录映射命中后 Host 自动记录的那条），
+       from / to 是当时命中的那条映射规则原文，at 是记录时刻。读者在配置页与
+       说明页据此把「手动配置」和「映射命中后的自动记录」分开说（不说谎）；
+       手动保存会把该键的记录删掉 —— 手动答案的来源就是读者自己，不再是映射。
+       跟 worktreeMains 同一条先例放这份配置、同一个清洗口径（normalizeWorktreeMainsMeta），
+       客户端 20-prefs.js 同样原样搬运。 */
+    worktreeMainsMeta: {},
     /* 生效仓库的跨浏览器记忆：{ "<工作区绝对路径>": "<仓库绝对路径>" }。
        读者在这个工作区里单击选定的仓库是这个项目的事实，不是某台浏览器怎么看它 ——
        按工作区（不是按会话）存进这份配置，换浏览器、换机器、开新会话都还是它。
@@ -125,6 +135,9 @@ function normalizeConfig(raw) {
   out.quickCommands = normalizeQuickCommands(raw.quickCommands)
   out.drafts = normalizeDrafts(raw.drafts)
   out.worktreeMains = normalizeWorktreeMains(raw.worktreeMains)
+  /* worktreeMainsMeta 与本体同一条路进出（65-worktree.js 的自动记录与手动维护
+     都在同一份 writeConfigFile 里带上它），归一化也跟着同一处。 */
+  out.worktreeMainsMeta = normalizeWorktreeMainsMeta(raw.worktreeMainsMeta)
   out.appliedRepos = normalizeAppliedRepos(raw.appliedRepos)
   out.worktreeDirMappings = normalizeWorktreeDirMappings(raw.worktreeDirMappings)
   out.branchHistory = normalizeBranchHistory(raw.branchHistory)
@@ -223,6 +236,38 @@ function normalizeWorktreeMains(raw) {
     if (!isStoredPath(worktree) || worktree.length > WT_MAIN_PATH_MAX) continue
     if (!isStoredPath(main) || main.length > WT_MAIN_PATH_MAX) continue
     out[worktree] = main
+    kept += 1
+  }
+  return out
+}
+
+/* worktreeMainsMeta 的清洗（默认值处那段说明的执行体）：键的口径与 normalizeWorktreeMains
+   完全同款（trim 后 isStoredPath、≤4096、条数同一个封顶 —— 它与本体一一对应，本体
+   进不来这个映射的键它也进不来）；值必须是 {via, from, to, at} 形状：via 只认
+   'mapping'（其余来源字段还没长出来，形状不对的整条丢弃 —— 记不清来源的账比一条
+   编造的账诚实），from / to 是当时命中的映射规则原文、非空 trim 后 ≤4096（DIR_MAPPING_PATH_MAX
+   同一个数 —— 它就是从 worktreeDirMappings 里抄出来的两条），at 是记录时刻（读不出记
+   0，remoteTransports 的 at 同一条规矩：显示与判断都不依赖它成立）。 */
+function normalizeWorktreeMainsMeta(raw) {
+  const out = {}
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return out
+  let kept = 0
+  for (const key in raw) {
+    if (!Object.prototype.hasOwnProperty.call(raw, key)) continue
+    if (kept >= WT_MAIN_MAP_MAX) break
+    const worktree = key.trim()
+    if (!isStoredPath(worktree) || worktree.length > WT_MAIN_PATH_MAX) continue
+    const value = raw[key]
+    if (value == null || typeof value !== 'object' || Array.isArray(value)) continue
+    if (value.via !== 'mapping') continue
+    const from = isStr(value.from) ? value.from.trim() : ''
+    const to = isStr(value.to) ? value.to.trim() : ''
+    if (from.length === 0 || to.length === 0) continue
+    if (from.length > DIR_MAPPING_PATH_MAX || to.length > DIR_MAPPING_PATH_MAX) continue
+    out[worktree] = {
+      via: 'mapping', from: from, to: to,
+      at: typeof value.at === 'number' && isFinite(value.at) && value.at >= 0 ? value.at : 0,
+    }
     kept += 1
   }
   return out

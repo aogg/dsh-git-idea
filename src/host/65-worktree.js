@@ -196,7 +196,7 @@ async function addWorktree(input) {
    目录映射：宿主的 D:\\code 挂成了客机的 /code），所以全局配置（70-config.js 的
    worktreeDirMappings，配置页「全局配置 → worktree」组编辑）允许他把它写成规则：
    识别主目录时，候选路径以「原目录」开头的那一段整段替换成「替换目录」——下面
-   的 mapWorktreeDir 就是那条规则的全部。范围只到「识别」：主目录候选、身份判定
+   的 mapWorktreeDirWithRule 就是那条规则的全部。范围只到「识别」：主目录候选、身份判定
    与显示；.git 文件本身一个字节不改（Linux 的 git 依旧读不动它，面板照旧落说明页
    —— 但说明页上的主目录已经是本机真在的那份，跟着「打开这个目录」就能用），
    git 调用也照旧路由到被探测的目录。
@@ -226,7 +226,11 @@ function worktreeDirMappingsOf(config) {
 
 /* 目录映射的前缀替换：path 以某条映射的 from 开头（按整段：要么恰好等于整条
    路径，要么后面紧跟一个分隔符 —— /data 不会配上 /database）就把那一段换成 to，
-   命中第一条就停（清单的顺序就是优先级）；一条都配不上就原样送回。
+   命中第一条就停（清单的顺序就是优先级）；一条都配不上就原样送回。返回值同时带
+   命中的那条规则原文（rule: {from,to}，清单里那两条的字面量，未做分隔符归一）：
+   答复的 mappedRule 与自动记录（worktreeMainsMeta 的 from / to）都要写「当时命中
+   的是哪条」—— 只回换算结果的话，「换算成了什么」说得清、「按哪条换算的」说不清，
+   读者想改规则时没处对账；没命中 rule 为 null。
 
    Windows 的两种分隔符写法（gitdir 里的 D:/code/… 与 D:\\code\\…）在这里归一成
    同一种再比：\\ 与 / 都是路径分隔符，别的字符照原样（包括大小写 —— 项目里没有
@@ -234,17 +238,17 @@ function worktreeDirMappingsOf(config) {
    替换侧的 to 只去尾部多余的分隔符、分隔符不做归一：它是这台机器上的路径，
    读者怎么写的就怎么用（UNC 的 \\\\server\\share 若真被写进来，替他把 \\ 换成 /
    反而是改了他的地址）。 */
-function mapWorktreeDir(path, mappings) {
-  if (!isStr(path) || path.length === 0 || mappings.length === 0) return path
+function mapWorktreeDirWithRule(path, mappings) {
+  if (!isStr(path) || path.length === 0 || mappings.length === 0) return { path: path, rule: null }
   const slashes = path.replace(/\\/g, '/')
   for (let i = 0; i < mappings.length; i += 1) {
     const from = mappings[i].from.replace(/\\/g, '/').replace(/\/+$/, '')
     if (from.length === 0) continue
     if (slashes !== from && slashes.indexOf(from + '/') !== 0) continue
     const to = mappings[i].to.replace(/[\/\\]+$/, '')
-    return to + slashes.slice(from.length)
+    return { path: to + slashes.slice(from.length), rule: { from: mappings[i].from, to: mappings[i].to } }
   }
-  return path
+  return { path: path, rule: null }
 }
 
 /* 一次 spawn 答完所有问题（62-panel.js pathShell 同款的多路复用 stdout 标记风格；
@@ -355,11 +359,18 @@ function wtMainProbeCommand(target, configured) {
        目录映射 —— gitlink 记的别机路径换成本机路径再当候选，见下面那段）；
      · 目录在、里面没有 .git → 'plain'。
    绝不向上找父目录；mainDir = 配置里的 ?? 自动找到的，mainSource 相应取
-   'config'/'auto'，两边都没有就 null。 */
-async function readWtMain(input, repo) {
+   'config'/'auto'，两边都没有就 null。答复另带映射四件套：mappedRule（broken-gitlink
+   下映射真的换了前缀时命中的那条规则）、mainVia（'config' 来源下 'manual' /
+   'mapping' 二选一）、autoRecorded（这一读顺手把换算候选自动写进了配置）、
+   mappingSuggestion（手动答案失效、而映射换算候选存在时的顺手指路）。 */
+async function readWtMain(input, repo, skipAutoRecord) {
   const target = repo === undefined || repo === null ? sessionWorkdir(input) : repo
+  /* mappedRule / mainVia / autoRecorded / mappingSuggestion 四个键在 ok:false 的答复
+     里也补齐空值：客户端按「有就画、没有就不画」读这些键，ok:false 的答复若缺键，
+     客户端一处的判空写法就得为两种答复写两遍 —— 空模板补齐，读法只有一种。 */
   const empty = { kind: 'missing', gitlink: '', gitdir: '', commonDir: '', toplevel: '',
     mainDir: null, mainSource: null, configured: null, mainOk: false, mainMapped: false,
+    mappedRule: null, mainVia: null, autoRecorded: false, mappingSuggestion: null,
     worktrees: [], gitMissing: false, stderr: '' }
   if (!isStr(target) || target.length === 0) {
     return Object.assign({ ok: false, error: 'no-path', repo: null }, empty)
@@ -423,7 +434,12 @@ async function readWtMain(input, repo) {
   /* 主目录候选是否经过了目录映射换算（答复的 mainMapped）：只有「映射真的换了
      前缀、且换算结果被 auto 那一档采用」才置真 —— 客户端据此把「自动找到」说成
      「目录映射找到」，读者才追得到这个路径是哪来的。 */
-  let mainViaMapping = false
+   let mainViaMapping = false
+  /* 映射真的换了前缀时命中的那条规则（{from,to}，规则原文）：自动记录的 from / to
+     与顺手指路（mappingSuggestion）都用它。「答复的 mappedRule」在下面组装时按
+     「换算结果真的被采用了吗」再定 —— 换算命中但没被采用（手动答案在且有效）时
+     带出去，客户端就会把一条手动配置的主目录说成「按规则换算」，那是说谎。 */
+  let hitRule = null
   if (dirKind === 'file') kind = 'file'
   else if (dirKind !== 'dir') kind = 'missing'
   else if (gitType === 'dir') { kind = 'main'; autoMain = target; autoOk = true }
@@ -436,17 +452,18 @@ async function readWtMain(input, repo) {
          probeShell 现场问 —— 与 saveWorktreeMain 验 add 的 `[ -e <它>/.git ]`
          同一句形状。只在这里发：git 读得动的那几个 kind 里主目录是 git 自己答的
          本机路径，映射无事可做；没配映射、或前缀配不上的读者一次都不多跑。 */
-      const mappedFromGitlink = mapWorktreeDir(autoFromGitlink, dirMappings)
+      const mapped = mapWorktreeDirWithRule(autoFromGitlink, dirMappings)
       if (autoFromGitlink.length > 0) {
-        if (mappedFromGitlink === autoFromGitlink) {
+        if (mapped.path === autoFromGitlink) {
           autoMain = autoFromGitlink
           autoOk = autoFromGitlinkOk
         } else {
           const mappedCheck = await probeShell(input,
-            'if [ -e ' + shq(mappedFromGitlink) + '/.git ]; then echo repo; else echo gone; fi')
-          autoMain = mappedFromGitlink
+            'if [ -e ' + shq(mapped.path) + '/.git ]; then echo repo; else echo gone; fi')
+          autoMain = mapped.path
           autoOk = mappedCheck.stdout.trim() === 'repo'
           mainViaMapping = true
+          hitRule = mapped.rule
         }
       }
     } else if (commonDir.length > 0 && commonDir === gitdir) {
@@ -469,6 +486,77 @@ async function readWtMain(input, repo) {
      对着这个 worktree 手写的，一条是对着一台机器配的通用规则，撞车时具体的那条赢
      —— 与 configured 压过 auto 同一层级的道理。 */
   const mainMapped = configured === null && mainViaMapping
+
+  /* mainVia：worktreeMains 里那条答案的来源（meta 是自动记录时写的账）。'config'
+     来源下只有两句话可说 —— 读者亲手存的（'manual'），或映射命中后 Host 自动记录
+     的（'mapping'）；meta 缺席（旧数据、或读者清过又存过）按 'manual' 算 —— 那是
+     它唯一确定无疑的另一种来路。其余 mainSource 下一律 null：'auto' 的来源已经由
+     mainMapped 说话，不另造第三个说法。 */
+  let mainVia = null
+  if (mainSource === 'config') {
+    const meta = config != null && config.worktreeMainsMeta != null ? config.worktreeMainsMeta[repoKeyOf(target)] : undefined
+    mainVia = meta != null && meta.via === 'mapping' ? 'mapping' : 'manual'
+  }
+
+  /* 映射命中且换算候选真在时自动记录一条（配置里还没有这个 worktree 的答案）：
+     把换算出的主目录与命中的规则一次写盘（worktreeMains + worktreeMainsMeta 同一份
+     writeConfigFile），下次读 configured 非空走 'config'、不再写 —— 这就是「默认
+     路径失败时路径替换也要试一下，命中后永久记下来方便下次识别」的落点。
+     边界三条，条条是铁律：
+       · configured === null 才写：worktreeMains 里已有答案（读者手写的、或既往
+         自动记录的）绝不覆盖 —— 手动答案永远赢，自动记录只填空；
+       · 只写插件自己的 dsh-git-idea.json：.git gitlink 文件一个字节不碰、git 的
+         任何配置（仓库 --local / --global / safe.directory）一个字节不碰；
+       · 写失败（沙箱拒、盘满、通道断）安静吞掉：autoRecorded=false，这次读数照常
+         答出去，console 留一行 —— 读数失败比记录失败严重得多，不能让它连坐；
+       · skipAutoRecord（saveWorktreeMain 的收尾快照递 true）整段跳过：读者刚亲手
+         删掉配置的那一次往返，答复快照若又把映射答案记回去，「清除配置」就被
+         同一次请求悄悄撤销了 —— 收据不该是一次新的自动识别。
+     缓存时序：这一格是 cached(repo,'wt-main') 的 loader 在跑，cached 是「miss 存
+     promise、落地写回」的形状 —— invalidateRepo 在这里删掉键之后，cached 落地时的
+     写回条件（键里还是自己那个 promise）已经不成立，旧答复不会回魂占住缓存；下一读
+     重新进 loader，configured 非空直接走 'config'，不再进这段 —— 无死循环。 */
+  let autoRecorded = false
+  if (skipAutoRecord !== true && kind === 'broken-gitlink' && configured === null && hitRule !== null && autoOk === true) {
+    const key = repoKeyOf(target)
+    const mains = Object.assign({}, config.worktreeMains)
+    const meta = Object.assign({}, config.worktreeMainsMeta)
+    /* 同值不写盘（draftSave 的同一条纪律）：meta 记录跟着本体走，本体已在（值为
+       同一路径的旧记录）就不碰磁盘 —— 实际到不了这里（configured === null 已排除
+       本体存在），守着它只是让「写不写盘」只有一个判据。 */
+    if (mains[key] !== autoMain) {
+      mains[key] = autoMain
+      meta[key] = { via: 'mapping', from: hitRule.from, to: hitRule.to, at: Date.now() }
+      try {
+        const written = await writeConfigFile(
+          Object.assign({}, config, { worktreeMains: mains, worktreeMainsMeta: meta }),
+          argsAt(input, null))
+        if (written.ok === true) {
+          autoRecorded = true
+          invalidateRepo(target, ['wt-main'])
+        } else {
+          console.error('dsh-git-idea: could not auto-record the mapped worktree main (' + key + '): ' + String(written.error || 'unknown'))
+        }
+      } catch (error) {
+        console.error('dsh-git-idea: could not auto-record the mapped worktree main (' + key + '): ' + String(error))
+      }
+    }
+  }
+
+  /* 手动答案失效时的顺手指路（不写盘、不覆盖）：配置里的主目录已经不在了，而目录
+     映射恰好能把 gitlink 的路径换算到一个**在**的目录 —— 把这条候选随答复带出去，
+     客户端给一句「配置的主目录已不在；目录映射换算到 X」加一个「填入」。填不填、
+     存不存都是读者的事：那格配置是他的答案，Host 只发现它旧了，不替他改。 */
+  let mappingSuggestion = null
+  if (configured !== null && configuredOk !== true && hitRule !== null && autoOk === true) {
+    mappingSuggestion = { path: autoMain, from: hitRule.from, to: hitRule.to }
+  }
+
+  /* 答复的 mappedRule：只在「换算结果真的被面板采用」时带出 —— mainMapped（自动
+     找到的那一档用了换算结果）或 mappingSuggestion（顺手指路说的正是这条换算）。
+     手动答案在且有效时换算没被采用，带出去会让客户端把「手动配置」说成「按这条
+     规则换算」—— 那是说谎，不如不带。 */
+  const mappedRule = mainMapped === true || mappingSuggestion !== null ? hitRule : null
 
   /* worktrees 只在 kind 为 linked/main 且 git 读得动时解析（broken-gitlink 恒空，
      其余 kind 根本没跑 git）；main 按自动找到的主目录标（配置里改过的不参与 ——
@@ -494,8 +582,15 @@ async function readWtMain(input, repo) {
     kind: kind, gitlink: gitlink, gitdir: gitdir, commonDir: commonDir, toplevel: toplevel,
     mainDir: mainDir, mainSource: mainSource, configured: configured, mainOk: mainOk,
     /* mainMapped：主目录候选经过目录映射换算而来（mainSource 仍是 'auto' —— 映射
-       是「怎么自动找到」的一部分，不是读者对这个 worktree 的手动答案）。 */
+       是「怎么自动找到」的一部分，不是读者对这个 worktree 的手动答案）。mappedRule
+       是当时命中的那条规则原文；mainVia 只在 'config' 来源下说话；autoRecorded 是
+       「这一读顺手把映射命中的答案写进配置了」的旗标 —— 客户端据此提示「下次直接
+       识别」。 */
     mainMapped: mainMapped,
+    mappedRule: mappedRule,
+    mainVia: mainVia,
+    autoRecorded: autoRecorded,
+    mappingSuggestion: mappingSuggestion,
     worktrees: worktrees, gitMissing: gitMissing, stderr: probe.stderr.slice(0, 400),
   })
 }
@@ -504,17 +599,19 @@ async function readWtMain(input, repo) {
    同一条 —— 任何一次整仓失效（panelMutate、⟳ 的 flush、watcher bump）都把它一起
    作废；只有 saveWorktreeMain 自己会在写完配置后按 tag 精确作废这一格（它改的是
    面板认的那本账，git 一根汗毛没动，整仓失效是浪费）。 */
-async function wtMainSnapshot(input) {
+async function wtMainSnapshot(input, skipAutoRecord) {
   const repo = repoFrom(input, null)
-  if (repo === undefined) return await readWtMain(input, undefined)
-  return await cached(repo, 'wt-main', function () { return readWtMain(input, repo) })
+  if (repo === undefined) return await readWtMain(input, undefined, skipAutoRecord)
+  return await cached(repo, 'wt-main', function () { return readWtMain(input, repo, skipAutoRecord) })
 }
 
 /* git/wt-main-save：把「这个 worktree 的主目录在哪」写进插件配置（70-config.js 的
    worktreeMains），答复是该 worktree 的最新 wtMainSnapshot —— 客户端一次往返就能
    把整块读数换成新账。写法仿 61-repos.js 的 saveWorkspaceRepo：readConfigFile 拿
    到的已是归一化过的整份配置，只动 worktreeMains 这一个键（add 设值 / remove 删键），
-   其余键原样带过去，谁也抹不掉谁。
+   其余键原样带过去，谁也抹不掉谁。来源账 worktreeMainsMeta 同一份 writeConfigFile
+   一起维护（add 清该键的记录 —— 手动答案的来源是读者自己；remove 两键一起删），
+   见函数体里那段。
    校验：add 与 remove 二选一（都给/都不给都是错）；repo 缺省=会话工作区，add 与
    repo 都必须绝对路径；add 用与手动登记同一判据 `[ -e add/.git ]` 现场验（目录或
    gitlink 文件都算 —— 主仓库自己也可以是另一个 worktree 的主），不存在是 'missing'、
@@ -531,6 +628,10 @@ async function saveWorktreeMain(input) {
   const key = repoKeyOf(repo)
   const config = await readConfigFile()
   const mains = Object.assign({}, config.worktreeMains)
+  /* 来源账（worktreeMainsMeta）与本体同一个文件进出，绝不写两次盘：add 把该键的
+     记录删掉 —— 手动保存之后这个答案的来源就是读者自己，不再是「映射命中后的
+     自动记录」；remove 连账一起删 —— 本体没了来源账留着就是一条悬空记录。 */
+  const meta = Object.assign({}, config.worktreeMainsMeta)
   if (add.length > 0) {
     if (isStoredPath(add) !== true) return { ok: false, error: 'absolute path required', path: add }
     if (mains[key] !== add) {
@@ -539,19 +640,33 @@ async function saveWorktreeMain(input) {
       if (kind === 'none') return { ok: false, error: 'missing', path: add }
       if (kind !== 'repo') return { ok: false, error: 'not-a-repository', path: add }
       mains[key] = add
-      const written = await writeConfigFile(Object.assign({}, config, { worktreeMains: mains }), argsAt(input, null))
+      delete meta[key]
+      const written = await writeConfigFile(Object.assign({}, config, { worktreeMains: mains, worktreeMainsMeta: meta }), argsAt(input, null))
+      if (written.ok !== true) return written
+    } else if (meta[key] !== undefined) {
+      /* 同值不写本体的盘（防抖的老规矩），但来源记录仍要清：读者亲手把映射自动
+         记录的那条答案又「保存」了一遍，就是在亲自认领它 —— 来源从此是手动。 */
+      delete meta[key]
+      const written = await writeConfigFile(Object.assign({}, config, { worktreeMainsMeta: meta }), argsAt(input, null))
       if (written.ok !== true) return written
     }
   } else {
-    if (mains[key] !== undefined) {
+    if (mains[key] !== undefined || meta[key] !== undefined) {
       delete mains[key]
-      const written = await writeConfigFile(Object.assign({}, config, { worktreeMains: mains }), argsAt(input, null))
+      delete meta[key]
+      const written = await writeConfigFile(Object.assign({}, config, { worktreeMains: mains, worktreeMainsMeta: meta }), argsAt(input, null))
       if (written.ok !== true) return written
     }
   }
-  /* 只作废这一格再读：git 那头没动，refs / worktrees / 图的缓存都还是新账。 */
+  /* 只作废这一格再读：git 那头没动，refs / worktrees / 图的缓存都还是新账。
+     收尾读直走 readWtMain 并递 skipAutoRecord（「刚亲手写下的答案不在同一次往返
+     里被自动记录改写」的边界，见 readWtMain）：刻意**不**走 cached —— 这个答复若
+     进缓存，「不自动记录」的形状会跟着条目一起住进去，下一次普通读命中缓存就
+     再也不自动记录了；缓存留空，下一次 RPC 重新加载， configured 有值（add 之后的
+     正常形状）或重新自动识别（remove 之后回到的正是「默认路径失败、映射再试一次」
+     的状态）。 */
   invalidateRepo(repo, ['wt-main'])
-  return await wtMainSnapshot(Object.assign({}, input, { repo: repo }))
+  return await readWtMain(Object.assign({}, input, { repo: repo }), repo, true)
 }
 
 

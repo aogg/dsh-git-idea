@@ -1786,6 +1786,16 @@
       const wtMainDir = wtSnapNow != null ? text(wtSnapNow.mainDir) : ''
       const wtConfigured = wtSnapNow != null ? text(wtSnapNow.configured) : ''
       const wtMainOk = wtSnapNow != null && wtSnapNow.mainOk === true
+      /* 来源小字三种来路各说各的话：config 来源按 mainVia 分「手动配置」与「自动
+         记录（目录映射）」—— 后者是 Host 按映射命中自动写进配置的那条（65-worktree.js
+         的 autoRecord），说成「手动配置」就是说谎；auto 来源维持原样，映射换算的
+         仍说「目录映射找到」。 */
+      const wtSourceWord = wtSnapNow == null ? '' : (wtSnapNow.mainSource === 'config'
+        ? (wtSnapNow.mainVia === 'mapping' ? '自动记录（目录映射）' : '手动配置')
+        : (wtSnapNow.mainMapped === true ? '目录映射找到' : '自动找到'))
+      /* 映射真的换了前缀时命中的那条规则（host 65-worktree.js 的 mappedRule）：
+         原样画一行 from → to —— 「主目录是怎么换算出来的」在这里对得上账。 */
+      const wtMappedRule = wtSnapNow != null && wtSnapNow.mappedRule != null ? wtSnapNow.mappedRule : null
       const wtGroupNode = wtGroupOn !== true ? null : h('div', { className: 'dsh-git-wtmain' },
         h('div', { className: 'dsh-git-set-group' }, wtGroupTitle),
         h('div', { className: 'dsh-git-set-hint' }, wtGroupHint),
@@ -1793,9 +1803,14 @@
           h('span', { className: 'dsh-git-set-label' }, '主目录'),
           wtMainDir.length > 0
             ? h('span', { className: 'dsh-git-set-hint dsh-git-set-url', title: wtMainDir },
-              wtMainDir + '（' + (wtSnapNow.mainSource === 'config' ? '手动配置'
-                : (wtSnapNow.mainMapped === true ? '目录映射找到' : '自动找到')) + (wtMainOk ? '' : ' · 目录不在了') + '）')
+              wtMainDir + '（' + wtSourceWord + (wtMainOk ? '' : ' · 目录不在了') + '）')
             : h('span', { className: 'dsh-git-set-hint' }, '读不到：gitlink 配不上一个存在的目录（在下面配一个现存的目录即可）')),
+        wtMappedRule != null
+          ? h('div', { className: 'dsh-git-set-row' },
+            h('span', { className: 'dsh-git-set-label' }, '命中规则'),
+            h('span', { className: 'dsh-git-set-hint dsh-git-set-url', title: wtMappedRule.from + ' → ' + wtMappedRule.to },
+              wtMappedRule.from + ' → ' + wtMappedRule.to))
+          : null,
         h('div', { className: 'dsh-git-set-row' },
           h('span', { className: 'dsh-git-set-label' }, '配置主目录'),
           h('input', {

@@ -70,6 +70,13 @@ function makeBody(opts) {
     /* 79b-file-save.js 读 ctx.on（cordis 的事件 mixin，是 ctx 的合法成员）——
      * 给一个最小的 no-op，只让那一读成立；其余没声明过的属性访问仍然必抛。 */
     on: function () { return function () {} },
+    /* 79d-expose.js 加载时探测 ctx.provide / ctx.inject（「桥式外观的老版本没有
+     * 这两个成员」的降级判断，是 typeof 探测不是服务读）—— 真 cordis v4 的 ctx
+     * 自带这两个方法，stub 照实补上：provide 收下注册不真建 fiber，inject 不执行
+     * 回调（stub 没有 webServer，正对应「缺席时那条通道少一条，互不影响」）。
+     * 这两条与 ctx.sessions 那种「服务读」不同类 —— 服务读仍走 get 陷阱必抛。 */
+    provide: function () {},
+    inject: function () {},
   }
   const ctx = new Proxy(base, {
     get: function (target, prop) {

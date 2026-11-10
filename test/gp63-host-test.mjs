@@ -19,7 +19,9 @@ import { spawn } from 'node:child_process'
  *          mainMapped=false —— 一次探针，不多发；
  *        · 配了映射且前缀配上：主目录=换算后的本机路径、mainOk=true、
  *          mainMapped=true（mainSource 仍是 auto）；存在性由一次补问回答
- *          （探针计数 +1，只在这一格多发）；
+ *          （探针计数 +1，只在这一格多发）；0.5.0 起命中且候选存在时 Host
+ *          还会把这条答案自动写进配置（worktreeMains + worktreeMainsMeta），
+ *          下一次读换 config 来源 —— 全套断言在 gp85-wtmap-host-test.mjs；
  *        · 前缀按整段配（D:/win/gp63 配不上 D:/win/gp63main…）、映射目标不存在、
  *          多条映射第一条赢、from/to 带尾斜杠也认；
  *        · worktreeMains 的手动答案永远压过映射（mainMapped 回 false）；
@@ -154,9 +156,21 @@ console.log('== git/wt-main：配了映射、前缀配上 —— 主目录换算
     mapped.gitlink === 'gitdir: ' + WIN + '/main/.git/worktrees/win-one')
   check('一次主探针 + 一次存在性补问（换算候选的 [ -e <它>/.git ] 现场问）',
     probes(b.runs).length === 1 && mappedChecks(b.runs).length === 1)
-  check('读缓存按仓库一格：同一仓库再问一次，两次 shell 都不再落',
-    (await b.H('git/wt-main')({ repo: WINWT })).mainDir === MAIN
-    && probes(b.runs).length === 1 && mappedChecks(b.runs).length === 1)
+  /* 0.5.0 起命中且候选存在时 Host 顺手把答案写进配置（自动记录，worktreeMains +
+     worktreeMainsMeta 各一条）并作废这一格 —— 全套行为断言在 gp85-wtmap-host-test.mjs，
+     这里钉的是它对识别链路可见的两面：配置落了账、下一次读换 config 来源。 */
+  check('命中且候选存在：配置里已自动记录这条主目录（worktreeMains + via:mapping 的 meta）',
+    (() => {
+      const onDisk = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'))
+      return onDisk.worktreeMains[WINWT] === MAIN
+        && onDisk.worktreeMainsMeta != null && onDisk.worktreeMainsMeta[WINWT] != null
+        && onDisk.worktreeMainsMeta[WINWT].via === 'mapping'
+    })())
+  const again = await b.H('git/wt-main')({ repo: WINWT })
+  check('自动记录作废了这一格：再问一次重新落探针/补问，答复换成 config 账（mainVia=mapping、不再写盘）',
+    again.mainDir === MAIN && again.mainSource === 'config' && again.mainVia === 'mapping'
+    && again.mainMapped === false && again.autoRecorded === false
+    && probes(b.runs).length === 2 && mappedChecks(b.runs).length === 2)
 
   const backslash = await b.H('git/wt-main')({ repo: BSWT })
   say('全反斜杠 gitdir 的 BSWT', { mainDir: backslash.mainDir, mainMapped: backslash.mainMapped })
