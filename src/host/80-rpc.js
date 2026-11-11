@@ -326,6 +326,12 @@ onRpc('git/commit-detail', function (input) { return commitDetailSnapshot(input)
    it is the live text of a file the reader is looking at. */
 onRpc('git/diff', function (input) { return readFileDiff(input) })
 
+/* 文件右键菜单「复制完整差异」（客户端 61-filemenu.js 的菜单，80-panel.js 接的
+   动作）：readFileDiff 的同一条 diffArgv，但不套展示截断（「完整」是硬要求，
+   超上限整件事不发生），答复多带一份面向 AI 的头部与拼好的全文（68-detail.js
+   readPatchText）。只读、不进缓存、不进「命令」页 —— 与 git/diff 同一条理由。 */
+onRpc('git/patch-text', function (input) { return readPatchText(input) })
+
 /* 三方合并界面（客户端 59-merge.js）的两条：conflict 读 :1:/ :2:/ :3: 三个阶段加
    两侧标签（68-detail 那条 diff 的邻居，同样只读、不进缓存、不进命令页）；
    conflict-save 把解决结果写回工作区并 git add 标记已解决 —— 它是变更类动作，

@@ -117,6 +117,17 @@
       return typeof hash === 'string' && hash.length > 7 ? hash.slice(0, 7) : text(hash)
     }
 
+    /* 字节数的人话（「已复制完整差异 12.3 KB」）：KB 一位小数、去尾零，过了 MB
+       就换档。进来的一律先 parseFloat（答复里是数字，但字段值从消息那头过来，
+       对比和运算前的转换是这里的老规矩）；答不上来（0、负数、NaN）回空串，
+       提示条就不带这一段。 */
+    function sizeKb(bytes) {
+      const n = parseFloat(bytes)
+      if (!isFinite(n) || n <= 0) return ''
+      if (n >= 1048576) return String(parseFloat((n / 1048576).toFixed(1))) + ' MB'
+      return String(parseFloat((n / 1024).toFixed(1))) + ' KB'
+    }
+
     const panelAnchorBox = function (node) {
       if (node == null) return null
       const host = node.offsetParent != null ? node.offsetParent : node.parentElement
@@ -6342,6 +6353,55 @@
               : { path: one != null ? text(one.path).replace(/\/+$/, '') : '',
                   staged: false, workCode: ' M', untracked: false, displayCode: '' }
             setDiffTarget(changeDiffTarget(entry, text(ctxFileTarget.repo)))
+          },
+          onCopyPatch: function (one) {
+            /* 复制范围与「显示差异」同一条读法（55-diff.js diffRequests 的优先级）：
+               commit = 该提交，range = base..head 合计；worktree 按行上状态挑模式
+               —— 未跟踪 → --no-index，已暂存 → --cached，其余 → 未暂存（已暂存又
+               改过的行取「已暂存」那一段，与差异视图第一段同一个口径）。目录折叠
+               条菜单已置灰，这里不再拦。宿主一次只读（git/patch-text）—— 补丁文本
+               不改仓库，不进 needFull 的重写表、不 bump；复制用 78-actions.js 的
+               copyTextToClipboard，经 http 代理访问的非安全上下文自然落到隐藏
+               textarea 兜底那条。失败两条腿各说各的：读失败（git 的原话）进错误条，
+               写剪贴板被拒进提示条并给出手动复制的出路。 */
+            if (one == null) return
+            const raw = one.raw != null ? one.raw : null
+            const payload = { sessionId: sessionId, path: text(one.path) }
+            if (text(ctxFileTarget.repo).length > 0) payload.repo = text(ctxFileTarget.repo)
+            if (ctxFileTarget.listKind === 'commit') {
+              payload.mode = 'commit'
+              payload.ref = detail != null ? text(detail.hash) : ''
+              payload.from = raw != null ? text(raw.from) : ''
+            } else if (ctxFileTarget.listKind === 'range') {
+              payload.mode = 'range'
+              payload.ref = text(selSpanKey)
+              payload.from = raw != null ? text(raw.from) : ''
+            } else {
+              payload.mode = one.untracked === true ? 'untracked'
+                : (one.staged === true ? 'staged' : 'worktree')
+            }
+            if ((payload.mode === 'commit' || payload.mode === 'range') && payload.ref.length === 0) {
+              setError('复制完整差异失败：这一行所属的提交还没读到，稍后再试')
+              return
+            }
+            rpc('git/patch-text', payload, '复制完整差异失败').then(function (reply) {
+              const patchText = reply != null && typeof reply.text === 'string' ? reply.text : ''
+              const kb = reply != null ? sizeKb(reply.bytes) : ''
+              if (patchText.length === 0) {
+                setError('复制完整差异失败：宿主没有返回补丁文本（' + (kb.length > 0 ? kb : '0 KB') + '）')
+                return
+              }
+              copyTextToClipboard(patchText, function () {
+                setOkNote('已复制完整差异 ' + (kb.length > 0 ? kb : '0 KB')
+                  + (reply.binary === true ? '（二进制文件：git 没有文本补丁，只有说明头）' : '')
+                  + '，可直接粘给 AI 解释这次修改')
+              }, function () {
+                setOkNote('无法写入剪贴板（补丁 ' + (kb.length > 0 ? kb : '0 KB')
+                  + '）：浏览器拒绝了自动复制 —— 可以点开这个文件的差异视图手动选择复制，或改用 https:// 直连后重试')
+              })
+            }, function (failure) {
+              setError(failureText(failure))
+            })
           },
           onRevert: function (paths) {
             if (ctxFileTarget.listKind === 'worktree') {

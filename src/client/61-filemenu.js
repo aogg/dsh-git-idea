@@ -145,6 +145,28 @@
           onClick: clickPlain(function () { if (typeof acts.onShowDiff === 'function') acts.onShowDiff(first) }),
         })
 
+      /* 复制完整差异：把这一行目标的完整 unified diff 补丁文本写进剪贴板 —— 用户
+         的下一步是粘给大模型，让它解释这次修改的意义。启用矩阵与「显示差异」完全
+         一致（未跟踪的折叠目录没有可比较的版本，置灰说去哪里用；busy 置灰）；
+         普通单击、非破坏性 —— 它不碰仓库，只发一次只读，复制用 78-actions.js 的
+         copyTextToClipboard（navigator.clipboard 优先 + 隐藏 textarea 兜底，经
+         http 代理访问的非安全上下文走的就是兜底那条）。title 说清「完整」各指
+         各的范围：单提交 = 这个提交对该路径的补丁；合并视图 = 这段选区的合计
+         补丁；工作区 = 行上状态对应的改动补丁 —— 三棵树共用一条菜单，「复制
+         的是什么」必须悬停就看得见。 */
+      const copyPatchWhy = isUntrackedDir === true
+        ? '未跟踪的目录还没有可比较的版本 —— 展开后对里面的文件用'
+        : (inHistory === true
+          ? '复制完整差异：' + (listKind === 'range' ? '这段选区对' + said + '的合计补丁' : '这个提交对' + said + '的完整补丁')
+            + '，连提交信息头一起写进剪贴板（可直接粘给 AI 解释这次修改）'
+          : '复制完整差异：' + said + '现在的改动补丁（已暂存/未暂存/未跟踪按行上的状态走；'
+            + '含仓库与状态头，可直接粘给 AI 解释这次修改）')
+      const copyPatch = item('copy-patch', '复制完整差异', copyPatchWhy,
+        {
+          disabled: isUntrackedDir === true || busyBlock,
+          onClick: clickPlain(function () { if (typeof acts.onCopyPatch === 'function') acts.onCopyPatch(first) }),
+        })
+
       /* ── 第二组：改 ── */
 
       /* 还原所选更改。提交那两棵树：新 RPC git/revert-paths（show 补丁反向
@@ -237,7 +259,7 @@
 
       const out = []
       if (compareLocal !== null) out.push(compareLocal)
-      out.push(openFile, showDiff)
+      out.push(openFile, showDiff, copyPatch)
       out.push(h('div', { key: 'sep-1', className: 'dsh-git-menu-sep' }))
       out.push(revert, cherry, clean)
       if (getFromRev !== null) {
