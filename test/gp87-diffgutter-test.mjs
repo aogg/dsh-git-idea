@@ -461,16 +461,22 @@ tree = await clickText(tree, '✓ 自动换行', true)
   ok('换行关掉：-wrap 类退场（回单行横向滚动）',
     String(wrapEl.props.className).indexOf('dsh-git-diffwrap-wrap') < 0)
 }
+mark = diffCalls.length
 tree = await gutterClick(tree)
 tree = await clickText(tree, '✓ 显示行号', true)
-/* 疑似 bug 在案（交付报告有专条）：onShowNo 的翻转式子写成 prefs.diffShowNo !== false，
-   对 true/false 都求出原值——「显示行号」点击不动、偏好不落盘。这里钉住当前行为，
-   修复后这条会变红，届时改成翻转断言 + 「隐藏行号后记号格仍能开菜单」的完整路径。 */
-ok('「显示行号」点击（当前实现）：开关不动、偏好不落盘（疑似 bug：onShowNo 式子 !== false 恒等原值）',
-  JSON.parse(W.store['dsh.git-idea.settings'] || '{}').diffShowNo === true
-  && W.byClass(tree, 'dsh-git-dno').length > 0
+ok('隐藏行号：两侧行号格消失，偏好落盘（diffShowNo=false）、菜单项变「显示行号」无 ✓',
+  W.byClass(tree, 'dsh-git-dno').length === 0
+  && JSON.parse(W.store['dsh.git-idea.settings'] || '{}').diffShowNo === false
+  && W.buttons(tree).some((b) => W.textOf(b) === '显示行号'))
+ok('隐藏只换画法：一个 git/diff 都不发', diffCalls.length === mark)
+tree = await gutterClick(tree)
+ok('隐藏行号后右键记号格：同一个菜单还在（不把自己锁在外面）',
+  W.buttons(tree).some((b) => W.textOf(b) === '显示行号'))
+tree = await clickText(tree, '显示行号', true)
+ok('再点显示行号：翻转回 true（往返闭环），dno 回来、偏好跟着落盘',
+  W.byClass(tree, 'dsh-git-dno').length > 0
+  && JSON.parse(W.store['dsh.git-idea.settings'] || '{}').diffShowNo === true
   && W.buttons(tree).some((b) => W.textOf(b) === '✓ 显示行号'))
-tree = await settlePop()
 ok('记号格的菜单始终可达（行号显隐之外的入口不受伤）：右键记号格菜单四外观项都在',
   W.buttons(tree).filter((b) => ['显示空格', '✓ 显示行号', '显示缩进参考线', '自动换行'].indexOf(W.textOf(b)) >= 0).length === 4)
 
@@ -512,6 +518,9 @@ const PORCELAIN = [
   '\tline one',
   '\tline two',
   '^' + SHA_B + ' 3 3',
+  'author 早期作者',
+  'author-time 2025-01-01T00:00:00+08:00',
+  'filename a.txt',
   '\tline three',
   SHA_C + ' 4 4 1',
   'author 王五',
@@ -566,15 +575,16 @@ const PORCELAIN = [
   ok('普通头行：短 hash 7 位、boundary=false', lines[0].short === SHA_A.slice(0, 7) && lines[0].boundary === false)
   ok('^ 边界头行：boundary=true 且短 hash 带 ^ 前缀（头行自带的标记跟得上）',
     lines[1].boundary === true && lines[1].short === '^' + SHA_B.slice(0, 7))
-  /* 疑似 bug 在案（交付报告有专条）：porcelain 的 author/author-time 元数据在头行
-     入列之后才解析，行对象按值拷贝到的是当时的空串——答复的 author/date 恒为空。
-     下面两条钉住当前行为；修复后变红，届时改成 author='张三'/date=原话 的正断言。 */
-  ok('（疑似 bug）author/author-time 元数据行解析到了但没回到已入列的行：author/date 恒空串',
-    lines[0].author === '' && lines[0].date === '' && lines[2].author === '' && lines[2].date === '')
-  ok('（疑似 bug 同根）boundary 元数据行认出了提交，但首现行的标记没跟上：boundary=false、短 hash 无 ^',
-    lines[2].boundary === false && lines[2].short === SHA_C.slice(0, 7))
-  ok('filename 复用段：同 sha 第二批行（行号 5）按首次元数据复用——info 是共享对象，首段元数据落地后再入列的行拿得到作者',
-    lines[3].no === 5 && lines[3].author === '张三' && lines[3].date === '2026-11-01T09:00:00+08:00')
+  /* 元数据回填（0a03ecf 修复本体）：author/author-time/boundary 元数据行都在头行
+     之后才到，回填一遍按 commits 表把每个行条目统一成该提交的最终值。 */
+  ok('元数据回填：author/author-time 元数据行虽然落在头行之后，行条目拿到的是最终值（作者/原话日期不再恒空）',
+    lines[0].author === '张三' && lines[0].date === '2026-11-01T09:00:00+08:00'
+    && lines[2].author === '王五' && lines[2].date === '2026-11-02T10:00:00+08:00')
+  ok('boundary 元数据行认定的边界提交：首现行 boundary=true 且短 hash 回填 ^ 前缀（两种来源都被覆盖）',
+    lines[2].boundary === true && lines[2].short === '^' + SHA_C.slice(0, 7))
+  ok('filename 复用段：同 sha 第二批行（行号 5）与首现段一致（作者/日期同一份最终值）',
+    lines[3].no === 5 && lines[3].author === '张三' && lines[3].date === '2026-11-01T09:00:00+08:00'
+    && lines[3].short === SHA_A.slice(0, 7) && lines[3].boundary === false)
 
   calls.length = 0
   /* transport 的截断记号在 stdout 通道对象上（invoke 读 raw.stdout.truncated）。 */
@@ -690,11 +700,13 @@ if (hasGit !== true) {
   const H = makeHost(run)
 
   const wt = await H('git/blame')({ repo: R, mode: 'worktree', path: 'a.txt' })
-  ok('worktree（真仓库）：ok，两行注解，行号 1/2，短 hash 分别是两笔提交',
+  ok('worktree（真仓库）：ok，两行注解，行号 1/2；根提交是天然边界（git 自己给 boundary 行）——首现行回填 ^ 前缀且压暗',
     wt.ok === true && wt.lines.length === 2 && wt.lines[0].no === 1 && wt.lines[1].no === 2
-    && wt.lines[0].short === hash1.slice(0, 7) && wt.lines[1].short === hash2.slice(0, 7))
-  ok('worktree（真仓库）：author 字段当前恒空串（疑似 bug 在案，见上）——真 porcelain 也一样',
-    wt.lines[0].author === '' && wt.lines[0].date === '')
+    && wt.lines[0].short === '^' + hash1.slice(0, 7) && wt.lines[0].boundary === true
+    && wt.lines[1].short === hash2.slice(0, 7) && wt.lines[1].boundary === false)
+  ok('worktree（真仓库）：元数据回填到行——作者 Tester，date 是 porcelain author-time 原话（epoch 时间戳，tz 是独立的 author-tz 行）',
+    wt.lines[0].author === 'Tester' && /^\d+$/.test(wt.lines[0].date)
+    && wt.lines[1].author === 'Tester' && /^\d+$/.test(wt.lines[1].date))
   ok('worktree（真仓库）：argv 带 --porcelain 且不带 rev', calls[0].command.indexOf("'blame' '--porcelain' '--' 'a.txt'") >= 0)
 
   calls.length = 0
