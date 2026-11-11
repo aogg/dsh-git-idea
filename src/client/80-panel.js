@@ -446,6 +446,190 @@
           : null)
     }
 
+    /* ── 「行：」提交信息行数选择器：整体可点的触发器 + 浮动下拉面板 ──
+
+       上一版照作者/时间画的是原生 <select>，结果只有数字本身点得出下拉 ——「行：」
+       标签与 caret 点了没反应（label 对原生 select 下拉的转发不生效）。现在照上面
+       BranchScopeSelect 同款重做：整枚控件就是一个 button（「行：」标签、当前值与
+       下箭头 caret 全在按钮里），点任何一处都开合；下拉列表是 position:fixed 的
+       浮动面板，样式整套复用 .dsh-git-lfsel 那一族（max-content 宽对 8 个短选项
+       绰绰有余），当前项 ✓、hover 与键盘高亮同 .dsh-git-lfsel-item。
+
+       定位与关闭整套照抄 BranchScopeSelect：打开时量触发器的视口坐标、面板放正下
+       4px、左右钳进视口（8px 边距）、下方放不下且上方放得下才翻上去；点外
+       （useOutsideDismiss）/ Esc / document 捕获滚动 / window resize 一并关。
+       「轻量版」与它的三处差别：① 触发器不分「标签 + 值」两截 —— 选项最长才
+       「全部」二字，不存在长名撑破触发器的问题，也就不需要 lfWidth 量宽；
+       ② 没有 × 清除键（显示设置无「清除」语义）；③ 不带高亮滚进可视区的 effect
+       —— 8 行 × 26px ≈ 208px，永远装进列表的 330px 上限，那段滚动逻辑在这里是
+       死代码。没有抽公共 hook：这份文件里 ContextMenu 与 BranchScopeSelect 各自
+       持有自己的开合与定位 effect 是先例，为这点复用去动 BranchScopeSelect 不值
+       那份回归面。外面那层 label 连同触发器与面板一起进 useOutsideDismiss 的
+       「里面」名单（一个 wrap 盒就罩住了全部，不必再分别列 trigger/panel）——
+       否则点 label 的 4px 边环会先被点外逻辑关掉、随后的 click 又把它打开。
+
+       语义一字不改：纯显示设置 —— 不进 filterCount、没有 ×、不动选中提交、不发
+       任何 git 读；'all' 原样、数字钳 1..10 的归一化留在调用方的 onPick 里
+       （与旧 select onChange 同一套）。 */
+    const MSG_LINES_CHOICES = [1, 2, 3, 4, 5, 8, 10, 'all']
+    function msgLinesLabel(value) { return value === 'all' ? '全部' : String(value) }
+    function MsgLinesSelect(props) {
+      const [open, setOpen] = React.useState(false)
+      const [highlight, setHighlight] = React.useState(-1)
+      const [place, setPlace] = React.useState({ left: 0, top: 0 })
+      const [wrap] = React.useState(function () { return { node: null } })
+      const [box] = React.useState(function () { return { node: null } })
+      const [listBox] = React.useState(function () { return { node: null } })
+      useOutsideDismiss(open, function () { setOpen(false) }, [wrap])
+      /* 滚动与 resize 都算「面板离开了它该在的位置」，一并关掉；面板自己列表内的
+          滚动目标在面板里，照 BranchScopeSelect 的判法放行 —— 长列表才读得下去。 */
+      React.useEffect(function () {
+        if (open !== true) return undefined
+        const doc = panelNode != null ? panelNode.ownerDocument : null
+        if (doc == null || typeof doc.addEventListener !== 'function') return undefined
+        const gone = function (event) {
+          const target = event != null && event.target != null ? event.target : null
+          const self = box.node
+          if (self != null && typeof self.contains === 'function' && target != null
+            && typeof target.nodeType === 'number' && self.contains(target) === true) return
+          setOpen(false)
+        }
+        doc.addEventListener('scroll', gone, true)
+        const view = doc.defaultView
+        if (view != null && typeof view.addEventListener === 'function') view.addEventListener('resize', gone)
+        return function () {
+          doc.removeEventListener('scroll', gone, true)
+          if (view != null && typeof view.removeEventListener === 'function') view.removeEventListener('resize', gone)
+        }
+      }, [open])
+      /* 打开即定位：打开那一次渲染后面板已挂载（ref 已落），量触发器与面板的实际
+          宽高再算坐标；量不到 DOM（测试环境）就停在 0,0，不炸。与 BranchScopeSelect
+          逐行同一套：靠右越界收回（8px 边距）、下方装不下且上方装得下才翻上去、
+          面板根带 transform 时 fixed 坐标换成相对面板的。 */
+      useLayoutEffect(function () {
+        if (open !== true) return undefined
+        const node = wrap.node
+        if (node == null || typeof node.getBoundingClientRect !== 'function') return undefined
+        const rect = node.getBoundingClientRect()
+        let left = parseFloat(rect.left)
+        let top = parseFloat(rect.bottom) + 4
+        const panel = box.node
+        const width = panel != null && typeof panel.offsetWidth === 'number' ? panel.offsetWidth : 0
+        const height = panel != null && typeof panel.offsetHeight === 'number' ? panel.offsetHeight : 0
+        const doc = node.ownerDocument
+        const view = doc != null ? doc.defaultView : null
+        if (view != null && typeof view.innerWidth === 'number') {
+          const vw = parseFloat(view.innerWidth)
+          if (left + width > vw - 8) left = vw - 8 - width
+          if (left < 8) left = 8
+          const vh = parseFloat(view.innerHeight)
+          if (top + height > vh - 8) {
+            const above = parseFloat(rect.top) - 4 - height
+            if (above >= 8) top = above
+          }
+        }
+        let shifted = false
+        const root = panelNode
+        if (root != null && typeof root.getBoundingClientRect === 'function'
+          && view != null && typeof view.getComputedStyle === 'function') {
+          try {
+            shifted = view.getComputedStyle(root).transform !== 'none'
+          } catch (error) {
+            shifted = false
+          }
+        }
+        if (shifted === true) {
+          const rootRect = root.getBoundingClientRect()
+          left -= parseFloat(rootRect.left)
+          top -= parseFloat(rootRect.top)
+        }
+        setPlace(function (previous) {
+          if (previous.left === left && previous.top === top) return previous
+          return { left: left, top: top }
+        })
+        return undefined
+      }, [open])
+      const close = function () { setOpen(false) }
+      const pickAt = function (at) {
+        const value = MSG_LINES_CHOICES[at]
+        close()
+        if (value !== undefined) props.onPick(value)
+      }
+      const moveBy = function (delta) {
+        setHighlight(function (previous) {
+          const count = MSG_LINES_CHOICES.length
+          return ((previous < 0 ? 0 : previous) + delta + count) % count
+        })
+      }
+      const onKey = function (event) {
+        if (open !== true) return
+        const key = event != null ? event.key : null
+        if (key === 'ArrowDown' || key === 'ArrowUp') {
+          if (typeof event.preventDefault === 'function') event.preventDefault()
+          moveBy(key === 'ArrowDown' ? 1 : -1)
+        } else if (key === 'Enter') {
+          if (typeof event.preventDefault === 'function') event.preventDefault()
+          if (highlight >= 0) pickAt(highlight)
+        }
+      }
+      const toggle = function () {
+        if (open === true) { close(); return }
+        let at = 0
+        for (let i = 0; i < MSG_LINES_CHOICES.length; i += 1) {
+          if (MSG_LINES_CHOICES[i] === props.value) { at = i; break }
+        }
+        setHighlight(at)
+        setOpen(true)
+      }
+      const rows = MSG_LINES_CHOICES.map(function (value, at) {
+        const picked = value === props.value
+        return h('button', {
+          key: 'o:' + String(value), type: 'button',
+          className: 'dsh-git-lfsel-item'
+            + (picked === true ? ' dsh-git-lfsel-item-on' : '')
+            + (at === highlight ? ' dsh-git-lfsel-item-hl' : ''),
+          title: msgLinesLabel(value),
+          onClick: function (event) { stopEvent(event); pickAt(at) },
+          /* 悬停即接管高亮：指针与键盘共用一份高亮，Enter 选中的才是眼睛看着的那行。 */
+          onMouseEnter: function () { setHighlight(at) },
+        },
+          h('span', { key: 'm', className: 'dsh-git-lfsel-mark' }, picked === true ? '✓' : ''),
+          h('span', { key: 'n', className: 'dsh-git-lfsel-name' }, msgLinesLabel(value)))
+      })
+      return h('label', {
+        className: 'dsh-git-lf', title: props.hint,
+        ref: function (node) { wrap.node = node },
+      },
+        /* 「行：」标签与 caret 都长在触发器按钮里 —— 整枚控件任何一处都能点开。 */
+        h('button', {
+          type: 'button', className: 'dsh-git-msgsel-btn',
+          title: props.title,
+          onClick: toggle,
+          onKeyDown: onKey,
+        },
+          h('span', { key: 'k', className: 'dsh-git-lf-k' }, '行：'),
+          msgLinesLabel(props.value),
+          h('span', { key: 'c', className: 'dsh-git-lf-caret' }, h(Icon, { name: 'down', size: 10 }))),
+        open === true
+          ? h('div', {
+              key: 'panel', className: 'dsh-git-lfsel',
+              style: { left: String(place.left) + 'px', top: String(place.top) + 'px' },
+              ref: function (node) { box.node = node },
+              onKeyDown: onKey,
+              /* 面板垫在 label 里，点面板空白处的那下点击会被 label 按规矩转发给
+                  触发器，面板就被自己关掉了 —— 一律拦掉这个转发。 */
+              onClick: function (event) {
+                stopEvent(event)
+                if (event != null && typeof event.preventDefault === 'function') event.preventDefault()
+              },
+            },
+              h('div', {
+                key: 'list', className: 'dsh-git-lfsel-list',
+                ref: function (node) { listBox.node = node },
+              }, rows))
+          : null)
+    }
+
     /* ── 远程签出的二选一确认框（qc-overlay 里那块 qc-box）──
 
        右键「远程」组的分支点「签出」、本地同名分支已存在时开它。两个出口都切到
@@ -5085,32 +5269,24 @@
         }),
         pathOn ? lfClear('x', '路径', function () { setPathDraft(''); setPathFilter('') }) : null)
 
-      /* ── 「行：」显示选择器（搜索框右边、分支范围之前）──
+      /* ── 「行：」显示选择器（右端簇里、提交计数的紧左边）──
          选项 1（默认）/2/3/4/5/8/10/全部：选 N 时每条提交显示信息的前 N 行
-         （第 1 行是 subject，其余来自 body），「全部」显示完整信息。画法照抄作者/
-         时间那套（lfWidth 量宽、caret 收尾），但它是显示设置：没有 dsh-git-lf-on
-         高亮、没有 × 清除键，onChange 只动这一个 state。 */
-      const msgLinesFilter = h('label', {
-        key: 'f:msglines', className: 'dsh-git-lf',
-        title: '显示提交信息行数：第 1 行是标题，其余行来自正文，「全部」显示完整提交信息',
-      },
-        h('span', { key: 'k', className: 'dsh-git-lf-k' }, '行：'),
-        h('select', {
-          key: 's', className: 'dsh-git-lf-select',
-          value: msgLines === 'all' ? 'all' : String(msgLines),
-          style: lfWidth(msgLines === 'all' ? '全部' : String(msgLines)),
-          onChange: function (event) {
-            const asked = event.target.value
-            if (asked === 'all') { setMsgLines('all'); return }
-            const parsed = parseInt(asked, 10)
-            setMsgLines(parsed >= 1 && parsed <= 10 ? parsed : 1)
-          },
+         （第 1 行是 subject，其余来自 body），「全部」显示完整信息。画法是上面
+         MsgLinesSelect 的触发器 + 浮动面板（整枚控件可点），不再是原生 select。
+         它是显示设置：不进 filterCount、没有 × 清除键、不动选中提交、不发任何
+         git 读；归一化（'all' 原样、数字钳 1..10）照旧只动 msgLines 这一个 state。
+         位置在右端的 dsh-git-tail 簇里 —— 计数永远最右，它紧贴其左（见 CSS）。 */
+      const msgLinesSelect = h(MsgLinesSelect, {
+        key: 'f:msglines',
+        value: msgLines,
+        title: msgLinesLabel(msgLines),
+        hint: '显示提交信息行数：第 1 行是标题，其余行来自正文，「全部」显示完整提交信息',
+        onPick: function (next) {
+          if (next === 'all') { setMsgLines('all'); return }
+          const parsed = parseInt(next, 10)
+          setMsgLines(parsed >= 1 && parsed <= 10 ? parsed : 1)
         },
-          [1, 2, 3, 4, 5, 8, 10].map(function (n) {
-            return h('option', { key: String(n), value: String(n) }, String(n))
-          }),
-          h('option', { key: 'all', value: 'all' }, '全部')),
-        lfCaret)
+      })
 
       /* IDEA's arrangement of this strip: what you filter with on the left,
          what you do with the result on the right. */
@@ -5126,10 +5302,6 @@
           title: '区分大小写（默认忽略大小写）',
           onClick: function () { setCaseSensitive(caseSensitive !== true) },
         }, 'Cc'),
-        /* 「行：」显示选择器（紧挨搜索框这组开关、在分支范围之前）：它和 .* / Cc
-            一样是「读这些提交的方式」，不是筛选 —— 不进 filterCount、没有 ×、
-            不变更选中、不触发任何 git 读。 */
-        msgLinesFilter,
         branchFilter,
         authorFilter,
         dateFilter,
@@ -5166,13 +5338,19 @@
                 onManage: function () { setMenuOpen(null); setQcEditor('list') },
               })
             : null),
-        /* Pinned to the right end of the strip, and short: the room it reserves
-           is room the filters cannot use, and "200 条" says as much as
-           "200 条匹配" once the filters above it are visible. */
-        h('span', {
-          key: 'count', className: 'dsh-git-count dsh-git-dim',
-          title: String(commitCount) + (hasFilter ? ' 条匹配当前筛选' : ' 条提交'),
-        }, String(commitCount)))
+        /* 右端一枚绝对定位的簇（.dsh-git-tail）：「行：」选择器紧贴提交计数的
+           左边，计数永远还是最右一个 —— 计数几位数两者都不会重叠（簇内同一
+           条 flex 行、同一档 gap，不用给选择器写死「计数宽 + 间距」的魔法数）。
+           选择器照旧是显示设置：不进 filterCount、没有 ×、不动选中、不发读。 */
+        h('span', { key: 'tail', className: 'dsh-git-tail' },
+          msgLinesSelect,
+          /* Pinned to the right end of the strip, and short: the room it reserves
+             is room the filters cannot use, and "200 条" says as much as
+             "200 条匹配" once the filters above it are visible. */
+          h('span', {
+            key: 'count', className: 'dsh-git-count dsh-git-dim',
+            title: String(commitCount) + (hasFilter ? ' 条匹配当前筛选' : ' 条提交'),
+          }, String(commitCount))))
 
       /* 内联输入行：打标签 / 从提交新建分支（提交行右键）、以某分支为起点新建分支 /
          重命名分支（分支行右键）共用这一行。Enter 确认、Esc 取消。 */

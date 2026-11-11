@@ -79,9 +79,23 @@
 .dsh-git-lfsel-item:hover,.dsh-git-lfsel-item-hl{background:var(--dsw-alias-interactive-bg-hover)}
 .dsh-git-lfsel-mark{display:inline-block;flex:none;width:13px;color:var(--dsw-alias-brand-primary);font-size:11px;line-height:16px}
 .dsh-git-lfsel-name{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+/* 「行：」选择器的整体触发器（80-panel.js 的 MsgLinesSelect）：控件本身就是一枚
+    button ——「行：」标签、当前值与下箭头 caret 全在按钮里，点任何一处都开合，
+    不再有原生 select「只有数字能点」的死角。按钮元素的默认边框/底色要退掉、字体
+    要跟上来（dsh-git-lfsel-btn 的那套），padding 还给 dsh-git-lf 的 0 4px（本条
+    在 lfsel-btn 之后定义，同特异性后来者胜），外观仍是 lf 那一族（hover 底色、
+    22px 高、圆角与 11px 字号都挂在 .dsh-git-lf 上）。 */
+.dsh-git-msgsel-btn{appearance:none;-webkit-appearance:none;-moz-appearance:none;border:0;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:11px;font-family:inherit;padding:0 4px;white-space:nowrap;text-align:left;cursor:pointer;outline:none}
 .dsh-git-lclear{flex:none;padding:1px 6px;border:0;border-radius:4px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;cursor:pointer}
 .dsh-git-lclear:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
-.dsh-git-count{position:absolute;right:8px;top:5px;flex:none;font-size:11px;line-height:26px}
+/* 右端簇（80-panel.js 工具条最后一个孩子 dsh-git-tail）：「行：」选择器与提交
+    计数一起绝对定位钉在右端 —— 计数永远是簇里最右一个孩子、选择器在簇内 flex
+    排它紧左边，同一条行、同一档 gap，计数几位数两者都不会重叠（不用给选择器写
+    死「计数宽 + 间距」的魔法数 —— 那样五位数一溢出就压上去了）。top:5px 沿用
+    旧 .dsh-git-count 的钉法；工具条的 padding-right 给整簇留位置（见
+    .dsh-git-tools）。 */
+.dsh-git-tail{position:absolute;right:8px;top:5px;display:inline-flex;align-items:center;gap:4px;flex:none}
+.dsh-git-count{flex:none;font-size:11px;line-height:26px}
 .dsh-git-log{flex:1;overflow:auto}
 .dsh-git-trow{display:flex;align-items:center;gap:6px;padding:2px 6px 2px 6px;cursor:pointer;white-space:nowrap;border-radius:4px;-webkit-user-select:none;user-select:none}
 .dsh-git-trow:hover{background:var(--dsw-alias-bg-layer-2)}
@@ -285,7 +299,11 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-wtmain-path{flex:0 1 auto;min-width:0;max-width:100%;overflow:auto;white-space:nowrap}
 .dsh-git-hint{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary)}
 .dsh-git-danger{color:var(--dsw-alias-state-error-primary)}
-.dsh-git-tools{position:relative;flex:none;display:flex;align-items:center;gap:3px;flex-wrap:nowrap;padding:5px 52px 5px 7px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2)}
+/* 右侧 padding 是给右端簇（.dsh-git-tail：「行：」选择器 + 提交计数）预留的位置：
+    选择器最宽「行：全部▾」≈68px、计数按六位数预留 ≈38px、簇内 gap 4、钉右 8 ——
+    118px 正好罩住整簇，流内内容最多到它为止，永远不会钻到簇底下（52px 那版只为
+    计数留位，选择器进簇后不够了）。 */
+.dsh-git-tools{position:relative;flex:none;display:flex;align-items:center;gap:3px;flex-wrap:nowrap;padding:5px 118px 5px 7px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2)}
 /* Every part of this strip is fixed-width except the search box and the filters,
    and the two menu buttons at the end are the last thing that should ever move:
    when a branch name makes the row too long, the things that can give way do —

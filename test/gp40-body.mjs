@@ -83,7 +83,7 @@ host.call = function (method, args) {
 
 /* 装上 200 个提交的假历史之后要触发一次重读：历史读取是靠筛选条件驱动的
    （lf-select[0] 是「行：」显示选择器，作者筛选在 [1]） */
-byClass(await settle(), 'dsh-git-lf-select')[1].props.onChange({ target: { value: 'mays@example.com' } })
+byClass(await settle(), 'dsh-git-lf-select')[0].props.onChange({ target: { value: 'mays@example.com' } })
 await wait(20)
 await settle()
 
@@ -149,7 +149,7 @@ ok('选中时不为别的行读详情', calls.filter((c) => c.method === 'git/co
 
 /* 记忆不能把数据冻住：换一份历史，行的内容必须跟着变 */
 graphCommits = many.map((c, i) => (i === 5 ? Object.assign({}, c, { subject: '改写过的标题' }) : c))
-byClass(picked2, 'dsh-git-lf-select')[1].props.onChange({ target: { value: '' } })
+byClass(picked2, 'dsh-git-lf-select')[0].props.onChange({ target: { value: '' } })
 await wait(20)
 const rewritten = await settle()
 ok('历史变了，被记忆的行仍然如实更新', textOf(rewritten).indexOf('改写过的标题') >= 0)
@@ -273,7 +273,7 @@ host.call = function (method, args) {
   return plainCall2.call(host, method, args)
 }
 
-byClass(filtered, 'dsh-git-lf-select')[1].props.onChange({ target: { value: 'mays@example.com' } })
+byClass(filtered, 'dsh-git-lf-select')[0].props.onChange({ target: { value: 'mays@example.com' } })
 await wait(10)
 await settle()                                   /* 效果跑起来，第一次被拒 */
 for (let i = 0; i < 3; i += 1) await firePendingTimeouts()   /* 重试定时器：第二次被拒，第三次成功 */
@@ -292,7 +292,7 @@ host.call = function (method, args) {
   }
   return plainCall3.call(host, method, args)
 }
-byClass(retried, 'dsh-git-lf-select')[1].props.onChange({ target: { value: '' } })
+byClass(retried, 'dsh-git-lf-select')[0].props.onChange({ target: { value: '' } })
 await wait(30)
 await settle()
 ok('普通错误一次就结束，不会反复重试', hardFailures === 1)
@@ -305,7 +305,7 @@ console.log('== IDEA 式布局 ==')
 
 /* 回到干净状态：200 个提交、没有筛选 */
 host.call = plainCall2
-byClass(await settle(), 'dsh-git-lf-select')[1].props.onChange({ target: { value: '' } })
+byClass(await settle(), 'dsh-git-lf-select')[0].props.onChange({ target: { value: '' } })
 await wait(20)
 let idea = await settle()
 
