@@ -522,11 +522,12 @@ async function readBlame(input) {
       current = { info: info, fresh: info.seen !== true, count: head[5] !== undefined ? parseInt(head[5], 10) : 0 }
       info.seen = true
       pending = current.count
-      lines.push({
-        no: parseInt(head[4], 10),
-        short: (info.boundary === true ? '^' : '') + info.short,
-        author: info.author, date: info.date, boundary: info.boundary,
-      })
+      /* 入列只记 sha：author/author-time/boundary 元数据都在头行**之后**才到，
+         此刻 info 还是初始空值 —— 这里若把 author/date/boundary 拷进条目，进列的
+         就是永远空白的值拷贝（gp87 钉过的第一处），boundary 提交的 ^ 前缀同样会
+         漏（第二处：元数据 boundary 行落在该提交首现行之后）。最终值在下面的
+         回填一遍里统一取。 */
+      lines.push({ no: parseInt(head[4], 10), sha: sha })
       continue
     }
     if (current === null) continue
@@ -539,6 +540,23 @@ async function readBlame(input) {
     if (current.fresh !== true) continue
     if (key === 'author') current.info.author = value
     else if (key === 'author-time') current.info.date = value
+  }
+  /* ── 元数据回填（gp87 钉的两处 bug 的修复本体）──
+
+     解析循环结束后，按 commits 表把每个行条目的 author / date / boundary / short
+     统一回填成该提交的**最终值** —— 首现段与复用段（fresh=false，从头就没带过
+     元数据）自此一致；^ 前缀在回填时再拼（头行自带 ^ 与元数据 boundary 行两种
+     来源都被 info.boundary 覆盖），压暗与短 hash 的判断读到的就是回填后的字段。
+     内部记账用的 sha 字段回填完即拆，不出宿主。 */
+  for (let i = 0; i < lines.length; i += 1) {
+    const one = lines[i]
+    const info = commits[one.sha]
+    delete one.sha
+    if (info === undefined) continue
+    one.author = info.author
+    one.date = info.date
+    one.boundary = info.boundary === true
+    one.short = (one.boundary === true ? '^' : '') + info.short
   }
   /* 行号升序是 porcelain 的天然顺序，不再排序；同号（不可能，防御）以首见为准。 */
   return { ok: true, mode: mode, path: path, ref: ref, lines: lines }

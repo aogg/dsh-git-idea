@@ -6571,7 +6571,10 @@
         onBlame: function () { setBlameOn(blameOn !== true) },
         onFrag: function () { setFragOpen(fragOpen !== true) },
         onShowWs: function () { saveSettings(Object.assign({}, prefs, { diffShowWs: prefs.diffShowWs !== true })) },
-        onShowNo: function () { saveSettings(Object.assign({}, prefs, { diffShowNo: prefs.diffShowNo !== false })) },
+        /* 行号默认开（20-prefs 的归一化读法是 raw.diffShowNo !== false），翻转值
+           与默认 false 的三个开关正好相反：新值 = 当前是否为 false —— 原来写的
+           !== false 是把当前值原样写回，偏好永远不变（gp87 钉的第三处死开关）。 */
+        onShowNo: function () { saveSettings(Object.assign({}, prefs, { diffShowNo: prefs.diffShowNo === false })) },
         onGuides: function () { saveSettings(Object.assign({}, prefs, { diffIndentGuides: prefs.diffIndentGuides !== true })) },
         onWrap: function () { saveSettings(Object.assign({}, prefs, { diffWrap: prefs.diffWrap !== true })) },
       }) : []
