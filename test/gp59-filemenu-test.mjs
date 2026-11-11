@@ -75,10 +75,10 @@ const baseActs = () => ({
   onCherryPick: () => {}, onClean: () => {}, onGetFromRev: () => {}, onShowHistory: () => {},
 })
 
-/* 历史提交文件树：八项全在场，看的三项与「从修订中获取」都可用。 */
+/* 历史提交文件树：九项全在场，看的三项与「从修订中获取」都可用。 */
 let items = itemsOf(COMMIT, baseActs())
-ok('历史树下八项齐全（与本地比较/打开源文件/显示差异/还原/优选/删除/从修订中获取/显示历史）',
-  ['compare-local', 'open-file', 'show-diff', 'revert', 'cherry-pick', 'clean', 'get-from-rev', 'history']
+ok('历史树下九项齐全（与本地比较/打开源文件/显示差异/复制完整差异/还原/优选/删除/从修订中获取/显示历史）',
+  ['compare-local', 'open-file', 'show-diff', 'copy-patch', 'revert', 'cherry-pick', 'clean', 'get-from-rev', 'history']
     .every((k) => find(items, k) !== undefined))
 ok('历史树下「从修订中获取」可用', find(items, 'get-from-rev').props.disabled !== true)
 ok('历史树下「与本地比较」可用', find(items, 'compare-local').props.disabled !== true)
