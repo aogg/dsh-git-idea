@@ -2166,6 +2166,12 @@
       const [caseSensitive, setCaseSensitive] = React.useState(false)
       const [author, setAuthor] = React.useState('')
       const [datePreset, setDatePreset] = React.useState('all')
+      /* ── 「行：」提交信息显示行数（显示设置，不是筛选）──
+         1 = 只显示 subject（与从前逐像素一致）；2/3/4/5/8/10 = 显示前 N 行；
+         'all' = 完整提交信息。body 数据随图一起返回（64-history.js 的 format 末位
+         %b），切档只重画、不重读；不进 filterCount、没有 ×、不动选中。与作者/
+         时间同款的 useState，不做持久化。消费方：50-log.js 的 CommitList/CommitRow。 */
+      const [msgLines, setMsgLines] = React.useState(1)
       const [pathDraft, setPathDraft] = React.useState('')
       const [pathFilter, setPathFilter] = React.useState('')
       const [collapsed, setCollapsed] = React.useState({})
@@ -4880,7 +4886,8 @@
         : null
 
       /* The log toolbar follows IDEA's: the commit actions stay where they were,
-         then one search box, then every filter as an inline "name: value"
+         then one search box, then a display setting (the 「行：」 message-lines
+         picker — not a filter) and every filter as an inline "name: value"
          trigger that clears itself. No bordered select boxes and no second row,
          so the graph keeps the height that row used to cost. */
       const lfCaret = h('span', { key: 'c', className: 'dsh-git-lf-caret' }, h(Icon, { name: 'down', size: 10 }))
@@ -5021,6 +5028,33 @@
         }),
         pathOn ? lfClear('x', '路径', function () { setPathDraft(''); setPathFilter('') }) : null)
 
+      /* ── 「行：」显示选择器（搜索框右边、分支范围之前）──
+         选项 1（默认）/2/3/4/5/8/10/全部：选 N 时每条提交显示信息的前 N 行
+         （第 1 行是 subject，其余来自 body），「全部」显示完整信息。画法照抄作者/
+         时间那套（lfWidth 量宽、caret 收尾），但它是显示设置：没有 dsh-git-lf-on
+         高亮、没有 × 清除键，onChange 只动这一个 state。 */
+      const msgLinesFilter = h('label', {
+        key: 'f:msglines', className: 'dsh-git-lf',
+        title: '显示提交信息行数：第 1 行是标题，其余行来自正文，「全部」显示完整提交信息',
+      },
+        h('span', { key: 'k', className: 'dsh-git-lf-k' }, '行：'),
+        h('select', {
+          key: 's', className: 'dsh-git-lf-select',
+          value: msgLines === 'all' ? 'all' : String(msgLines),
+          style: lfWidth(msgLines === 'all' ? '全部' : String(msgLines)),
+          onChange: function (event) {
+            const asked = event.target.value
+            if (asked === 'all') { setMsgLines('all'); return }
+            const parsed = parseInt(asked, 10)
+            setMsgLines(parsed >= 1 && parsed <= 10 ? parsed : 1)
+          },
+        },
+          [1, 2, 3, 4, 5, 8, 10].map(function (n) {
+            return h('option', { key: String(n), value: String(n) }, String(n))
+          }),
+          h('option', { key: 'all', value: 'all' }, '全部')),
+        lfCaret)
+
       /* IDEA's arrangement of this strip: what you filter with on the left,
          what you do with the result on the right. */
       const toolbar = h('div', { className: 'dsh-git-tools' },
@@ -5035,6 +5069,10 @@
           title: '区分大小写（默认忽略大小写）',
           onClick: function () { setCaseSensitive(caseSensitive !== true) },
         }, 'Cc'),
+        /* 「行：」显示选择器（紧挨搜索框这组开关、在分支范围之前）：它和 .* / Cc
+            一样是「读这些提交的方式」，不是筛选 —— 不进 filterCount、没有 ×、
+            不变更选中、不触发任何 git 读。 */
+        msgLinesFilter,
         branchFilter,
         authorFilter,
         dateFilter,
@@ -5681,6 +5719,8 @@
               graph: graph,
               selected: selected,
               multi: multiSel,
+              /* 「行：」显示行数：纯显示 prop，列表自己换行高重画，不发任何读。 */
+              msgLines: msgLines,
               onPick: pickCommit,
               onContext: openCommitMenu,
               /* Functional, not `maxCount + PAGE_COMMITS`: two clicks before the

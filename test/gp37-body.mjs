@@ -30,13 +30,15 @@ ok('旧的第二排筛选框没了', byClass(t, 'dsh-git-filters').length === 0)
 ok('旧的「筛选」开关按钮没了', buttons(byClass(t, 'dsh-git-tools')[0]).every((b) => textOf(b).indexOf('筛选') < 0))
 ok('搜索框带放大镜', byClass(t, 'dsh-git-logsearch').length === 1 && byClass(t, 'dsh-git-logsearch-ico').length === 1)
 ok('搜索框 placeholder 是「搜索提交信息…」', byClass(t, 'dsh-git-logsearch-input')[0].props.placeholder === '搜索提交信息…')
-ok('四个筛选触发器都在（分支/作者/时间/路径）', byClass(t, 'dsh-git-lf').length === 4)
-ok('分支筛选一直显示「分支：」', textOf(byClass(t, 'dsh-git-lf')[0]).indexOf('分支：') === 0)
-ok('未设置时只显示字段名（作者/时间/路径）', byClass(t, 'dsh-git-lf').slice(1).map(textOf).join('|').indexOf('：') < 0)
-ok('分支触发器用短标签（当前 main）', textOf(byClass(t, 'dsh-git-lf')[0]).indexOf('当前 main') > 0
-  && textOf(byClass(t, 'dsh-git-lf')[0]).indexOf('当前分支（') < 0)
-ok('作者/时间还是无边框 select、路径是 input，分支换成了浮动面板的触发器',
-  byClass(t, 'dsh-git-lf-select').length === 2 && byClass(t, 'dsh-git-lf-input').length === 1
+/* 「行：」显示选择器（不是筛选）进了工具条、排在分支范围之前：它也是一个
+   .dsh-git-lf / .dsh-git-lf-select，下面所有按下标找触发器的地方整体后移一位。 */
+ok('四个筛选触发器都在（分支/作者/时间/路径），旁边还有「行：」显示选择器', byClass(t, 'dsh-git-lf').length === 5)
+ok('分支筛选一直显示「分支：」', textOf(byClass(t, 'dsh-git-lf')[1]).indexOf('分支：') === 0)
+ok('未设置时只显示字段名（作者/时间/路径）', byClass(t, 'dsh-git-lf').slice(2).map(textOf).join('|').indexOf('：') < 0)
+ok('分支触发器用短标签（当前 main）', textOf(byClass(t, 'dsh-git-lf')[1]).indexOf('当前 main') > 0
+  && textOf(byClass(t, 'dsh-git-lf')[1]).indexOf('当前分支（') < 0)
+ok('作者/时间还是无边框 select、「行：」也是一个 select、路径是 input，分支换成了浮动面板的触发器',
+  byClass(t, 'dsh-git-lf-select').length === 3 && byClass(t, 'dsh-git-lf-input').length === 1
   && byClass(t, 'dsh-git-lfsel-btn').length === 1)
 /* 只看中间栏这条工具栏：面板头部那组同步按钮也是 .dsh-git-tool */
 const toolBar = byClass(t, 'dsh-git-tools')[0]
@@ -75,8 +77,8 @@ const setFilter = async (i, value) => {
   await wait(10)
   t = await settle('pop')
 }
-await setFilter(0, 'mays@example.com')
-await setFilter(1, 'week')
+await setFilter(1, 'mays@example.com')
+await setFilter(2, 'week')
 byClass(t, 'dsh-git-lf-input')[0].props.onChange({ target: { value: 'src/main/java' } })
 await wait(5)
 t = await settle('pop')
@@ -90,10 +92,10 @@ console.log('  触发器宽度:', JSON.stringify(trigW), ' 分支触发器:', br
   ' 合计:', trigW.reduce((a, b) => a + b, 0) + brW + pathW)
 ok('四个筛选控件宽度之和 < 320px（选了条件也不会把行撑爆）', trigW.reduce((a, b) => a + b, 0) + brW + pathW < 320)
 ok('短值的下拉会缩到贴合文字（mays 不再是 112px 空框）', (function () {
-  const authorSel = byClass(t, 'dsh-git-lf-select')[0]
+  const authorSel = byClass(t, 'dsh-git-lf-select')[1]
   return Number(String(authorSel.props.style.width).replace('px', '')) < 60
 })())
-ok('作者/时间的下拉仍以 132 封顶（放宽只属于分支范围）', trigW[0] <= 132 && trigW[1] <= 132)
+ok('作者/时间的下拉仍以 132 封顶（放宽只属于分支范围）', trigW[1] <= 132 && trigW[2] <= 132)
 ok('分支触发器这一格在分支自己的 cap（300）之内', brW <= 300)
 /* 工具栏一行要装下的东西：⚡ 一个 26px 键 + 分隔线 + 搜索框最小宽
    + 四个触发器的标签前缀 + 它们各自的控件 + 条数预留的位置 + 间距 */
@@ -102,8 +104,8 @@ console.log('  固定部分:', chrome, 'px  控件:', trigW.reduce((a, b) => a +
 ok('筛选全设上也只要 ~600px 出头（常见宽度下仍是一行）', chrome + trigW.reduce((a, b) => a + b, 0) + brW + pathW < 660)
 
 /* 收工：把筛选清掉，后面的用例假设没有筛选 */
-await setFilter(0, '')
-await setFilter(1, 'all')
+await setFilter(1, '')
+await setFilter(2, 'all')
 byClass(t, 'dsh-git-lf-input')[0].props.onChange({ target: { value: '' } })
 await wait(5)
 t = await settle('pop')
@@ -137,7 +139,7 @@ t = await settle('pop')
 console.log('  双击后的 git/graph:', JSON.stringify(graphCalls().slice(before).map((c) => c.args.ref || (c.args.allRefs ? '@all' : 'main'))))
 ok('双击重新读了历史', graphCalls().length > before + 0 && lastGraph().args.ref === 'feature')
 ok('双击后那一行标成筛选范围', String(trowWith(t, 'feature').props.className).indexOf('dsh-git-trow-scope') >= 0)
-ok('双击后分支筛选触发器显示该分支', textOf(byClass(t, 'dsh-git-lf')[0]).indexOf('feature') > 0)
+ok('双击后分支筛选触发器显示该分支', textOf(byClass(t, 'dsh-git-lf')[1]).indexOf('feature') > 0)
 ok('别的分支没有被标成范围', String(trowWith(t, 'stable').props.className).indexOf('dsh-git-trow-scope') < 0)
 
 console.log('')
@@ -185,7 +187,7 @@ ok('点三角之后选中的还是标题行', String(groupRow(t, '本地').props
 console.log('')
 console.log('== 每个筛选自己带 × 清除 ==')
 /* 分支那格的第一个 button 现在是触发器本身（浮动面板的开关），× 要按类名找。 */
-const clearBranch = byClass(byClass(t, 'dsh-git-lf')[0], 'dsh-git-lf-x')[0]
+const clearBranch = byClass(byClass(t, 'dsh-git-lf')[1], 'dsh-git-lf-x')[0]
 ok('分支筛选上有 ×', clearBranch !== undefined)
 if (clearBranch !== undefined) {
   clearBranch.props.onClick({ stopPropagation() {} })
@@ -197,19 +199,19 @@ if (clearBranch !== undefined) {
 
 console.log('')
 console.log('== 作者 / 时间 / 路径三个触发器都会进 history 查询 ==')
-const authorSelect = byClass(t, 'dsh-git-lf-select')[0]
+const authorSelect = byClass(t, 'dsh-git-lf-select')[1]
 authorSelect.props.onChange({ target: { value: 'mays@example.com' } })
 await wait(15)
 t = await settle('pop')
 ok('选作者后 history 带上 author', lastGraph().args.author === 'mays@example.com')
-ok('作者触发器变成「作者：」前缀', textOf(byClass(t, 'dsh-git-lf')[1]).indexOf('作者：') === 0)
+ok('作者触发器变成「作者：」前缀', textOf(byClass(t, 'dsh-git-lf')[2]).indexOf('作者：') === 0)
 
-const dateSelect = byClass(t, 'dsh-git-lf-select')[1]
+const dateSelect = byClass(t, 'dsh-git-lf-select')[2]
 dateSelect.props.onChange({ target: { value: 'week' } })
 await wait(15)
 t = await settle('pop')
 ok('选时间后 history 带上 since', typeof lastGraph().args.since === 'string' && lastGraph().args.since.length > 0)
-ok('时间触发器显示所选预设', textOf(byClass(t, 'dsh-git-lf')[2]).indexOf('最近 7 天') > 0)
+ok('时间触发器显示所选预设', textOf(byClass(t, 'dsh-git-lf')[3]).indexOf('最近 7 天') > 0)
 
 const pathInput = byClass(t, 'dsh-git-lf-input')[0]
 pathInput.props.onChange({ target: { value: 'src/main' } })
@@ -219,7 +221,7 @@ byClass(t, 'dsh-git-lf-input')[0].props.onKeyDown({ key: 'Enter', preventDefault
 await wait(15)
 t = await settle('pop')
 ok('路径回车后 history 带上 path', lastGraph().args.path === 'src/main')
-ok('路径触发器加了「路径：」前缀', textOf(byClass(t, 'dsh-git-lf')[3]).indexOf('路径：') === 0)
+ok('路径触发器加了「路径：」前缀', textOf(byClass(t, 'dsh-git-lf')[4]).indexOf('路径：') === 0)
 ok('路径输入框里就是那个路径', byClass(t, 'dsh-git-lf-input')[0].props.value === 'src/main')
 ok('此时才出现「全部清除」', byClass(t, 'dsh-git-lclear').length === 1)
 
@@ -379,12 +381,12 @@ fresh = await settle('pop')
 
 console.log('')
 console.log('== 重新读历史：选中的还在就保留，不在了就清空 ==')
-byClass(fresh, 'dsh-git-lf-select')[0].props.onChange({ target: { value: 'mays@example.com' } })
+byClass(fresh, 'dsh-git-lf-select')[1].props.onChange({ target: { value: 'mays@example.com' } })
 await wait(15)
 fresh = await settle('pop')
 ok('筛选导致重读后，选中的提交还在', crowSel().length === 1 && textOf(crowSel()[0]).indexOf('second commit') >= 0)
 graphCommits = graphCommits.filter((c) => c.hash !== 'bbb222')
-byClass(fresh, 'dsh-git-lf-select')[0].props.onChange({ target: { value: '' } })
+byClass(fresh, 'dsh-git-lf-select')[1].props.onChange({ target: { value: '' } })
 await wait(15)
 fresh = await settle('pop')
 ok('选中那行被筛掉后，没有自动改选别的', crowSel().length === 0)

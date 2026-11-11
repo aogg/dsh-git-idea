@@ -262,8 +262,15 @@ async function readGraph(input, repo) {
 
   /* One commit more than asked for: the extra row is not returned, it is how
      "there is more history" is answered without a second read. */
+  /* 字段序（0–8）：hash short 作者名/邮箱/日期 subject refs parents body ——
+     %b 追加为最后一个字段，0–7 的下标一个不动（66-refs.js 的推送预览复用同一个
+     解析器，多出的字段它用不到，也不受影响）。body 是显示数据不是筛选参数：
+     客户端「行：」选择器切行数时直接用它重画，零重读 —— 所以它无条件随图返回，
+     不加开关。%b 里的换行就是行本身；尾换行由解析器剥（50-graph.js，与
+     79d-expose.js 对 %b 的既有处理同一款），body 中再出现 \x1f 至多截短 body
+     自己 —— 79d 把 %b 放在中间字段都接受这个风险，这里放在末位只会更保守。 */
   const argv = ['-c', 'core.quotePath=false', 'log', '--max-count=' + String(maxCount + 1), '--date-order',
-    '--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s%x1f%D%x1f%P%x1e']
+    '--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s%x1f%D%x1f%P%x1f%b%x1e']
   if ((search.length > 0 && regex !== true) || author.length > 0) argv.push('--fixed-strings')
   if (search.length > 0) {
     argv.push('--grep=' + search)

@@ -3,7 +3,13 @@
       const commits = props.commits
       const laneCount = Math.max(1, props.lanes)
       const width = laneCount * LANE_W + 6
-      const height = commits.length * ROW_H
+      /* ── 行几何（「行：」选择器，CommitList 算好递进来）──
+         rowH：固定 N 行档的统一行高；rowTops：「全部」档每行的 y 起点（前缀和，
+         长度 = 行数 + 1，末项是总高）。两档都不带（默认 1 行）时公式退回
+         row * ROW_H —— 与从前逐像素相同。高度全部从数据算，没有 DOM 测量。 */
+      const rowH = typeof props.rowH === 'number' && props.rowH > 0 ? props.rowH : ROW_H
+      const rowTops = Array.isArray(props.rowTops) ? props.rowTops : null
+      const height = rowTops !== null && rowTops.length > 0 ? rowTops[rowTops.length - 1] : commits.length * rowH
       /* Only the rows inside the window are drawn, but their coordinates stay
          absolute, because the svg still spans the whole list: an edge from a
          visible row to a parent far below is still the same curve it was. */
@@ -19,12 +25,18 @@
         return map
       }, [commits])
       const cx = function (lane) { return lane * LANE_W + LANE_W / 2 + 3 }
-      const cy = function (row) { return row * ROW_H + ROW_H / 2 }
+      /* 一行的 y 起点；圆点对齐的 subject 行永远占这一行的头 ROW_H 像素，圆点钉在
+         它的正中 —— 无论这一行总共多高（多行档）还是整行就是 26px（默认）。 */
+      const top = function (row) {
+        if (rowTops !== null) { const at = rowTops[row]; return at === undefined ? row * rowH : at }
+        return row * rowH
+      }
+      const cy = function (row) { return top(row) + ROW_H / 2 }
       /* Where a line that leaves this list goes: the bottom of the rows that are
          drawn. It used to stop one row under its own dot, which is what made a
          filtered history look like a row of lollipops — every match with a
          parent the filter hid drew a ten-pixel tail and nothing else. */
-      const exitY = cy(Math.max(first, last - 1)) + ROW_H
+      const exitY = cy(Math.max(first, last - 1)) + rowH
       const shapes = []
       for (let i = first; i < last; i += 1) {
         const row = rows[i]
@@ -78,6 +90,21 @@
       /* 悬浮提示第三行给完整时刻（40-format.js 的 fullDate）：列上只到
          「今天 HH:mm」这一层，哪一分钟提交的要看这里。 */
       const when = fullDate(commit.date)
+      /* ── 「行：」显示行数（80-panel.js 的选择器）──
+         1 = 现在的单行，DOM 与从前完全一致；固定 N（2..10）与「全部」共用同一副
+         多行骨架：第一行是原班横排（subject/refs/作者/时间，仍占 26px，提交图的
+         圆点对齐它），body 从第 2 行起逐行省略。固定档整行等高（信息不足 N 行就
+         留白，行高不缩），「全部」按自己的信息行数定高 —— 两个高度都从
+         commitMsgLines 的同一份数据算（MSG_LINE_H），虚拟窗口、垫块与图几何用的
+         是同一笔账。title 无论哪档都带上完整提交信息（数据现成）。 */
+      const lines = commitMsgLines(commit)
+      const msgLines = props.msgLines === undefined || props.msgLines === 1 ? 1 : props.msgLines
+      const tall = msgLines !== 1
+      const shown = tall === false ? null : (msgLines === 'all' ? lines : lines.slice(0, msgLines))
+      const height = tall === false ? ROW_H
+        : (msgLines === 'all'
+          ? ROW_H + (lines.length - 1) * MSG_LINE_H
+          : ROW_H + (msgLines - 1) * MSG_LINE_H)
       const chips = []
       /* 浅克隆边界（git 的 grafted）：git 的原始说法换成中文小标签，并带上说明。
          同一个数组里其它装饰（HEAD -> main / origin/main / tag: v1）一个字都不动，
@@ -95,13 +122,15 @@
         }
         chips.push(h('span', { className: 'dsh-git-ref dsh-git-ref-' + kind, key: 'r' + k }, refs[k]))
       }
-      return h('div', {
+      const rowProps = {
         className: 'dsh-git-crow'
           + (props.selected === true ? ' dsh-git-crow-sel' : '')
-          + (props.multi === true ? ' dsh-git-crow-multi' : ''),
+          + (props.multi === true ? ' dsh-git-crow-multi' : '')
+          + (tall === true ? ' dsh-git-crow-tall' : ''),
         /* 边界提交的行悬浮提示多说一句「为什么下面就没有了」：灰标签上的 title 要
-           悬停到那个小圆标上才看得到，整行才是大家真正会停的地方。 */
-        title: commit.hash + '\n' + commit.subject + (when.length > 0 ? '\n' + when : '')
+           悬停到那个小圆标上才看得到，整行才是大家真正会停的地方。第二行起是
+           完整提交信息 —— 多行档显示的正是它的前几行，单行档悬浮里也看得全。 */
+        title: commit.hash + '\n' + lines.join('\n') + (when.length > 0 ? '\n' + when : '')
           + (shallowBoundary === true ? '\n' + shallowRefTip() : ''),
         /* 事件一起回给面板：Ctrl/Cmd+点击是「挑进/移出多选」，普通点击照旧单选 ——
            区分只在这一层做，行自己不解读修饰键。 */
@@ -113,22 +142,70 @@
           event.stopPropagation()
           props.onContext(commit.hash, event)
         },
-      },
+      }
+      /* 多行档才定高（行内 style，46-css.js 的 .dsh-git-crow-tall）：默认 1 行连
+         这个键都不加，props 与从前逐键相同，memo 的行为一字不差。 */
+      if (tall === true) rowProps.style = { height: height + 'px' }
+      const firstLine = [
         h('span', { className: 'dsh-git-subject' }, commit.subject),
         chips.length > 0 ? h('span', { className: 'dsh-git-refs' }, chips) : null,
         h('span', { className: 'dsh-git-author' }, commit.author),
-        h('span', { className: 'dsh-git-date' }, relativeDate(commit.date)))
+        h('span', { className: 'dsh-git-date' }, relativeDate(commit.date)),
+      ]
+      if (tall !== true) return h('div', rowProps, firstLine[0], firstLine[1], firstLine[2], firstLine[3])
+      const bodyRows = []
+      for (let b = 1; b < shown.length; b += 1) {
+        bodyRows.push(h('span', { key: 'b' + String(b), className: 'dsh-git-crow-bodyline' }, shown[b]))
+      }
+      return h('div', rowProps,
+        h('div', { className: 'dsh-git-crow-main' }, firstLine[0], firstLine[1], firstLine[2], firstLine[3]),
+        bodyRows)
     }
     const CommitRowMemo = memo(CommitRow)
+
+    /* 一条提交的完整信息行（subject 打头，body 逐行跟上）：行数喂给「行：全部」档
+       的行高与前缀和（CommitList），内容喂给多行档的显示与整行的 title。body 由
+       Host 随图带回（64-history.js 的 format 末位 %b，50-graph.js 解析）；中段的
+       空行是排版的一部分照留，尾部的空行不算行数，至少一行。 */
+    function commitMsgLines(commit) {
+      const lines = [typeof commit.subject === 'string' ? commit.subject : '']
+      const body = commit.body
+      if (typeof body === 'string' && body.length > 0) {
+        const parts = body.split('\n')
+        for (let i = 0; i < parts.length; i += 1) lines.push(parts[i])
+      }
+      while (lines.length > 1 && lines[lines.length - 1].length === 0) lines.pop()
+      return lines
+    }
 
     function CommitList(props) {
       const graph = props.graph
       const commits = graph != null && graph.ok === true && Array.isArray(graph.commits) ? graph.commits : null
       const count = commits === null ? 0 : commits.length
+      /* ── 「行：」选择器的行几何（三档）──
+         1 = 现在的等高算术，rowH 就是 ROW_H，下面每一处公式都与从前逐像素相同；
+         固定 N（2..10）= 整列统一行高 ROW_H + (N-1)×MSG_LINE_H，窗口、垫块、svg
+         高度、圆点全部换用这一个数；「全部」= 每行按 commitMsgLines 的行数各自
+         定高，heights 交给 useVirtualWindow 做前缀和（12-window.js），rowTops
+         递给 GraphCanvas 定圆点的 y。高度全部从数据算，没有 DOM 测量。 */
+      const msgLines = props.msgLines === undefined || props.msgLines === null || props.msgLines === 1 ? 1 : props.msgLines
+      const heights = useMemo(function () {
+        if (msgLines !== 'all' || commits === null) return null
+        const out = []
+        for (let i = 0; i < commits.length; i += 1) out.push(ROW_H + (commitMsgLines(commits[i]).length - 1) * MSG_LINE_H)
+        return out
+      }, [commits, msgLines])
+      const rowTops = useMemo(function () {
+        if (heights === null) return null
+        const tops = [0]
+        for (let i = 0; i < heights.length; i += 1) tops.push(tops[i] + heights[i])
+        return tops
+      }, [heights])
+      const rowH = typeof msgLines === 'number' && msgLines > 1 ? ROW_H + (msgLines - 1) * MSG_LINE_H : ROW_H
       /* The window has to be asked for before the two early returns below, or a
          list that is empty on one render and full on the next would change how
          many hooks this component calls. */
-      const win = useVirtualWindow('log', count, ROW_H)
+      const win = useVirtualWindow('log', count, rowH, heights)
 
       /* graph 为 null 是请求还在途，不是读取失败：先给中性 dim 提示等数据回来，
          红字 error 只留给下面三种确有返回体的失败，免得正常加载被当成报错。 */
@@ -165,6 +242,7 @@
           commit: commits[i],
           selected: props.selected === commits[i].hash,
           multi: multiSet[commits[i].hash] === true,
+          msgLines: msgLines,
           onPick: props.onPick,
           onContext: props.onContext,
         }))
@@ -172,9 +250,12 @@
 
       /* Two spacers carry the rows that are not built, so the scrollbar keeps
          describing the whole history and every built row lands on the pixel it
-         would have had. */
-      const padTop = win.first * ROW_H
-      const padBottom = (count - win.last) * ROW_H
+         would have had. 「全部」档的垫块从 rowTops 前缀和拿（每行高度不同），
+         其余两档是同一句乘法 —— 默认档的乘数就是 ROW_H，与从前逐像素相同。 */
+      const padTop = rowTops !== null ? rowTops[win.first] : win.first * rowH
+      const padBottom = rowTops !== null
+        ? rowTops[rowTops.length - 1] - rowTops[win.last]
+        : (count - win.last) * rowH
       /* The read stops at a page. When git had one commit more than the page
          asked for, there is more history and the list offers it — the count is
          the honest one, because a repository with ten thousand commits must not
@@ -186,13 +267,18 @@
               key: 'b', type: 'button', className: 'dsh-git-btn', onClick: function () { props.onLoadMore() },
             }, '加载更多'))
         : null
+      /* GraphCanvas 只在多行档多拿行几何（rowH / rowTops）：默认档的 props 集合与
+         从前逐键相同，memo 不因为这次改动多动一根线。 */
+      const canvasProps = { rows: graph.rows, commits: commits, lanes: graph.lanes, first: win.first, last: win.last }
+      if (rowTops !== null) canvasProps.rowTops = rowTops
+      else if (rowH !== ROW_H) canvasProps.rowH = rowH
       return h('div', {
         className: 'dsh-git-log',
         ref: win.attach,
         onScroll: win.measure,
       },
-        h('div', { className: 'dsh-git-logwrap', style: { minHeight: (count * ROW_H) + 'px' } },
-          h(GraphCanvasMemo, { rows: graph.rows, commits: commits, lanes: graph.lanes, first: win.first, last: win.last }),
+        h('div', { className: 'dsh-git-logwrap', style: { minHeight: (rowTops !== null ? rowTops[rowTops.length - 1] : count * rowH) + 'px' } },
+          h(GraphCanvasMemo, canvasProps),
           h('div', { style: { marginLeft: graphWidth + 'px' } },
             padTop > 0 ? h('div', { key: 'pad-top', style: { height: padTop + 'px' } }) : null,
             listRows,

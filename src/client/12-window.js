@@ -10,11 +10,16 @@
        has to come from the page is how tall the scroller is; until it says (a
        test harness reports no height, and neither does a browser that has not
        laid the panel out yet) the window is "everything", which is what this did
-       before, so a failed measurement can never make a row disappear. */
+       before, so a failed measurement can never make a row disappear.
+
+       The optional fourth argument lifts the equal-height rule: the history's
+       「行：全部」 passes each row's own height (derived from the commit message,
+       never measured), and the window edges come from prefix sums instead of
+       division. The arithmetic path below stays exactly what it was. */
     const VIRTUAL_OVERSCAN = 8
     const scrollNodes = {}
 
-    function useVirtualWindow(id, count, rowHeight) {
+    function useVirtualWindow(id, count, rowHeight, heights) {
       const [win, setWin] = React.useState(null)
       /* One identity for the life of the list: a ref callback rebuilt on every
          render makes React detach it and re-attach the node, which would blank
@@ -28,11 +33,31 @@
           return
         }
         const top = node != null && typeof node.scrollTop === 'number' && node.scrollTop > 0 ? node.scrollTop : 0
-        /* Both ends are clamped to the list: a filter can leave the scroller
-           further down than the list is long, and a window that starts past the
-           end would paint a spacer taller than the list and nothing else. */
-        const first = Math.max(0, Math.min(count, Math.floor(top / rowHeight) - VIRTUAL_OVERSCAN))
-        const last = Math.max(first, Math.min(count, Math.ceil((top + viewport) / rowHeight) + VIRTUAL_OVERSCAN))
+        let first = 0
+        let last = count
+        if (heights !== null && heights !== undefined) {
+          /* ── 非等高（历史页的「全部」档）──
+             每行自己的高度在 heights 里（CommitList 从提交信息行数算出来），
+             前缀和找窗口边界：first = 第一个底边越过 scrollTop 的行，last 是第一个
+             底边越过视口下沿的行 —— overscan 与两端的 clamp 和等高路径同一套。
+             O(n) 的一次加法遍历，一万行也只是几微秒；等高算术一尘不动。 */
+          const limit = Math.min(count, heights.length)
+          let at = 0
+          let acc = 0
+          while (at < limit && acc + heights[at] <= top) { acc += heights[at]; at += 1 }
+          first = Math.max(0, at - VIRTUAL_OVERSCAN)
+          const bottom = top + viewport
+          let end = at
+          let seen = acc
+          while (end < limit && seen < bottom) { seen += heights[end]; end += 1 }
+          last = Math.max(first, Math.min(count, end + VIRTUAL_OVERSCAN))
+        } else {
+          /* Both ends are clamped to the list: a filter can leave the scroller
+             further down than the list is long, and a window that starts past the
+             end would paint a spacer taller than the list and nothing else. */
+          first = Math.max(0, Math.min(count, Math.floor(top / rowHeight) - VIRTUAL_OVERSCAN))
+          last = Math.max(first, Math.min(count, Math.ceil((top + viewport) / rowHeight) + VIRTUAL_OVERSCAN))
+        }
         setWin(function (previous) {
           if (previous !== null && previous.first === first && previous.last === last) return previous
           return { first: first, last: last }

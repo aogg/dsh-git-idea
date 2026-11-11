@@ -1,5 +1,11 @@
     const LANE_COLORS = ['#4a86e8', '#22a06b', '#d98e04', '#9b59b6', '#d64545', '#0e9aa7', '#b8860b', '#c2478f']
     const ROW_H = 26
+    /* 多行提交信息（80-panel.js 的「行：」选择器）的 body 行高：11px 字号 +
+       15px 行距（46-css.js 的 .dsh-git-crow-bodyline 是同一个 15px）。固定 N 行档
+       的统一行高 = ROW_H + (N-1) × 这个数；「全部」档按每条提交自己的信息行数用
+       同一个常数累计 —— 行高、垫块、虚拟窗口的前缀和、提交图圆点的 y 全部从这
+       两个常数算出来，不做任何 DOM 测量。 */
+    const MSG_LINE_H = 15
     /* One page of history. Big enough that nobody scrolls to the end of it by
        accident, small enough that the first paint of a large repository is a
        single read; `git log` says whether there is more. */

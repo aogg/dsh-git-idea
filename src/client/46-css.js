@@ -217,6 +217,16 @@
    谁写在后面谁赢 —— 少了这一条，鼠标一放上去选中色就被悬停色顶掉，看起来
    就像选中丢了。分支树的行一直是这个规矩。 */
 .dsh-git-crow-sel:hover{background:var(--dsw-alias-interactive-bg-hover)}
+/* ── 多行提交信息（「行：」选择器 > 1 的固定 N 行与「全部」两档共用，50-log.js
+    的 CommitRow）── 外层行从横排换成纵排块（行内 style 定高）：第一行的原班横排
+    搬进 .dsh-git-crow-main（高度仍是 26px、仍垂直居中 —— 提交图圆点对齐的就是它），
+    body 从第 2 行起逐行省略（.dsh-git-crow-bodyline，暗色小字 15px 一行，与
+    40-format.js 的 MSG_LINE_H 是同一个数）。hover/选中/多选三类底色都挂在
+    .dsh-git-crow 这一层，纵排下照常整行生效；padding 收到外层为 0，左右 8px 由
+    main 与 bodyline 自己扛。这两条必须写在 .dsh-git-crow 之后（同权重后者赢）。 */
+.dsh-git-crow-tall{display:block;padding:0}
+.dsh-git-crow-main{display:flex;align-items:center;gap:8px;height:26px;box-sizing:border-box;padding:0 8px;white-space:nowrap}
+.dsh-git-crow-bodyline{display:block;height:15px;line-height:15px;font-size:11px;color:var(--dsw-alias-label-secondary);padding:0 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dsh-git-subject{flex:1;overflow:hidden;text-overflow:ellipsis}
 .dsh-git-author{flex:none;width:84px;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-secondary);font-size:11px}
 .dsh-git-date{flex:none;width:112px;text-align:right;color:var(--dsw-alias-label-secondary);font-size:11px}

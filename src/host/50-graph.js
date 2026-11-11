@@ -144,6 +144,11 @@ function parseCommitRecords(stdout) {
       subject: field(fields, 5),
       refs: field(fields, 6),
       parents: parents,
+      /* %b（第 8 个字段，64-history.js 的 format 末位）：提交信息正文，喂给历史页
+         的「行：」显示选择器。尾换行剥掉 —— 79d-expose.js 对 %b 的既有处理；
+         66-refs.js 的推送预览走同一个解析器，它的 format 没有这一位，
+         field() 兜底成空串，弹窗行不吃它。 */
+      body: field(fields, 8).replace(/\n+$/, ''),
     })
   }
   return commits
