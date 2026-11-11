@@ -130,6 +130,11 @@
          many hooks this component calls. */
       const win = useVirtualWindow('log', count, ROW_H)
 
+      /* graph 为 null 是请求还在途，不是读取失败：先给中性 dim 提示等数据回来，
+         红字 error 只留给下面三种确有返回体的失败，免得正常加载被当成报错。 */
+      if (graph == null) {
+        return h('div', { className: 'dsh-git-pane dsh-git-dim' }, '正在读取提交历史…')
+      }
       if (commits === null) {
         const reason = graph != null && graph.noGit === true
           ? ('找不到 git：' + text(graph.repo))
