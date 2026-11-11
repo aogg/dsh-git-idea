@@ -155,14 +155,19 @@ const DIFF_SHA = /^[0-9a-f]{7,40}$/i
 /* range 模式的 ref 是「base..head」整段（选区视图点开一个文件时的读法）。 */
 const DIFF_RANGE = /^[0-9a-f]{7,40}\.\.[0-9a-f]{7,40}$/i
 
-function diffArgv(mode, paths, ref) {
-  const common = ['--no-optional-locks', '-c', 'core.quotePath=false', 'diff', '--no-color', '--no-ext-diff']
+function diffArgv(mode, paths, ref, context) {
+  /* -U 大上下文（行号右键「收起未更改的片段」的展开读）：不带时用 git 默认的
+     -U3，argv 与从前逐字节一致 —— 现有调用方（git/diff、git/patch-text）一个
+     字都不带这个参数，行为不变。 */
+  const wide = typeof context === 'number' && isFinite(context) && context >= 0 && Math.floor(context) === context
+    ? ['-U' + String(Math.floor(context))] : []
+  const common = ['--no-optional-locks', '-c', 'core.quotePath=false', 'diff', '--no-color', '--no-ext-diff'].concat(wide)
   if (mode === 'commit') {
     /* `-m --first-parent` is what makes a merge commit readable: without it git
        prints the combined diff, which for a clean merge is empty — the file list
        would name a change and the patch would say there is none. */
     return ['--no-optional-locks', '-c', 'core.quotePath=false', 'show', '--no-color', '--no-ext-diff',
-      '--format=', '--patch', '-m', '--first-parent', ref, '--'].concat(paths)
+      '--format=', '--patch', '-m', '--first-parent'].concat(wide, [ref, '--'], paths)
   }
   /* range：两棵树之间的一只文件（`git diff <base> <head> -- <path>`），选区视图
      「这一段提交合计改了它什么」的答案。 */
@@ -241,7 +246,17 @@ async function readFileDiff(input) {
   }
   const paths = from.length > 0 && from !== path ? [from, path] : [path]
 
-  const result = await git(argsFor(input), diffArgv(mode, paths, ref), null, { maxBytes: 1200000 })
+  /* -U 大上下文（客户端「收起未更改的片段」的展开读，55-diff.js）：只认 0..100000
+     的整数，不带这个参数就是从前的默认上下文 —— 行号右键的折叠读还带 full=true：
+     免掉 DIFF_CHARS_MAX（长行的补丁不被字符数截断），但 DIFF_LINES_MAX 照旧 ——
+     行数封顶同时封住客户端换行档全量渲染的 DOM 规模，两道各管各的。超限的 truncated
+     标记原话带回，客户端按「差异过长」警告，不把截过的账当成完整折叠。 */
+  const context = input != null && typeof input.context === 'number' && isFinite(input.context)
+    && input.context >= 0 && input.context <= 100000 && Math.floor(input.context) === input.context
+    ? Math.floor(input.context) : undefined
+  const full = input != null && input.full === true
+
+  const result = await git(argsFor(input), diffArgv(mode, paths, ref, context), null, { maxBytes: 1200000 })
   /* `git diff --no-index` says "these differ" with exit code 1 and a perfectly
      good patch on stdout; every other mode says it with exit code 0. */
   const produced = result.exitCode === 0 || (mode === 'untracked' && result.exitCode === 1 && result.stdout.length > 0)
@@ -258,7 +273,7 @@ async function readFileDiff(input) {
     patch = lines.slice(0, DIFF_LINES_MAX).join('\n')
     truncated = true
   }
-  if (patch.length > DIFF_CHARS_MAX) {
+  if (full !== true && patch.length > DIFF_CHARS_MAX) {
     patch = patch.slice(0, DIFF_CHARS_MAX)
     truncated = true
   }
@@ -438,6 +453,95 @@ async function readPatchText(input) {
     added: counts.added, removed: counts.removed,
     binary: binary, empty: patch.length === 0, exitCode: result.exitCode,
   }
+}
+
+/* ── git blame --porcelain（行号右键「使用 Git 退溯注解」的数据，55-diff.js）──
+
+   按右栏那棵树的版本问：worktree（含 local「与本地比较」的右栏）= 工作区文件，
+   commit = 该提交的 blob（`git blame <hash> -- <路径>`），range = base..head 的
+   head（ref 尾段）。porcelain 逐行带「这行最后是谁在哪个提交改的」，比任何自造
+   输出都可靠；解析要点两条：boundary 提交（历史被浅克隆/改写截断处的标记，头行
+   的 sha 可能带 ^ 前缀，元数据区另有 boundary 行，两处都认）；filename 复用段
+   （同一个提交的第二批行不再重复元数据，只有头行 —— 按 sha 复用第一次的答案）。
+
+   只读、不进读缓存、不进「命令」页 —— 与 git/diff 同一条理由：这是读者正盯着
+   的那份文件，读到旧的反而误事。 */
+const BLAME_MAX_BYTES = 16777216
+const BLAME_HEAD = /^(\^?)([0-9a-f]{40}) (\d+) (\d+)(?: (\d+))?$/
+const BLAME_META = /^(author|author-mail|author-time|author-tz|committer|committer-mail|committer-time|committer-tz|summary|boundary|previous|filename)(?: (.*))?$/
+
+async function readBlame(input) {
+  const mode = input != null && isStr(input.mode) ? input.mode.trim() : ''
+  if (mode !== 'worktree' && mode !== 'commit' && mode !== 'range') {
+    return { ok: false, error: 'unknown-mode', exitCode: null, stderr: 'mode must be one of worktree, commit, range' }
+  }
+  const path = input != null && isStr(input.path) ? input.path : ''
+  const bad = repoRelativePath(path)
+  if (bad.length > 0) return { ok: false, error: 'invalid-path', exitCode: null, stderr: bad }
+  const ref = input != null && isStr(input.ref) ? input.ref.trim() : ''
+  /* ref 校验与 diff 读同一道：commit 只认单个 hash，range 只认 base..head
+     （blame 的是 head 尾段那个提交的版本）。 */
+  if (mode === 'commit' && !DIFF_SHA.test(ref)) {
+    return { ok: false, error: 'invalid-ref', exitCode: null, stderr: 'a commit hash is required' }
+  }
+  if (mode === 'range' && !DIFF_RANGE.test(ref)) {
+    return { ok: false, error: 'invalid-ref', exitCode: null, stderr: 'ref must be base..head（两段十六进制提交 hash）' }
+  }
+  const rev = mode === 'worktree' ? null : (mode === 'range' ? ref.slice(ref.indexOf('..') + 2) : ref)
+  const argv = ['--no-optional-locks', '-c', 'core.quotePath=false', 'blame', '--porcelain']
+  if (rev !== null) argv.push(rev)
+  argv.push('--', path)
+  const result = await git(argsFor(input), argv, null, { maxBytes: BLAME_MAX_BYTES })
+  if (result.exitCode !== 0) {
+    return { ok: false, error: 'blame-failed', exitCode: result.exitCode, stderr: result.stderr, noGit: gitMissing(result), mode: mode, path: path }
+  }
+  if (result.truncated === true) {
+    return {
+      ok: false, error: 'blame-too-large', mode: mode, path: path, exitCode: result.exitCode,
+      stderr: '这个文件的 blame 太大（超过 ' + String(BLAME_MAX_BYTES) + ' 字节），读取被截断 —— 半份注解会指错行，整件事没有开始。',
+    }
+  }
+
+  const commits = {}
+  const lines = []
+  let current = null
+  let pending = 0
+  const rows = result.stdout.split('\n')
+  for (let i = 0; i < rows.length; i += 1) {
+    const row = rows[i]
+    if (row.length === 0) continue
+    if (row.charAt(0) === '\t') { if (pending > 0) pending -= 1; continue }
+    const head = BLAME_HEAD.exec(row)
+    if (head !== null) {
+      const sha = head[2]
+      let info = commits[sha]
+      if (info === undefined) {
+        info = { short: sha.slice(0, 7), author: '', date: '', boundary: head[1] === '^', seen: false }
+        commits[sha] = info
+      }
+      current = { info: info, fresh: info.seen !== true, count: head[5] !== undefined ? parseInt(head[5], 10) : 0 }
+      info.seen = true
+      pending = current.count
+      lines.push({
+        no: parseInt(head[4], 10),
+        short: (info.boundary === true ? '^' : '') + info.short,
+        author: info.author, date: info.date, boundary: info.boundary,
+      })
+      continue
+    }
+    if (current === null) continue
+    const meta = BLAME_META.exec(row)
+    if (meta === null) continue
+    const key = meta[1]
+    const value = meta[2] !== undefined ? meta[2] : ''
+    if (key === 'boundary') { current.info.boundary = true; continue }
+    /* 复用段（fresh=false）不带元数据；带了（改名重出 filename）也不覆盖第一份。 */
+    if (current.fresh !== true) continue
+    if (key === 'author') current.info.author = value
+    else if (key === 'author-time') current.info.date = value
+  }
+  /* 行号升序是 porcelain 的天然顺序，不再排序；同号（不可能，防御）以首见为准。 */
+  return { ok: true, mode: mode, path: path, ref: ref, lines: lines }
 }
 
 /* ── what is inside an untracked directory ──

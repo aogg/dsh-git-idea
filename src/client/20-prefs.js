@@ -24,6 +24,20 @@
          词级高亮 —— 这是「怎么读一个补丁」的偏好，不是 git 该做什么，所以落在
          这一层。默认不勾：绝大多数仓库用 LF，多一个字形只是噪音。 */
       diffShowCr: false,
+      /* ── 行号右键菜单（55-diff.js）的外观四开关，与 diffShowCr 同一层同一批理由
+         （怎么读一个补丁是这个浏览器的偏好）──
+         diffShowWs：行内空格画中点、制表符画箭头（::after 覆盖在原字符上，正文
+           一字不变，复制到的还是原字符）。默认不勾。
+         diffShowNo：行号列显隐（默认开 —— 行号是差异视图的坐标）。隐藏后右键
+           记号格还能打开同一个菜单，不会把自己锁在外面。
+         diffIndentGuides：按前导空白画缩进参考线（每 4 格一条，制表符按 8 格算）。
+           默认不勾。
+         diffWrap：长行折行（white-space pre→pre-wrap + 长词可断），行高自适应；
+           默认不勾（单行横向滚动是原样）。 */
+      diffShowWs: false,
+      diffShowNo: true,
+      diffIndentGuides: false,
+      diffWrap: false,
     }
     let gitSettings = Object.assign({}, SETTINGS_DEFAULTS)
     let settingsLoaded = false
@@ -38,6 +52,10 @@
       out.changesView = raw.changesView === 'flat' ? 'flat' : 'tree'
       out.configScope = raw.configScope === 'global' ? 'global' : 'project'
       out.diffShowCr = raw.diffShowCr === true
+      out.diffShowWs = raw.diffShowWs === true
+      out.diffShowNo = raw.diffShowNo !== false
+      out.diffIndentGuides = raw.diffIndentGuides === true
+      out.diffWrap = raw.diffWrap === true
       return out
     }
 

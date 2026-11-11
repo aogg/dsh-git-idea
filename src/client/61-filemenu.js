@@ -270,3 +270,93 @@
       out.push(history)
       return out
     }
+
+    /* ── 行号（gutter）右键菜单 ──
+
+       差异视图行号格/记号格的右键菜单，项次照 PhpStorm 编辑器行号菜单的清单来，
+       按本视图的真实能力逐项落实（真做/勾选置灰/不做，各自在 title 里说实话）：
+
+         使用 Git 退溯注解      真做 —— 切换 blame 窄条（git/blame 只读），未跟踪的行
+                                置灰说原因（git 没见过它，没有可注解的版本）；
+         收起未更改的片段       真做 —— 勾选态=当前收起（默认收起，IDEA 同款）；点开
+                                首次按大上下文重读一次，此后收放不重读；
+         在并排差异中对齐更改   勾选+置灰 —— 配对渲染天然对齐（第 i 个删除配第 i 个
+                                新增），没有开关可切，不造假；
+         同步滚动               勾选+置灰 —— 左右两栏是同一张表、同一个滚动容器，
+                                天然同步，没有开关可切，不造假；
+         外观四项               真做 —— 显示空格 / 显示行号 / 缩进参考线 / 自动换行，
+                                状态存浏览器偏好（20-prefs.js settings 层），刷新后还在；
+         路径导航               不做 —— 本视图头部已显示完整路径、也没有面包屑落点，
+                                一项空转的菜单比少一项更糟。
+
+       state（面板递进）: blameOk / blameWhy —— 注解这一项能不能用的预检结论。
+       acts（面板递进）  : blameOn / fragOpen 与四个外观开关的当前值 + 各自的翻转
+                           回调。菜单本体照旧不碰状态、不发请求。 */
+    function gutterMenuItems(state, acts) {
+      const s = state == null ? {} : state
+      const a = acts == null ? {} : acts
+      const chk = function (on) { return on === true ? '✓ ' : '' }
+      const item = function (key, label, title, options) {
+        const opts = options == null ? {} : options
+        return h('button', {
+          key: key, type: 'button', className: 'dsh-git-menu-item',
+          disabled: opts.disabled === true,
+          title: title,
+          onClick: opts.onClick,
+        }, label)
+      }
+      const toggle = function (run) {
+        return function (event) {
+          if (event != null && typeof event.stopPropagation === 'function') event.stopPropagation()
+          run()
+        }
+      }
+      const blameOn = a.blameOn === true
+      const fragOpen = a.fragOpen === true
+      return [
+        item('blame',
+          (blameOn === true ? '✓ ' : '') + '使用 Git 退溯注解(N)',
+          s.blameOk !== true
+            ? (s.blameWhy != null && s.blameWhy.length > 0 ? s.blameWhy : '当前视图没有可注解的版本')
+            : (blameOn === true
+              ? '注解当前开着：行号旁的窄条是每行最后改动的短 hash、作者与日期 —— 再点一次取消'
+              : '切换 blame 注解：行号旁画窄条（每行最后改动的短 hash、作者、日期），再点一次取消。注解按右栏这棵树的版本问：工作区文件 / 这个提交 / 选区最新一条'),
+          {
+            disabled: s.blameOk !== true,
+            onClick: toggle(function () { if (typeof a.onBlame === 'function') a.onBlame() }),
+          }),
+        h('div', { key: 'sep-1', className: 'dsh-git-menu-sep' }),
+        item('fold',
+          chk(fragOpen !== true) + (fragOpen === true ? '展开未更改的片段' : '收起未更改的片段'),
+          fragOpen === true
+            ? '未更改的行当前全部在列（长的段落折成「⋯ 展开」条）；点一下恢复折叠 —— 不重读补丁'
+            : '未更改的段落当前已折叠（默认，IDEA 同款）；点一下全部展开 —— 首次会按大上下文重读一次补丁，此后收放不再重读',
+          {
+            onClick: toggle(function () { if (typeof a.onFrag === 'function') a.onFrag() }),
+          }),
+        h('div', { key: 'sep-2', className: 'dsh-git-menu-sep' }),
+        item('align', '✓ 在并排差异中对齐更改',
+          '本视图是配对渲染（第 i 个删除配第 i 个新增），两侧天然逐行对齐 —— 没有要切的开关',
+          { disabled: true }),
+        item('sync', '✓ 同步滚动',
+          '左右两栏在同一个滚动容器里（同一张表），天然同步滚动 —— 没有要切的开关',
+          { disabled: true }),
+        h('div', { key: 'sep-3', className: 'dsh-git-menu-sep' }),
+        item('ws',
+          chk(a.showWs === true) + '显示空格',
+          '行内空格画中点、制表符画箭头 —— 只改显示，不改补丁文本（复制到的还是原字符）',
+          { onClick: toggle(function () { if (typeof a.onShowWs === 'function') a.onShowWs() }) }),
+        item('no',
+          chk(a.showNo !== false) + '显示行号',
+          '隐藏行号列（左右两栏一并隐藏，记号和文本布局不受影响）—— 隐藏后右键记号格还能打开本菜单',
+          { onClick: toggle(function () { if (typeof a.onShowNo === 'function') a.onShowNo() }) }),
+        item('guides',
+          chk(a.guides === true) + '显示缩进参考线',
+          '按前导空白画竖向参考线（每 4 格一条，制表符按 8 格算）—— 只改显示',
+          { onClick: toggle(function () { if (typeof a.onGuides === 'function') a.onGuides() }) }),
+        item('wrap',
+          chk(a.wrap === true) + '自动换行',
+          '长行折行显示（行高自适应，虚拟滚动随之让位）；关掉回到单行横向滚动',
+          { onClick: toggle(function () { if (typeof a.onWrap === 'function') a.onWrap() }) }),
+      ]
+    }

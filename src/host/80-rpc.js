@@ -332,6 +332,12 @@ onRpc('git/diff', function (input) { return readFileDiff(input) })
    readPatchText）。只读、不进缓存、不进「命令」页 —— 与 git/diff 同一条理由。 */
 onRpc('git/patch-text', function (input) { return readPatchText(input) })
 
+/* 行号右键「使用 Git 退溯注解」（客户端 55-diff.js 的窄条注解）：git blame
+   --porcelain，按右栏那棵树的版本问（68-detail.js readBlame：worktree=工作区
+   文件、commit=该提交 blob、range=base..head 的 head）。只读、不进缓存、不进
+   「命令」页 —— 与 git/diff 同一条理由。 */
+onRpc('git/blame', function (input) { return readBlame(input) })
+
 /* 三方合并界面（客户端 59-merge.js）的两条：conflict 读 :1:/ :2:/ :3: 三个阶段加
    两侧标签（68-detail 那条 diff 的邻居，同样只读、不进缓存、不进命令页）；
    conflict-save 把解决结果写回工作区并 git add 标记已解决 —— 它是变更类动作，

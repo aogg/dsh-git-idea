@@ -259,26 +259,105 @@
       return ' dsh-git-dhalf-empty'
     }
 
-    /* 一格的文字：\r 一律画成暗色 ⏎（裸 \r 不能进 DOM 文本）；带词级记号的段落
-       包一层浅底 span —— 底色由左右半列的类各给各的，字形与文字共用一套类名。 */
-    function crChildren(cell) {
+    /* ── 一格正文的显示层加工（行号右键菜单的两个外观开关，80-panel.js 递进来）──
+
+       cellChildren 是原 crChildren 的扩展：词级 miss 段落与回车符字形照旧，往上
+       叠两件纯显示层的事 ——
+       · 空白可视化（view.ws）：空格画中点、制表符画箭头。字形用 ::after 覆盖在
+         原字符上（span.dsh-git-wsp 原文仍在 DOM 里），复制到的还是原字符 —— 只
+         改显示，不改补丁数据。
+       · 缩进参考线（view.guides）：把**第一段开头**的前导空白剥出来按缩进单位
+         （4 个空格 / 一个制表符）切段，每段左缘画一条竖线（第 0 列不画）。前导
+         空白优先给参考线 —— 段内的线就是缩进本身，两开关不打架；段中后继的空白
+         仍归 view.ws 管。正文与两个开关全部无关：关掉任何一个，字符原样回来。 */
+    function guideSpans(key, run) {
       const out = []
-      const segments = cell.miss !== null ? cell.miss : [{ t: cell.text, m: false }]
-      for (let s = 0; s < segments.length; s += 1) {
-        const seg = segments[s]
+      let chunk = ''
+      let first = true
+      const flush = function (withLine) {
+        if (chunk.length === 0) return
+        out.push(h('span', { key: key + String(out.length), className: 'dsh-git-dguide' + (withLine ? ' dsh-git-dguide-line' : '') }, chunk))
+        chunk = ''
+      }
+      for (let i = 0; i < run.length; i += 1) {
+        const ch = run.charAt(i)
+        if (ch === '\t') {
+          flush(first !== true)
+          out.push(h('span', { key: key + String(out.length), className: 'dsh-git-dguide' + (first ? '' : ' dsh-git-dguide-line') }, ch))
+          first = false
+          continue
+        }
+        chunk += ch
+        if (chunk.length === 4) { flush(first !== true); first = false }
+      }
+      flush(first !== true)
+      return out
+    }
+
+    function textChildren(key, text, miss, ws) {
+      if (ws !== true) return [miss === true ? h('span', { key: key, className: 'dsh-git-dmiss' }, text) : text]
+      const out = []
+      const parts = text.split(/([ \t]+)/)
+      for (let i = 0; i < parts.length; i += 1) {
+        const part = parts[i]
+        if (part.length === 0) continue
+        if (i % 2 === 1) {
+          for (let c = 0; c < part.length; c += 1) {
+            const ch = part.charAt(c)
+            out.push(h('span', {
+              key: key + 'w' + i + '-' + String(c),
+              className: 'dsh-git-wsp dsh-git-wsp-' + (ch === '\t' ? 'tab' : 'sp') + (miss === true ? ' dsh-git-dmiss' : ''),
+            }, ch))
+          }
+          continue
+        }
+        out.push(miss === true ? h('span', { key: key + 't' + i, className: 'dsh-git-dmiss' }, part) : part)
+      }
+      return out
+    }
+
+    function cellChildren(cell, view, keyPrefix) {
+      const out = []
+      const segs = cell.miss !== null ? cell.miss : [{ t: cell.text, m: false }]
+      const queue = segs.slice()
+      if (view.guides === true && queue.length > 0) {
+        const head = /^([ \t]+)/.exec(queue[0].t)
+        if (head !== null) {
+          const rest = queue[0].t.slice(head[1].length)
+          queue[0] = { t: rest, m: queue[0].m }
+          const guides = guideSpans(keyPrefix + 'g', head[1])
+          for (let g = 0; g < guides.length; g += 1) out.push(guides[g])
+        }
+      }
+      for (let s = 0; s < queue.length; s += 1) {
+        const seg = queue[s]
         const parts = seg.t.split('\r')
         for (let p = 0; p < parts.length; p += 1) {
           if (p > 0) {
-            out.push(h('span', { key: 'cr' + s + '-' + p, className: 'dsh-git-dcr' + (seg.m === true ? ' dsh-git-dmiss' : '') }, CR_GLYPH))
+            out.push(h('span', { key: keyPrefix + 'cr' + s + '-' + p, className: 'dsh-git-dcr' + (seg.m === true ? ' dsh-git-dmiss' : '') }, CR_GLYPH))
           }
-          if (parts[p].length > 0) {
-            out.push(seg.m === true
-              ? h('span', { key: 'w' + s + '-' + p, className: 'dsh-git-dmiss' }, parts[p])
-              : parts[p])
-          }
+          if (parts[p].length === 0) continue
+          const children = textChildren(keyPrefix + 'x' + s + '-' + p, parts[p], seg.m, view.ws)
+          for (let c = 0; c < children.length; c += 1) out.push(children[c])
         }
       }
       return out
+    }
+
+    /* blame 注解的一格：短 hash（边界提交带 ^ 前缀）+ 作者 + 短日期。窄条挂在
+       右半行号旁边（注解按右栏那棵树的版本问），没有注解的行留空条占位 —— 宽度
+       由 CSS 钉住，行与行之间文字起点才不会跳。 */
+    function blameCell(blameMap, no, keyPrefix) {
+      const one = no !== '' && no !== undefined && blameMap != null ? blameMap[String(no)] : undefined
+      if (one === undefined) return h('span', { key: keyPrefix + 'bl', className: 'dsh-git-dblame' }, '')
+      const at = parseDate(one.date)
+      const when = at !== null ? relativeDate(one.date) : text(one.date)
+      return h('span', {
+        key: keyPrefix + 'bl', className: 'dsh-git-dblame' + (one.boundary === true ? ' dsh-git-dblame-b' : ''),
+        title: (one.boundary === true ? '边界提交（更早的历史这次没有取回来）：' : '')
+          + text(one.short) + ' ' + text(one.author) + ' ' + when
+          + ' —— 右键行号可关闭注解',
+      }, text(one.short) + ' ' + text(one.author) + ' ' + when)
     }
 
     /* One section's body. A patch can be thousands of lines and the pane shows
@@ -287,38 +366,127 @@
        measured. The rows it paints are the paired ones: the pairing and the
        word-level marks are computed once per (patch, 回车符开关) in the memo —
        toggling the checkbox repaints what is already in hand and never re-asks
-       git. */
+       git.
+
+       行号右键菜单的三件事也在这里落地（开关都从面板递进来）：
+       · 左半栏的行号画在半列末尾（分隔线内侧）—— 两个行号隔着分隔线并排；
+       · 行号/记号格挂 onContextMenu（面板的行号菜单）， blame 窄条挂在右半行号旁；
+       · 「收起未更改的片段」：连续上下文行超过阈值的段落折成一条「⋯ 展开未更改
+         的 N 行」（再点收起）。折叠只是把已配好的行视觉上收起来 —— 行号是配对时
+         逐行算好的，折与不折都不重算。默认收起（IDEA 同款）；普通 -U3 的读里
+         没有超阈值的段落，画面与从前一字不差，展开读（大上下文）落地后条才出现。 */
+    const FOLD_MIN = 10
+
     function PatchBody(props) {
       const showCr = props.showCr === true
-      const rows = useMemo(function () { return pairRows(diffRows(props.patch), showCr) }, [props.patch, showCr])
-      const win = useVirtualWindow('diff:' + props.id, rows.length, DIFF_ROW_H)
+      const collapse = props.collapse === true
+      const wrap = props.wrap === true
+      const view = { showCr: showCr, ws: props.ws === true, no: props.no !== false, guides: props.guides === true }
+      const paired = useMemo(function () { return pairRows(diffRows(props.patch), showCr) }, [props.patch, showCr])
+      const [expandedRuns, setExpandedRuns] = React.useState({})
+      /* 换补丁或全局收放时，逐段展开的记录作废 —— 与 IDEA 的「收起」同一条语义。 */
+      React.useEffect(function () { setExpandedRuns({}) }, [props.patch, collapse])
+
+      const model = useMemo(function () {
+        if (collapse !== true) return paired
+        const out = []
+        let run = null
+        const flush = function () {
+          if (run === null) return
+          if (run.rows.length > FOLD_MIN) {
+            out.push({ kind: 'foldbar', full: true, count: run.rows.length, open: expandedRuns[run.start] === true, at: run.start })
+            if (expandedRuns[run.start] === true) {
+              for (let k = 0; k < run.rows.length; k += 1) out.push(run.rows[k])
+            }
+          } else {
+            for (let k = 0; k < run.rows.length; k += 1) out.push(run.rows[k])
+          }
+          run = null
+        }
+        for (let i = 0; i < paired.length; i += 1) {
+          const row = paired[i]
+          if (row.kind === 'ctx') {
+            if (run === null) run = { start: i, rows: [] }
+            run.rows.push(row)
+            continue
+          }
+          flush()
+          out.push(row)
+        }
+        flush()
+        return out
+      }, [paired, collapse, expandedRuns])
+
+      const blameMap = useMemo(function () {
+        const map = {}
+        const lines = props.blame != null && Array.isArray(props.blame.lines) ? props.blame.lines : []
+        for (let i = 0; i < lines.length; i += 1) {
+          const one = lines[i]
+          if (one != null && typeof one.no === 'number' && map[String(one.no)] === undefined) map[String(one.no)] = one
+        }
+        return map
+      }, [props.blame])
+
+      /* 自动换行时行高不定（19px 的整数倍假设破产），虚拟窗口整体让位：全量渲染。
+         补丁本身有展示上限（6000 行 / 400KB），全量的 DOM 是封顶的。 */
+      const winRaw = useVirtualWindow('diff:' + props.id, wrap === true ? 0 : model.length, DIFF_ROW_H)
+      const win = wrap === true ? { first: 0, last: model.length } : winRaw
       const shown = []
       for (let i = win.first; i < win.last; i += 1) {
-        const row = rows[i]
+        const row = model[i]
         if (row.full === true) {
+          if (row.kind === 'foldbar') {
+            shown.push(h('div', { key: 'r' + i, className: 'dsh-git-dline dsh-git-dl-fold' },
+              h('button', {
+                key: 'fb', type: 'button', className: 'dsh-git-dfold',
+                title: row.open === true
+                  ? '收起这 ' + String(row.count) + ' 行未更改的内容（再点展开条恢复）'
+                  : '展开这 ' + String(row.count) + ' 行未更改的内容',
+                onClick: function () {
+                  setExpandedRuns(function (previous) {
+                    const next = Object.assign({}, previous)
+                    if (next[row.at] === true) delete next[row.at]
+                    else next[row.at] = true
+                    return next
+                  })
+                },
+              }, row.open === true ? '⌃ 收起未更改的 ' + String(row.count) + ' 行' : '⋯ 展开未更改的 ' + String(row.count) + ' 行')))
+            continue
+          }
           /* hunk / meta / note：一格横跨两列整行。 */
           shown.push(h('div', { key: 'r' + i, className: 'dsh-git-dline dsh-git-dl-' + row.kind },
             h('div', { key: 'f', colSpan: 2, className: 'dsh-git-dfull' }, row.text)))
           continue
         }
         shown.push(h('div', { key: 'r' + i, className: 'dsh-git-dline' + row.cls },
+          /* 左半：记号、正文、行号（行号贴分隔线内侧 —— 与右半行号并排，见顶部
+             注释）。行号与记号格都挂行号菜单：隐藏行号后右键记号还在。 */
           h('div', { key: 'o', className: 'dsh-git-dhalf dsh-git-dhalf-old' + halfMark(row.left) },
-            h('span', { key: 'no', className: 'dsh-git-dno' }, row.left.no),
-            h('span', { key: 'sg', className: 'dsh-git-dsign' }, row.left.sign),
-            h('span', { key: 'tx', className: 'dsh-git-dtext' }, crChildren(row.left))),
+            h('span', { key: 'sg', className: 'dsh-git-dsign', onContextMenu: props.onGutterMenu }, row.left.sign),
+            h('span', { key: 'tx', className: 'dsh-git-dtext' }, cellChildren(row.left, view, 'l' + i)),
+            view.no === true
+              ? h('span', { key: 'no', className: 'dsh-git-dno', onContextMenu: props.onGutterMenu }, row.left.no)
+              : null),
           h('div', { key: 'n', className: 'dsh-git-dhalf dsh-git-dhalf-new' + halfMark(row.right) },
-            h('span', { key: 'no', className: 'dsh-git-dno' }, row.right.no),
-            h('span', { key: 'sg', className: 'dsh-git-dsign' }, row.right.sign),
-            h('span', { key: 'tx', className: 'dsh-git-dtext' }, crChildren(row.right)))))
+            view.no === true
+              ? h('span', { key: 'no', className: 'dsh-git-dno', onContextMenu: props.onGutterMenu }, row.right.no)
+              : null,
+            props.blame != null ? blameCell(blameMap, row.right.no, 'r' + i) : null,
+            h('span', { key: 'sg', className: 'dsh-git-dsign', onContextMenu: props.onGutterMenu }, row.right.sign),
+            h('span', { key: 'tx', className: 'dsh-git-dtext' }, cellChildren(row.right, view, 'r' + i)))))
       }
-      const padTop = win.first * DIFF_ROW_H
-      const padBottom = (rows.length - win.last) * DIFF_ROW_H
-      return h('div', { className: 'dsh-git-diff', ref: win.attach, onScroll: win.measure },
-        h('div', { className: 'dsh-git-diffwrap', style: { minHeight: (rows.length * DIFF_ROW_H) + 'px' } },
+      const padTop = wrap === true ? 0 : win.first * DIFF_ROW_H
+      const padBottom = wrap === true ? 0 : (model.length - win.last) * DIFF_ROW_H
+      return h('div', { className: 'dsh-git-diff', ref: wrap === true ? undefined : win.attach, onScroll: wrap === true ? undefined : win.measure },
+        /* wrap 类同时加在 wrap 容器上：基类的 width:max-content 是给横向滚动用的，
+           折行档必须退回 100% 宽，内容才折得动（46-css.js 的 dsh-git-diffwrap-wrap）。 */
+        h('div', { className: 'dsh-git-diffwrap' + (wrap === true ? ' dsh-git-diffwrap-wrap' : ''),
+          style: wrap === true ? undefined : { minHeight: (model.length * DIFF_ROW_H) + 'px' } },
           padTop > 0 ? h('div', { key: 'pad-top', style: { height: padTop + 'px' } }) : null,
           /* 行放进一张表：列宽由整张表按内容分，左右两列的边界才逐行对齐 —— 每行
-             各排各的（flex / 各自的 50%）做不到，谁的内容长边界就歪到谁那边。 */
-          h('div', { key: 'table', className: 'dsh-git-dtable' }, shown),
+             各排各的（flex / 各自的 50%）做不到，谁的内容长边界就歪到谁那边。
+             自动换行时表上加 wrap 类（pre→pre-wrap），行高交给内容自适应。 */
+          h('div', { key: 'table', className: 'dsh-git-dtable' + (wrap === true ? ' dsh-git-dtable-wrap' : '') }, shown),
           padBottom > 0 ? h('div', { key: 'pad-bottom', style: { height: padBottom + 'px' } }) : null))
     }
 
@@ -351,7 +519,11 @@
       } else if (reply.empty === true) {
         body = h('div', { className: 'dsh-git-pane dsh-git-dim' }, '没有差异')
       } else {
-        body = h(PatchBody, { id: row.req.key, patch: reply.text, showCr: props.showCr })
+        body = h(PatchBody, {
+          id: row.req.key, patch: reply.text, showCr: props.showCr,
+          ws: props.ws, no: props.no, guides: props.guides, wrap: props.wrap,
+          blame: props.blame, collapse: props.collapse, onGutterMenu: props.onGutterMenu,
+        })
       }
       return h('div', { key: 'sec-' + row.req.key, className: 'dsh-git-diffsec-wrap' },
         props.labeled === true && row.req.label.length > 0
@@ -582,7 +754,8 @@
       const target = props.target
       /* 回车符开关是这个浏览器自己的显示偏好（20-prefs.js 的 settings 层）。在
          这里读一次、往下传到 PatchBody：勾选只把已拿到的补丁换个画法（配对与词级
-         差异在同一个 useMemo 里重算），一个 git/diff 都不会重发。 */
+         差异在同一个 useMemo 里重算），一个 git/diff 都不会重发。行号菜单那组外观
+         开关（空格可视化 / 行号 / 缩进参考线 / 自动换行）同层同读法。 */
       const settings = useGitSettings()
       const showCr = settings.diffShowCr === true
       const requests = diffRequests(target)
@@ -591,6 +764,42 @@
       /* 右列默认在：要看的是「这一批修改」，藏起来才是少数场合 —— 头部那个按钮
          一下把它收掉，补丁区拿回整宽。 */
       const [railOpen, setRailOpen] = React.useState(true)
+      /* ── 「收起未更改的片段」的大上下文读 ──
+
+         默认收起（fragOpen=false）走的是普通 -U3 读，画面与从前一字不差，不发额外
+         的读。读者第一次展开（fragOpen=true）时置 bigEver，这里照同一批请求按
+         -U 大上下文 + 免字符截断再读一次；读到的整补丁从此留在手里 —— 收放只换
+         画法（折叠条的出现/消失、逐段展开），一个字节都不重读。换文件（shape 变）
+         按同一形状重读大上下文的那批。行数上限宿主照旧封着（6000 行），超限按
+         「差异过长」警告，不给截过的账冒充完整折叠。 */
+      const foldContext = 100000
+      const [big, setBig] = React.useState(null)
+      const [bigEver, setBigEver] = React.useState(false)
+      React.useEffect(function () {
+        if (props.fragOpen === true && bigEver !== true) setBigEver(true)
+      }, [props.fragOpen, bigEver])
+      React.useEffect(function () {
+        if (bigEver !== true) return undefined
+        let alive = true
+        const jobs = []
+        const list = diffRequests(target)
+        for (let i = 0; i < list.length; i += 1) {
+          const req = list[i]
+          const payload = { sessionId: props.sessionId, mode: req.mode, path: target.path, context: foldContext, full: true }
+          if (props.repo.length > 0) payload.repo = props.repo
+          if (text(target.from).length > 0) payload.from = target.from
+          if (req.ref !== undefined) payload.ref = req.ref
+          jobs.push(callHost('git/diff', payload).then(function (reply) {
+            return { req: req, reply: reply }
+          }, function (failure) {
+            return { req: req, failure: failureText(failure) }
+          }))
+        }
+        Promise.all(jobs).then(function (answered) {
+          if (alive) setBig({ shape: shape, rows: answered })
+        })
+        return function () { alive = false }
+      }, [shape, props.repo, props.sessionId, props.sig, bigEver])
 
       React.useEffect(function () {
         let alive = true
@@ -620,13 +829,23 @@
       }, [shape, props.repo, props.sessionId, props.sig])
 
       const loaded = rows !== null ? rows : []
+      /* 大上下文读数就手时，各分节的补丁换用它（同一批请求、同一形状）—— 收放与
+         逐段展开只换画法。某个分节的大读失败（截断/异常）就退回普通那份，分节各自
+         独立判断；普通读还没落地时先等它（大读通常更慢，这个先后几乎不会反）。 */
+      const bigReady = rows !== null && big !== null && big.shape === shape
+      const sectionRows = loaded.map(function (one, i) {
+        if (bigReady !== true) return one
+        const bigRow = big.rows[i]
+        if (bigRow == null || bigRow.reply == null || bigRow.reply.ok !== true) return one
+        return bigRow
+      })
       let added = 0
       let removed = 0
       let truncated = false
       let binary = false
       let empty = false
-      for (let i = 0; i < loaded.length; i += 1) {
-        const reply = loaded[i].reply
+      for (let i = 0; i < sectionRows.length; i += 1) {
+        const reply = sectionRows[i].reply
         if (reply == null || reply.ok !== true) continue
         added += reply.added
         removed += reply.removed
@@ -722,7 +941,14 @@
       else {
         const labeled = rows.length > 1
         const sections = []
-        for (let i = 0; i < rows.length; i += 1) sections.push(h(DiffSection, { key: 's' + i, row: rows[i], labeled: labeled, showCr: showCr }))
+        for (let i = 0; i < rows.length; i += 1) {
+          sections.push(h(DiffSection, {
+            key: 's' + i, row: sectionRows[i], labeled: labeled, showCr: showCr,
+            ws: settings.diffShowWs === true, no: settings.diffShowNo !== false,
+            guides: settings.diffIndentGuides === true, wrap: settings.diffWrap === true,
+            blame: props.blame, collapse: props.fragOpen !== true, onGutterMenu: props.onGutterMenu,
+          }))
+        }
         body = h('div', { key: 'body', className: 'dsh-git-diffbody' }, sections)
       }
 

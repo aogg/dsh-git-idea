@@ -2244,6 +2244,15 @@
       const [ctxArm, setCtxArm] = React.useState('')
       const [ctxForce, setCtxForce] = React.useState('')
       const [ctxBusy, setCtxBusy] = React.useState(false)
+      /* ── 行号右键菜单（55-diff.js 的 gutter）的视图级状态 ──
+
+         blameOn：注解开关（同一屏两段差异、左右两栏共享一个开关）；blameData 是
+         当前 diff 目标的 blame 读数（key 对不上就是过期，等下面那条 effect 重读）。
+         fragOpen：「收起未更改的片段」的全局态 —— 默认收起（IDEA 同款），展开后
+         DiffView 第一次按大上下文重读，此后收放只换画法。 */
+      const [blameOn, setBlameOn] = React.useState(false)
+      const [blameData, setBlameData] = React.useState(null)
+      const [fragOpen, setFragOpen] = React.useState(false)
       /* 快捷命令的统一执行确认框（拿着哪条定义）与编辑器覆盖层（'new' 直接进编辑态、
          'list' 进列表态）。 */
       const [qcConfirm, setQcConfirm] = React.useState(null)
@@ -2340,6 +2349,36 @@
          end in this one view, which is why it lives here and not in either. */
       const [diffTarget, setDiffTarget] = React.useState(null)
       const [diffAt, setDiffAt] = React.useState(0)
+      /* ── blame 注解的读（git/blame，只读不进「命令」页）──
+
+         开关开着、且当前 diff 目标还没有它自己的读数时发一次；key 对不上（换文件、
+         换提交、换仓库）就重读，同一目标的读数留在手里 —— 开关的翻转让窄条显隐，
+         不再动 git。key 由 kind|repo|path|ref 拼成，diffRepo 盖章（多仓库分组里
+         点开的文件属于它自己那个仓库，与 git/diff 的 repo 参数同一语义）。 */
+      React.useEffect(function () {
+        if (blameOn !== true || diffTarget === null) return undefined
+        const kind = text(diffTarget.kind)
+        if (kind !== 'file' && kind !== 'commit' && kind !== 'range' && kind !== 'local') return undefined
+        const repo = text(diffTarget.repo).length > 0 ? text(diffTarget.repo) : appliedRepo
+        const key = kind + '|' + repo + '|' + text(diffTarget.path) + '|' + text(diffTarget.ref)
+        if (blameData != null && blameData.key === key) return undefined
+        let alive = true
+        /* 注解版本跟着右栏走：file/local 两路右栏是工作区文件（local 的右栏是
+           工作区那一版），commit 是该提交的 blob，range 是 base..head 的 head。 */
+        const mode = kind === 'commit' ? 'commit' : (kind === 'range' ? 'range' : 'worktree')
+        const payload = { sessionId: sessionId, mode: mode, path: text(diffTarget.path), repo: repo }
+        if (mode !== 'worktree') payload.ref = text(diffTarget.ref)
+        callHost('git/blame', payload).then(function (reply) {
+          if (alive !== true) return
+          setBlameData(reply != null && reply.ok === true
+            ? { key: key, lines: Array.isArray(reply.lines) ? reply.lines : [] }
+            : { key: key, lines: [], error: reply != null ? text(reply.stderr) : '' })
+        }, function (failure) {
+          if (alive !== true) return
+          setBlameData({ key: key, lines: [], error: failureText(failure) })
+        })
+        return function () { alive = false }
+      }, [blameOn, diffTarget, blameData])
       /* 三方合并冲突界面（59-merge.js）：与 diffTarget 同一个「占满正文的下钻」
          形状 —— 从变更页的冲突行进来，回去也是变更页。谁开着以最后点的那行为准，
          两把状态互斥（打开一个就清另一个），正文永远只有一块屏。 */
@@ -3856,6 +3895,24 @@
         setCtxArm('')
         setCtxMenu({
           kind: 'file', target: target, repo: target != null ? text(target.repo) : '',
+          x: event != null && typeof event.clientX === 'number' ? event.clientX : 0,
+          y: event != null && typeof event.clientY === 'number' ? event.clientY : 0,
+        })
+      }
+
+      /* ── 行号（gutter）右键菜单（61-filemenu.js 的 gutterMenuItems）──
+
+         差异视图的行号/记号格右键打开（55-diff.js 挂 onContextMenu）；菜单状态是
+         视图级的 —— 同一屏两段差异与左右两栏共享同一组开关（ blame 开关、收起
+         未更改片段、四个外观偏好），菜单本体只读当前值 + 翻转回调。与文件行菜单
+         同一条汇聚点规矩：先拦掉浏览器自带菜单再交给面板。 */
+      const openGutterMenu = function (event) {
+        if (event != null) {
+          event.preventDefault()
+          event.stopPropagation()
+        }
+        setCtxMenu({
+          kind: 'gutter',
           x: event != null && typeof event.clientX === 'number' ? event.clientX : 0,
           y: event != null && typeof event.clientY === 'number' ? event.clientY : 0,
         })
@@ -5440,6 +5497,11 @@
           key: 'diff',
           target: diffTargetNow,
           repo: diffRepo,
+          /* blame 注解（行号菜单开关的读数）与行号菜单的动作挂点：读数 key 对不上
+             当前目标时 DiffView 那边画空条，等上面那条 effect 把新读数送进来。 */
+          blame: blameOn === true ? blameData : null,
+          fragOpen: fragOpen,
+          onGutterMenu: openGutterMenu,
           /* 「查看文件」的路径根：diff 有自己的仓库（多仓库分组里点开的）就用它，
              没有才落生效仓库 —— 后者兜住「还没应用过任何路径、appliedRepo 还是空」
              的首屏，work.repo 是 Host 解出来的仓库绝对路径。viewFileButton 拿它拼
@@ -6488,6 +6550,31 @@
           },
         })
       })()
+      /* ── 行号右键菜单的内容（kind === 'gutter'）──
+
+         61-filemenu.js 的 gutterMenuItems 造，这里只递当前值与翻转回调。开关都是
+         视图级的：blame / 收起未更改片段在面板 state，外观四项在浏览器偏好
+         （20-prefs.js 的 settings 层）—— 同一屏两段差异与左右两栏共享同一组。
+         注解的可用性预检在这里做：未跟踪的文件（git 没见过它）与四种 diff 形状
+         之外的视图置灰并说原因。 */
+      const ctxGutterItems = ctxMenu !== null && ctxMenu.kind === 'gutter' ? gutterMenuItems({
+        blameOk: diffTarget !== null && diffTarget.untracked !== true
+          && (diffTarget.kind === 'file' || diffTarget.kind === 'commit'
+            || diffTarget.kind === 'range' || diffTarget.kind === 'local'),
+        blameWhy: diffTarget != null && diffTarget.untracked === true
+          ? '未跟踪的文件 git 还没见过它，没有可注解的版本'
+          : '当前视图没有可注解的文件版本',
+      }, {
+        blameOn: blameOn, fragOpen: fragOpen,
+        showWs: prefs.diffShowWs === true, showNo: prefs.diffShowNo !== false,
+        guides: prefs.diffIndentGuides === true, wrap: prefs.diffWrap === true,
+        onBlame: function () { setBlameOn(blameOn !== true) },
+        onFrag: function () { setFragOpen(fragOpen !== true) },
+        onShowWs: function () { saveSettings(Object.assign({}, prefs, { diffShowWs: prefs.diffShowWs !== true })) },
+        onShowNo: function () { saveSettings(Object.assign({}, prefs, { diffShowNo: prefs.diffShowNo !== false })) },
+        onGuides: function () { saveSettings(Object.assign({}, prefs, { diffIndentGuides: prefs.diffIndentGuides !== true })) },
+        onWrap: function () { saveSettings(Object.assign({}, prefs, { diffWrap: prefs.diffWrap !== true })) },
+      }) : []
       const ctxPos = ctxMenu === null ? { left: 0, top: 0 } : ctxMenuPos()
       /* 选择层标题行里的「现在跟的是谁」：渲染期算一次，选择层开着时每帧都新鲜。 */
       const upPickNow = upstreamPick === null ? null : upstreamOfBranch(upstreamPick.name, upstreamPick.repo)
@@ -6648,7 +6735,8 @@
               onClose: function () { setCtxMenu(null) },
             }, ctxMenu.kind === 'file' ? ctxFileItems
               : ctxMenu.kind === 'push' ? ctxPushItems
-                : ctxMenu.kind === 'fetch' ? ctxFetchItems : ctxCommitItems)
+                : ctxMenu.kind === 'fetch' ? ctxFetchItems
+                  : ctxMenu.kind === 'gutter' ? ctxGutterItems : ctxCommitItems)
           : null)
     }
 

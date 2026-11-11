@@ -604,6 +604,38 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-dl-hunk{color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-layer-2)}
 .dsh-git-dl-meta{color:var(--dsw-alias-label-secondary)}
 .dsh-git-dl-note{color:var(--dsw-alias-label-secondary)}
+/* 行号贴分隔线：左半的行号画在半列末尾（分隔线内侧）、右半的行号画在半列开头
+   （也是分隔线一侧）—— 两个行号隔着分隔线并排，一眼对得上看（用户要求的布局）。
+   基类 .dsh-git-dno 仍是 44px 右对齐 + padding-right:8px（右半的历史样式），半列
+   各自的覆盖改对齐方向与 padding 方向：数字都贴着分隔线，留 2px 呼吸，与记号之间
+   仍隔 8px。 */
+.dsh-git-dhalf-old .dsh-git-dno{padding-right:2px;padding-left:8px}
+.dsh-git-dhalf-new .dsh-git-dno{text-align:left;padding-left:2px;padding-right:8px}
+/* blame 注解窄条（行号菜单「使用 Git 退溯注解」）：挂在右半行号旁，宽度钉死 ——
+   有注解的行和留空的行文字起点才一致。边界提交（历史截断处）再压暗一档。 */
+.dsh-git-dblame{display:inline-block;width:158px;margin-left:8px;white-space:pre;overflow:hidden;text-overflow:ellipsis;vertical-align:top;color:var(--dsw-alias-label-secondary);opacity:.85;-webkit-user-select:none;user-select:none}
+.dsh-git-dblame-b{opacity:.5}
+/* 空白可视化（行号菜单「显示空格」）：字形用 ::after 覆盖在原字符上 —— span 里
+   放的还是原字符（空格/制表符本身），复制到的与补丁一字不差，只是看起来是中点/箭头。 */
+.dsh-git-wsp{position:relative}
+.dsh-git-wsp::after{position:absolute;left:0;top:0;pointer-events:none;color:var(--dsw-alias-label-secondary);opacity:.45}
+.dsh-git-wsp-sp::after{content:'·'}
+.dsh-git-wsp-tab::after{content:'→'}
+/* 缩进参考线（行号菜单「显示缩进参考线」）：前导空白按缩进单位切段，段左缘画线
+   （第 0 列不画）。border-left 会让该段右移 1px —— 显示层的 HairLine 偏移，可接受。 */
+.dsh-git-dguide-line{border-left:1px solid rgba(128,128,128,.28)}
+/* 未更改片段的折叠条（行号菜单「收起未更改的片段」）：整行一格，按钮占满，
+   18px 行高与补丁行同拍 —— 虚拟窗口的整数行高算术不被它破坏。 */
+.dsh-git-dl-fold{background:var(--dsw-alias-bg-layer-2)}
+.dsh-git-dfold{display:block;width:100%;text-align:left;background:none;border:0;margin:0;padding:0 0 0 8px;font:inherit;line-height:18px;color:var(--dsw-alias-brand-primary);cursor:pointer;white-space:pre;-webkit-user-select:none;user-select:none}
+.dsh-git-dfold:hover{background:rgba(128,128,128,.12)}
+/* 自动换行（行号菜单「自动换行」）：pre→pre-wrap，长词可断（无空格的长串也要折），
+   行高交给内容自适应 —— table-row 的 height:18px 本来就是最小高度，内容长高它跟着长，
+   虚拟窗口在换行档整体让位（PatchBody 全量渲染），不再按 18px 整数倍算窗口。 */
+.dsh-git-dtable-wrap .dsh-git-dhalf,.dsh-git-dtable-wrap .dsh-git-dfull{white-space:pre-wrap;word-break:break-all}
+/* 折行档的 wrap 容器退回 100% 宽（基类的 max-content 是横向滚动档专用）：容器不
+   限宽的话 pre-wrap 折不起来 —— 容器永远和最长行一样宽。 */
+.dsh-git-diffwrap-wrap{width:100%;min-width:100%}
 /* 头部的回车符开关：框是 stageBox 那只，文案跟在后面，点文案也翻。 */
 .dsh-git-diffcr{display:inline-flex;align-items:center;gap:1px;flex:none;font-size:11px;color:var(--dsw-alias-label-secondary);cursor:pointer;white-space:nowrap;-webkit-user-select:none;user-select:none}
 
