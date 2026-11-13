@@ -149,13 +149,18 @@ ok('locked 不灰（分支还在、可选），行尾 🔒 且 tooltip 带原因
 
 console.log('')
 console.log('== 折叠：标题行是开关，折叠 title 说 worktree 列表，折叠后仍记当前选中项 ==')
-ok('展开态的折叠 title 也是新文案：收起时说「worktree 列表」并点名选中项还在标题行',
-  wtHead57(tree).props.title === '收起 worktree 列表（当前选中的 worktree 仍显示在标题行）')
+/* v1.4（13e9eb1）起面板世界 canRemove 恒真，折叠 title 尾上多一句清除入口的指引
+   （「；右键块头或点右端「…」：清除游离 / 目录已失联的工作区」）—— 折叠语义本身
+   不变，这里按前缀断言（gp88 钉尾巴的完整文案）。 */
+ok('展开态的折叠 title 也是新文案：收起时说「worktree 列表」并点名选中项还在标题行（v1.4 尾上另有清除入口指引）',
+  String(wtHead57(tree).props.title).indexOf('收起 worktree 列表（当前选中的 worktree 仍显示在标题行）') === 0
+  && String(wtHead57(tree).props.title).indexOf('右键块头或点右端「…」') >= 0)
 wtHead57(tree).props.onClick()
 tree = await settle57('s-57a')
-ok('点标题行收起：行全没了，标题行记着当前选中的那棵（● wt main），title 换成「展开 worktree 列表」',
+ok('点标题行收起：行全没了，标题行记着当前选中的那棵（● wt main），title 换成「展开 worktree 列表」（v1.4 尾上另有清除入口指引）',
   wtRows57(tree).length === 0 && textOf(wtHead57(tree)).indexOf('● wt main') >= 0
-  && wtHead57(tree).props.title === '展开 worktree 列表')
+  && String(wtHead57(tree).props.title).indexOf('展开 worktree 列表') === 0
+  && String(wtHead57(tree).props.title).indexOf('右键块头或点右端「…」') >= 0)
 wtHead57(tree).props.onClick()
 tree = await settle57('s-57a')
 ok('再点展开：五行原样回来', wtRows57(tree).length === 5 && wtRowOf57(tree, '/tmp/lab/wt main') !== undefined)
