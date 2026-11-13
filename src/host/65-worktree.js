@@ -7,11 +7,18 @@
    过滤 —— 不 checkout、不 prune、不碰任何 worktree 的工作区。这条边界在 v1.3 之前
    在 Host 这一层就守住了：这里只有一条读命令，没有任何写路径。
 
-   v1.3 起多出一条、也**只有**一条写路径：worktree add（本文件中段的 addWorktree，
-   RPC 名 git/worktree-add，注册在 80-rpc.js git/branch-create 附近）—— worktree 块
-   「快速创建」表单的执行体，走 panelMutate（68-detail.js）：自动进「命令」页、整仓
-   读缓存随之失效、noGit / sandboxDenied 各自带旗标。除此之外边界照旧：仍无 prune /
-   remove / lock / move，不 checkout、不切换任何现有工作区的分支。
+   v1.3 起多出写路径：worktree add（本文件中段的 addWorktree，RPC 名 git/worktree-add，
+   注册在 80-rpc.js git/branch-create 附近）—— worktree 块「快速创建」表单的执行体，
+   走 panelMutate（68-detail.js）：自动进「命令」页、整仓读缓存随之失效、noGit /
+   sandboxDenied 各自带旗标。
+
+   v1.4 起写路径共两条：add 之外再加 worktree remove（addWorktree 旁的 removeWorktree，
+   RPC 名 git/worktree-remove，登记位挨着 add）—— worktree 块「清除」的执行体：游离
+   （detached）/ 目录已失联（prunable）的链接工作区行右键、块头「更多」菜单的一键
+   清除，逐个跑 `git worktree remove <path>`。同一套 panelMutate 变更路；默认不带
+   --force（有未提交改动的目录 git 会拒，面板不给强删入口），失联记录 remove 本身
+   就清登记、不另跑 prune 子命令。除此之外边界照旧：仍无 prune / lock / move 子命令，
+   不 checkout、不切换任何现有工作区的分支。
 
    走 refsSnapshot 同一套按仓库读缓存：cached(repo, 'worktrees', …) 的寿命与
    for-each-ref 那份完全相同，任何一次整仓失效（panelMutate、⟳ 的 flush、以及
@@ -92,7 +99,7 @@ async function worktreesSnapshot(input) {
   return await cached(repo, 'worktrees', function () { return readWorktrees(input, repo) })
 }
 
-/* ─────────────── worktree add（v1.3 起本文件唯一的写路径）─────────────── */
+/* ─────────────── worktree add（v1.3 起的第一条写路径，第二条 remove 在下面）─────────────── */
 
 /* git/worktree-add：worktree 块「快速创建」表单（客户端 25-worktree.js 的
    dsh-git-wt-form）的执行体。入参 {sessionId, repo?, mode, name?, at?, path, force?}：
@@ -166,6 +173,75 @@ async function addWorktree(input) {
   else if (mode === 'checkout') argv.push(cleanedName)
   else if (cleanedAt.length > 0) argv.push(cleanedAt)
   const done = await panelMutate(input, argv, { desc: '新建 worktree' })
+  if (done.ok !== true) return done
+  const snap = await worktreesSnapshot(input)
+  const reply = Object.assign({}, done, { path: path, worktrees: snap.ok === true ? snap.worktrees : [] })
+  if (snap.ok === true) reply.repo = snap.repo
+  else reply.wtError = snap.error
+  return reply
+}
+
+/* ─────────────── worktree remove（v1.4 起的第二条写路径）─────────────── */
+
+/* git/worktree-remove：worktree 块「清除」（客户端 25-worktree.js v1.4：游离 / 目录
+   已失联的行右键菜单、块头「更多」菜单的一键清除）的执行体。入参
+   {sessionId, repo?, path} —— path 是要清掉的那个工作区的绝对路径。
+   门票三道，全部对着**现读**的 `git worktree list --porcelain`（刻意不走读缓存：
+   破坏性动作的依据必须是现在的账 —— 读者手动删过目录或登记、缓存还没过期时，
+   缓存里那句「在册」是谎言）：
+     · path 必须在清单里：只清 git 自己登记的工作区，清单外的路径一律拒绝；
+     · 不是主工作区（porcelain 第一条，git 保证它的排位）：主目录没有「清除」可言；
+     · 不是 bare：bare 记录只会是主仓库（本文件头部同一句），没有工作区可删。
+   locked 的行客户端不给入口（25-worktree.js：🔒 行不挂菜单，tooltip 说明原因），
+   这里不再拦 —— 万一漏进来，git 自己会拒（fatal: '<path>' is locked），原话照折。
+   执行 panelMutate(input, ['worktree', 'remove', path], { desc: '清除 worktree' })：
+   进「命令」页、无条件整仓读缓存失效、noGit / sandboxDenied 旗标，与 add 同一条
+   变更路。默认不带 --force —— 有未提交改动的目录 git 会拒（stderr 原话由客户端折
+   成人话并说明要强删得手动 git worktree remove --force；面板不给强删入口，保守）；
+   目录已失联（prunable）的行不需要 --force，remove 对「登记在、目录不在」的记录
+   本身就走 prune 的那半边（只清登记），不另跑 git worktree prune 子命令。
+   成功答复与 add 同形：panelMutate 结果 + 最新 worktreesSnapshot 一次带回（整仓
+   失效已由 panelMutate 做过，这次快照必是新账，客户端一次往返拿到「清成了」与
+   「最新清单」）；快照那半边读不出来不抹掉 remove 的成功：worktrees 折成空数组、
+   原因放在 wtError 里随行。 */
+async function removeWorktree(input) {
+  const asked = input != null ? input : {}
+  const path = isStr(asked.path) ? asked.path.trim() : ''
+  if (path.length === 0) return { ok: false, error: '要清除的工作区路径必填', path: '' }
+  if (isStoredPath(path) !== true) {
+    return { ok: false, error: '路径必须是绝对路径（本地以 / 开头，ssh:// 远程写成 ssh://alias/…），相对路径不收', path: path }
+  }
+  const listed = await gitC(argsFor(input),
+    ['-c', 'core.quotePath=false', 'worktree', 'list', '--porcelain'], null, {})
+  if (listed.exitCode !== 0) {
+    const lines = String(listed.stderr == null ? '' : listed.stderr).split('\n')
+    let said = ''
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i].trim()
+      if (line.length > 0) { said = line; break }
+    }
+    return {
+      ok: false, path: path, stderr: listed.stderr, noGit: gitMissing(listed),
+      error: gitMissing(listed) === true
+        ? '这台机器上找不到 git：清除 worktree 要调用 git。装上 git，或让它出现在 dsh 进程的 PATH 里，再试一次。'
+        : ('worktree 清单读不出来，清除无从谈起' + (said.length > 0 ? '：' + said : '')),
+    }
+  }
+  const rows = parseWorktreeRows(listed.stdout)
+  let hit = null
+  for (let i = 0; i < rows.length; i += 1) {
+    if (rows[i] != null && rows[i].path === path) { hit = rows[i]; break }
+  }
+  if (hit === null) {
+    return { ok: false, error: '这个路径不在本仓库的 worktree 清单里（git worktree list 没有它）：只能清除 git 自己登记的工作区', path: path }
+  }
+  if (rows.length > 0 && rows[0] != null && rows[0].path === path) {
+    return { ok: false, error: '这是主工作区（清单第一条）：面板不清主工作区，要删整个仓库请到目录层面自己处理', path: path }
+  }
+  if (hit.bare === true) {
+    return { ok: false, error: 'bare 记录只有版本库没有工作区，不在清除之列', path: path }
+  }
+  const done = await panelMutate(input, ['worktree', 'remove', path], { desc: '清除 worktree' })
   if (done.ok !== true) return done
   const snap = await worktreesSnapshot(input)
   const reply = Object.assign({}, done, { path: path, worktrees: snap.ok === true ? snap.worktrees : [] })

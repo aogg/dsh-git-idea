@@ -886,14 +886,25 @@ onRpc('git/branch-create', function (input) {
 })
 
 /* worktree 块「快速创建」（客户端 25-worktree.js 的 dsh-git-wt-form）：worktree add
-    是 v1.3 起 65-worktree.js 唯一的写路径，入参 {sessionId, repo?, mode, name?, at?,
-    path, force?}（mode = new / checkout / detach），校验、argv 组装（旗标全在 path
-    前、path 后只跟起点）与成功答复（panelMutate 结果 + 最新 worktreesSnapshot 一次
-    带回）都在 addWorktree（65-worktree.js 中段）。走 panelMutate 与 branch-create
-    同一条变更路：进「命令」页（desc「新建 worktree」）、整仓读缓存失效、noGit /
-    sandboxDenied 旗标。prune / remove / lock / move 仍无 —— 65-worktree.js 头部的
-    边界说明是同一句话。 */
+    是 v1.3 起的写路径之一，入参 {sessionId, repo?, mode, name?, at?, path, force?}
+    （mode = new / checkout / detach），校验、argv 组装（旗标全在 path 前、path 后只
+    跟起点）与成功答复（panelMutate 结果 + 最新 worktreesSnapshot 一次带回）都在
+    addWorktree（65-worktree.js 中段）。走 panelMutate 与 branch-create 同一条变更
+    路：进「命令」页（desc「新建 worktree」）、整仓读缓存失效、noGit / sandboxDenied
+    旗标。prune / lock / move 仍无；remove 自 v1.4 起另有 git/worktree-remove（下面
+    一条登记）—— 65-worktree.js 头部的边界说明是同一句话。 */
 onRpc('git/worktree-add', function (input) { return addWorktree(input) })
+
+/* worktree 块「清除」（客户端 25-worktree.js v1.4：游离 / 目录已失联的行右键、块头
+    「更多」菜单的一键清除）：worktree remove 是 v1.4 起的第二条写路径，入参
+    {sessionId, repo?, path}（要清掉的工作区绝对路径）。门票三道（在册、非主工作区、
+    非 bare，对**现读**的 porcelain 清单）与成功答复（panelMutate 结果 + 最新
+    worktreesSnapshot 一次带回）都在 removeWorktree（65-worktree.js，addWorktree
+    旁边）。走 panelMutate 与 worktree-add 同一条变更路：进「命令」页（desc
+    「清除 worktree」）、整仓读缓存失效、noGit / sandboxDenied 旗标。默认不带
+    --force —— 有未提交改动的目录 git 会拒，面板不给强删入口；prunable 的失联记录
+    remove 本身就清登记，不另跑 prune。 */
+onRpc('git/worktree-remove', function (input) { return removeWorktree(input) })
 
 onRpc('git/branch-delete', function (input) {
   const name = input != null && isStr(input.name) ? input.name.trim() : ''

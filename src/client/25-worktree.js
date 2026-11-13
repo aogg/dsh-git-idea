@@ -55,7 +55,37 @@
        sandboxDenied 各有专门话术，65-worktree.js 的 ignoredFailureReason 同一折法），
        成功收起表单；「创建后切到新工作区」勾着时：变更页切 onPickWorktree(路径)，
        历史页按答复清单里那个工作区实际站着的分支调 onPickBranch（游离 / 无分支时
-       onPickWorktree，没给就只刷新 —— bumpData 已由 80-panel.js 那侧做过）。 */
+       onPickWorktree，没给就只刷新 —— bumpData 已由 80-panel.js 那侧做过）。
+
+       v1.4 起有清除能力（总开关 = props.onWorktreeRemove 给没给 —— 调用方没传时
+       整段 UI 一个都不出现，行为与 v1.3 逐字节相同，与 onWorktreeAdd 同一先例）：
+       「清除」是删掉整个工作区目录（git worktree remove），破坏性动作，菜单项全按
+       armed 二段确认先例做（第一次点变红字「确认清除」，再点才发 —— 80-panel.js
+       分支删除菜单的 ctxArm 同一条）：
+         · 游离（detached === true）与目录已失联（prunable === true）的行右键弹行
+           菜单（「清除这个 worktree」）；bare 没有工作区可删、🔒 locked 的 git 会拒
+           （fatal: is locked），都不挂右键，locked 的 tooltip 说明原因；不游离不
+           失联的行一个手势都不加。
+         · 块头行右端多一枚「…」触发器（dsh-git-wt-more，单击开块级菜单、click 不
+           冒泡进折叠 toggle），块头整行右键也开同一张菜单（contextmenu 事件本来就
+           不触发 onClick，折叠 toggle 天然不受扰）—— 菜单里「一键清除（N）」，
+           N = 游离 + 失联的人数，N=0 置灰并在 title 说明没有可清的；菜单底部一行
+           小字说清除语义（删除该工作区目录，git 侧登记一并移除；不碰主工作区）。
+         · 执行体 props.onWorktreeRemove（80-panel.js 统一发 git/worktree-remove +
+           bump 重读，与 worktreeAdd 同一条手势）；答复清单客户端不再自己刷 ——
+           bump 已推 freshAt，读 effect 按新账重读。一键清除逐个发、不连坐：单个
+           失败不影响其余，最后把「成了几个、谁没成、为什么」一次汇总进块内 note
+           （worktree 块辅助信息的格调：它的失败不上面板顶部错误横幅，与「读取
+           失败」同一落点；红/绿两色，点一下收起）。默认不带 --force：有未提交
+           改动 git 会拒，stderr 首行折成人话（wtRemoveFailureText，add 的折法）
+           并说明要强删得手动 git worktree remove --force —— 面板不给强删入口，
+           保守；宿主进程还是旧版（RPC 不在册，is not registered）时照远端表
+           remoteHostOld 的先例说「重启 DSH 加载新版宿主」。
+         · 菜单浮层复用 80-panel.js 的 ContextMenu（拼接 bundle 全局函数，render 期
+           都在；光标锚定、点外/Esc/滚动/resize 关闭白拿），状态（开合、武装、
+           busy、note）由 WorktreeBox 本地持有 —— 浮层样式与面板右键菜单同款，不
+           另造第二套；坐标的 transform 换算抄 80-panel.js ctxMenuPos 同一套
+           （wtMenuPos，panelNode 是 10-state.js 的全局）。 */
     function WorktreeBox(props) {
       const data = props.data
       const refs = props.refs
@@ -71,6 +101,25 @@
          身上（每次展开都是一张新表单，值不跨开合保留 —— 与仓库块「添加目录」的
          输入行同一个约定）。 */
       const [adding, setAdding] = React.useState(false)
+
+      /* ── v1.4 清除能力的本地状态（hooks 必须无条件调用，状态照建；画不画全看
+         下面的 canRemove —— onWorktreeRemove 没传时整段 UI 一个都不出现，渲染
+         结果与 v1.3 逐字节相同）──
+         menu：块级菜单的开合（null = 关着；{kind:'row'|'head', path, x, y}），浮层
+         是 80-panel.js 的 ContextMenu；arm：菜单项的 armed 二段确认（键 'row:<path>'
+         与 'batch'，与 80-panel.js ctxArm 同一条先例：开新菜单先作废上一次的武装）；
+         busy：清除在飞（菜单项一并禁用）；note：块内辅助信息格 —— 清除的成败汇总，
+         红字/绿字各一格，不上面板顶部错误横幅（worktree 块辅助信息的格调）。 */
+      const [menu, setMenu] = React.useState(null)
+      const [arm, setArm] = React.useState('')
+      const [busy, setBusy] = React.useState(false)
+      const [note, setNote] = React.useState(null)
+
+      /* 仓库一换，对着旧仓库说的话（note）、上了膛的菜单项与开着的菜单一并放下 ——
+         与 80-panel.js applyRepo 清 ctxMenu 同一条规矩。 */
+      React.useEffect(function () {
+        setNote(null); setArm(''); setMenu(null)
+      }, [effective])
 
       /* 分支树的 metaOf 同一份账：本地分支按短名各留 ahead/behind/upstream。refs
          还没读到（首帧、刚切仓库）时账是空的，徽章自然不画 —— 不等它、不为它
@@ -100,12 +149,103 @@
         }
       }
 
-      /* 标题行同时是折叠开关，与仓库块同一副长相：三角、图标、名字、计数。 */
+      /* ── v1.4 清除的总开关与「可清除」账本 ──
+          canRemove：调用方给了 onWorktreeRemove 才有这一段（行右键、块头「…」、
+          两张菜单，给没给决定整个 v1.4 UI 出不出现）。removable：可清除行的路径
+          清单 —— 游离（detached）或目录已失联（prunable）的链接工作区；bare 没有
+          工作区可删，🔒 locked 的 git 会拒（fatal: is locked），都不算。行右键挂
+          不挂、块头「一键清除（N）」的人数，吃的是同一本账。 */
+      const canRemove = typeof props.onWorktreeRemove === 'function'
+      const removable = []
+      if (canRemove && data != null && data.ok === true) {
+        for (let i = 0; i < list.length; i += 1) {
+          const one = list[i]
+          if (one == null || one.bare === true || one.locked === true) continue
+          if (one.detached === true || one.prunable === true) removable.push(text(one.path))
+        }
+      }
+
+      /* 菜单的坐标：ContextMenu 落 position:fixed 的视口坐标，但面板根节点在宽度
+         记忆过时带着 translateX(-50%) 的 transform —— 带 transform 的祖先成了
+         fixed 后代的包含块，那时坐标得换成「相对面板」的那一套，否则错位一个面板
+         左上角（80-panel.js ctxMenuPos 同一套换法，wtMenuPos 在文件尾部：panelNode
+         是 10-state.js 的全局，量不到就原样用视口坐标，与那边的兜底一致）。 */
+      const menuPos = menu === null ? { left: 0, top: 0 } : wtMenuPos(menu.x, menu.y)
+
+      /* 开菜单（行 / 块头两处入口）：拦掉浏览器自带菜单的规矩与提交行/分支行同一
+         条（preventDefault + stopPropagation），先作废上一次的武装再开。右键不触发
+         onClick，块头的折叠 toggle 天然不受扰。 */
+      const openMenu = function (kind, path, event) {
+        if (event != null) {
+          event.preventDefault()
+          event.stopPropagation()
+        }
+        setArm('')
+        setMenu({
+          kind: kind, path: path,
+          x: event != null && typeof event.clientX === 'number' ? event.clientX : 0,
+          y: event != null && typeof event.clientY === 'number' ? event.clientY : 0,
+        })
+      }
+
+      /* ── 清除的执行：逐个发，不连坐，结果一次汇总 ──
+          每个目标一发 props.onWorktreeRemove（80-panel.js 统一发 git/worktree-remove
+          + bump 重读，与 worktreeAdd 同一条手势）；单个失败不影响其余，全部发完后
+          把「成了几个、谁没成、为什么」一次写进块内 note（红字/绿字）。清的是当前
+          生效仓库时菜单的确认文案已额外警告过（下面 rowMenuItems），这里照单执行。 */
+      const runClear = function (targets) {
+        if (busy === true || canRemove !== true || targets.length === 0) return
+        setBusy(true)
+        setNote(null)
+        let index = 0
+        const doneNames = []
+        const failed = []
+        const finish = function () {
+          setBusy(false)
+          if (failed.length === 0) {
+            setNote({ ok: true, text: targets.length === 1
+              ? '已清除 worktree ' + repoBaseName(targets[0])
+              : '已清除 ' + String(targets.length) + ' 个 worktree：'
+                + targets.map(function (one) { return repoBaseName(one) }).join('、') })
+            return
+          }
+          const lines = []
+          for (let i = 0; i < failed.length; i += 1) {
+            lines.push('· ' + repoBaseName(failed[i].path) + ' —— ' + failed[i].why)
+          }
+          setNote({ ok: false, text: (doneNames.length > 0
+            ? '清除了 ' + String(doneNames.length) + ' 个（' + doneNames.join('、') + '），'
+              + String(failed.length) + ' 个没成：'
+            : '一个都没清成：') + '\n' + lines.join('\n') })
+        }
+        const step = function () {
+          if (index >= targets.length) { finish(); return }
+          const path = targets[index]
+          index += 1
+          props.onWorktreeRemove({ path: path }).then(function () {
+            doneNames.push(repoBaseName(path))
+            step()
+          }, function (failure) {
+            failed.push({ path: path, why: wtRemoveFailureText(failure) })
+            step()
+          })
+        }
+        step()
+      }
+
+      /* 标题行同时是折叠开关，与仓库块同一副长相：三角、图标、名字、计数。
+         v1.4：canRemove 时右端多一枚「…」触发器（单击开块级菜单，stopEvent 拦住
+         冒泡 —— 不触发折叠），整行右键也开同一张菜单；没给 onWorktreeRemove 时
+         这两样都不出现，title 与逐键不变。 */
       const rows = [h('div', {
         key: 'wt-head',
         className: 'dsh-git-wt-head',
-        title: folded ? '展开 worktree 列表' : '收起 worktree 列表（当前选中的 worktree 仍显示在标题行）',
+        title: (folded ? '展开 worktree 列表' : '收起 worktree 列表（当前选中的 worktree 仍显示在标题行）')
+          + (canRemove ? '；右键块头或点右端「…」：清除游离 / 目录已失联的工作区' : ''),
         onClick: function () { setFolded(!folded) },
+        onContextMenu: canRemove
+          ? function (event) { openMenu('head', '', event) }
+          : undefined,
       },
         h('span', { key: 'c', className: 'dsh-git-repo-caret' + (folded ? ' dsh-git-repo-caret-off' : '') },
           h(Icon, { name: 'down', size: 10 })),
@@ -118,7 +258,18 @@
           : null,
         data == null
           ? h('span', { key: 's', className: 'dsh-git-repo-note' }, '正在读取…')
-          : (data.ok !== true ? h('span', { key: 'f', className: 'dsh-git-repo-note' }, '读取失败') : null))]
+          : (data.ok !== true ? h('span', { key: 'f', className: 'dsh-git-repo-note' }, '读取失败') : null),
+        canRemove
+          ? h('button', {
+            key: 'more', type: 'button', className: 'dsh-git-wt-more',
+            title: 'worktree 清除：一键清掉游离 / 目录已失联的工作区（当前 '
+              + String(removable.length) + ' 个可清）—— 右键块头开的是同一张菜单',
+            onClick: function (event) {
+              stopEvent(event)
+              openMenu('head', '', event)
+            },
+          }, '…')
+          : null)]
 
       /* ── 「主目录」行（v1.2）：本目录是链接工作区时，说清主仓库在哪、还能不能救 ──
           只在 wtMain 的 kind 是 linked / broken-gitlink 时出现；mainDir 为空（bare
@@ -177,12 +328,94 @@
               : null)))
       }
 
+      /* ── v1.4 清除的菜单与块内 note（canRemove 才出现，拼在下面的尾巴里）──
+          菜单浮层是 80-panel.js 的 ContextMenu（光标锚定、点外/Esc/滚动/resize 关闭
+          白拿），项按行菜单 / 块头菜单两副；武装键 arm（'row:<path>' / 'batch'）：
+          第一次点变红字「确认清除」（dsh-git-menu-danger，分支删除菜单同一先例），
+          再点才发。被清的是当前生效仓库（path == effective）时，确认文案额外警告
+          「这是变更列表正看着的工作区」。菜单底部一行小字说清除语义（两副菜单都带
+          —— 破坏性动作的语义跟着菜单走，不靠读者记住）。 */
+      const rowMenuItems = menu === null || menu.kind !== 'row' ? [] : (function () {
+        const path = menu.path
+        const armed = arm === 'row:' + path
+        const isEffective = path.length > 0 && path === effective
+        return [
+          h('button', {
+            key: 'rm', type: 'button',
+            className: 'dsh-git-menu-item' + (armed ? ' dsh-git-menu-danger' : ''),
+            title: (armed
+              ? (isEffective ? '⚠ 这是变更列表正看着的工作区 —— 清掉它，变更列表就没有仓库可看了。' : '')
+                + 'git worktree remove ' + path
+              : 'git worktree remove ' + path + ' —— 删除这个工作区目录，git 侧登记一并移除；主工作区不受影响（再点一次确认）'),
+            disabled: busy === true,
+            onClick: function (event) {
+              stopEvent(event)
+              if (armed !== true) { setArm('row:' + path); return }
+              setMenu(null)
+              setArm('')
+              runClear([path])
+            },
+          }, armed ? '确认清除这个 worktree' : '清除这个 worktree'),
+          h('div', { key: 'sep', className: 'dsh-git-menu-sep' }),
+          h('div', { key: 'say', className: 'dsh-git-menu-dim dsh-git-menu-pad' },
+            '清除 = 删除该工作区目录，git 侧登记一并移除；不碰主工作区。有未提交改动时 git 会拒绝 —— 面板不给强删入口（需要时手动 git worktree remove --force）。'),
+        ]
+      })()
+      const headMenuItems = menu === null || menu.kind !== 'head' ? [] : (function () {
+        const count = removable.length
+        const armed = arm === 'batch'
+        const said = count === 0
+          ? '没有可清除的 worktree：只有「游离 HEAD」（不站分支）或「目录已丢失」（⚠）的行能清；🔒 锁定的 git 也会拒，bare 没有工作区可言'
+          : removable.map(function (one) { return repoBaseName(one) }).join('、')
+        return [
+          h('button', {
+            key: 'rm-all', type: 'button',
+            className: 'dsh-git-menu-item' + (armed ? ' dsh-git-menu-danger' : ''),
+            title: count === 0
+              ? said
+              : (armed
+                ? 'git worktree remove ×' + String(count) + '：' + said + ' —— 逐个执行，单个失败不影响其余'
+                : '逐个清除：' + said + '（再点一次确认）'),
+            disabled: count === 0 || busy === true,
+            onClick: function (event) {
+              stopEvent(event)
+              if (count === 0) return
+              if (armed !== true) { setArm('batch'); return }
+              setMenu(null)
+              setArm('')
+              runClear(removable.slice())
+            },
+          }, armed ? '确认清除（' + String(count) + '）' : '一键清除（' + String(count) + '）'),
+          h('div', { key: 'sep', className: 'dsh-git-menu-sep' }),
+          h('div', { key: 'say', className: 'dsh-git-menu-dim dsh-git-menu-pad' },
+            count === 0
+              ? said
+              : '清除 = 删除该工作区目录，git 侧登记一并移除；不碰主工作区。有未提交改动时 git 会拒绝 —— 面板不给强删入口；逐个执行，单个失败不影响其余。'),
+        ]
+      })()
+      /* 清除结果的块内 note：与「读取失败」的灰行同一落点（辅助信息不上顶部横幅），
+         红/绿两色，点一下收起。 */
+      const wtNoteRow = note === null ? null : h('div', {
+        key: 'wt-note',
+        className: 'dsh-git-wt-note ' + (note.ok === true ? 'dsh-git-wt-note-ok' : 'dsh-git-wt-note-bad'),
+        title: note.ok === true ? '清除完成（点一下收起这句话）' : '有没清成的（点一下收起这句话）',
+        onClick: function () { setNote(null) },
+      }, note.text)
+      const wtMenuNode = menu === null ? null : h(ContextMenu, {
+        key: 'wt-menu', open: true, x: menuPos.left, y: menuPos.top,
+        onClose: function () { setMenu(null) },
+      }, menu.kind === 'row' ? rowMenuItems : headMenuItems)
+
       /* ── 块底的表单 + 动作行（v1.3）：三种数据状态共享的尾巴 ──
           读取中 / 失败或空 / 有清单三条路都以各自的提前 return 收场，把「展开的
           表单 + ＋ 新建 worktree」折成这个函数在每处 return 前垫一遍 —— 清单本体
           的渲染一行不动。没给 onWorktreeAdd 的调用方（老用法）整段不出现，行为
-          与 v1.2 逐字节相同。折叠态在更早的 return 里，天然不带尾巴。 */
+          与 v1.2 逐字节相同。折叠态在更早的 return 里，天然不带尾巴。
+          v1.4 的 note 与菜单浮层垫在同一个位置（canRemove 才出现）：note 垫在表单 /
+          动作行之前（清除的账跟着清单走，不挤动作行），菜单浮层垫最后（fixed 定位，
+          挂哪都不占版面）。 */
       const withTail = function (box) {
+        if (canRemove && wtNoteRow !== null) rows.push(wtNoteRow)
         if (typeof props.onWorktreeAdd === 'function') {
           if (adding) {
             rows.push(h(WorktreeAddForm, {
@@ -209,10 +442,17 @@
             h('span', { key: 'p', className: 'dsh-git-repo-mark' }, '＋'),
             h('span', { key: 'n', className: 'dsh-git-repo-name dsh-git-dim' }, '新建 worktree')))
         }
+        if (canRemove && wtMenuNode !== null) rows.push(wtMenuNode)
         return box
       }
 
-      if (folded) return h('div', { className: 'dsh-git-wt-box' }, rows)
+      if (folded) {
+        /* 折叠态：清单行全收起，但清除的入口与结果不收 —— 块头的「…」/右键照样
+           开菜单（v1.4），note 也要有地方说话。 */
+        if (canRemove && wtNoteRow !== null) rows.push(wtNoteRow)
+        if (canRemove && wtMenuNode !== null) rows.push(wtMenuNode)
+        return h('div', { className: 'dsh-git-wt-box' }, rows)
+      }
 
       if (data == null) {
         rows.push(h('div', { key: 'wt-loading', className: 'dsh-git-wt-row dsh-git-wt-gone' },
@@ -276,7 +516,14 @@
         if (prunable) {
           tip.push('目录已丢失，可 prune 清理' + (pruneReason.length > 0 ? '（' + pruneReason + '）' : '') + '；本版没有 prune 动作')
         }
-        if (locked) tip.push('已锁定' + (lockReason.length > 0 ? '：' + lockReason : ''))
+        /* v1.4 清除的行级说明：locked 的不给清（git 会拒），tooltip 说明原因；
+           可清除的行补一句右键语义 —— 菜单里还有详情，这里只指路。 */
+        if (locked) tip.push('已锁定' + (lockReason.length > 0 ? '：' + lockReason : '')
+          + (canRemove ? '；已锁定的工作区不能在这里清除（git 会拒绝）' : ''))
+        const rowClearable = canRemove && removable.indexOf(path) >= 0
+        if (rowClearable) {
+          tip.push('右键：清除这个 worktree（git worktree remove）—— 删除这个目录，git 侧的登记一并移除；不碰主工作区')
+        }
         rows.push(h('div', {
           key: 'wt:' + path,
           className: 'dsh-git-wt-row' + (dim ? ' dsh-git-wt-gone' : ''),
@@ -285,6 +532,9 @@
             ? (repoMode
               ? function () { props.onPickWorktree(path) }
               : function () { props.onPickBranch(props.repo, branch) })
+            : undefined,
+          onContextMenu: rowClearable
+            ? function (event) { openMenu('row', path, event) }
             : undefined,
         },
           h('span', { key: 'm', className: 'dsh-git-repo-mark' }, isCur ? '●' : ''),
@@ -609,4 +859,70 @@
             title: '收起表单，不发送任何请求',
             onClick: function () { props.onClose() },
           }, '取消')))
+    }
+
+    /* ── v1.4 清除的两个模块级小工具 ──
+       菜单坐标的 transform 换算与失败话术的折法，都从既有先例原样借来 —— 借的是
+       判法与话术，不是再造一套。 */
+
+    /* 菜单坐标：ContextMenu 落 position:fixed 的视口坐标，但面板根节点在宽度记忆过
+       时带着 translateX(-50%) 的 transform —— 带 transform 的祖先成了 fixed 后代的
+       包含块，那时坐标要换成「相对面板」的那一套，否则菜单错位一个面板左上角。
+       80-panel.js 的 ctxMenuPos（提交行/分支行右键菜单）就是这一套；那支活在面板
+       组件的闭包里，这里按同一判法重写一遍（panelNode 是 10-state.js 的全局，指向
+       当前挂着的面板根）。量不到（测试、无布局环境）原样用视口坐标 —— getComputed
+       Style 不在时按「没 transform」处理，与那边 ctxMenuPos 的兜底一致：这是尽力
+       量的探针，量不动就退回最朴素也正确的视口坐标，不必为它抛错。 */
+    function wtMenuPos(x, y) {
+      const node = panelNode
+      if (node == null || typeof node.getBoundingClientRect !== 'function') return { left: x, top: y }
+      let shifted = false
+      try {
+        const doc = node.ownerDocument
+        const view = doc != null ? doc.defaultView : null
+        if (view != null && typeof view.getComputedStyle === 'function') {
+          shifted = view.getComputedStyle(node).transform !== 'none'
+        }
+      } catch (error) { shifted = false }
+      if (shifted !== true) return { left: x, top: y }
+      const rect = node.getBoundingClientRect()
+      return { left: x - rect.left, top: y - rect.top }
+    }
+
+    /* 清除失败的人话：wtAddFailureText 同一条折法 —— noGit / sandboxDenied 各说各的
+       专门话术，其余取 stderr 首行（git 的原话在哪个 locale 都比「退出码 128」有用；
+       host 校验层的拒绝没有 stderr，落到 reply.error 那句人话）；真没答复（运输层
+       失败）才用 rpc 抛上来的那句话。清除专属的两条：
+         · git 拒收且原话里点了 --force（有未提交改动 / 目录非空）：面板不给强删
+           入口，说清要强删得手动 git worktree remove --force；
+         · 宿主进程还是旧版（git/worktree-remove 这条路由不存在，is not registered
+           的运输层失败）：照 GitConfigPane remoteHostOld 的先例说出路 —— 重启 DSH
+           加载新版宿主，与这个仓库、与 git 都无关，不甩原文。 */
+    function wtRemoveFailureText(failure) {
+      const reply = failure != null && failure.reply != null ? failure.reply : null
+      if (reply == null) {
+        const raw = failureText(failure)
+        return raw.indexOf(HOST_NOT_READY) >= 0
+          ? '清除要在重启 DSH、加载新版宿主之后才生效 —— 现在运行的宿主进程还是旧版，git/worktree-remove 这条命令它还不认识'
+          : raw
+      }
+      if (reply.noGit === true) {
+        return '这台机器上找不到 git：清除 worktree 要调用 git。装上 git，或让它出现在 dsh 进程的 PATH 里，再试一次。'
+      }
+      if (reply.sandboxDenied === true) {
+        return '文件沙箱不允许这次清除（要删的目录多半在会话工作区的可写范围之外）：放宽沙箱策略再试，或手动删除'
+      }
+      const lines = String(reply.stderr == null ? '' : reply.stderr).split('\n')
+      let said = ''
+      for (let i = 0; i < lines.length; i += 1) {
+        const line = lines[i].trim()
+        if (line.length > 0) { said = line; break }
+      }
+      if (said.length === 0 && typeof reply.error === 'string') said = reply.error
+      if (said.length === 0) return '清除失败（git 没有给出原因）'
+      if (said.indexOf('--force') >= 0) {
+        said += ' —— 面板不给强删入口：确认这个工作区没有要留的东西后，手动执行 git worktree remove --force '
+          + (typeof reply.path === 'string' && reply.path.length > 0 ? reply.path : '')
+      }
+      return said
     }

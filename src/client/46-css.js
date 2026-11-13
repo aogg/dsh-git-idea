@@ -785,6 +785,19 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-wt-form-check{display:flex;align-items:center;gap:4px;font-size:10px;color:var(--dsw-alias-label-primary);cursor:pointer}
 .dsh-git-wt-form-error{font-size:10px;line-height:14px;color:var(--dsw-alias-state-error-primary)}
 .dsh-git-wt-form-btns{display:flex;justify-content:flex-end;gap:4px}
+/* worktree 块的「…」触发器（25-worktree.js v1.4，块头行右端）：读法对齐块头一族的
+    幽灵小键（.dsh-git-repo-x 同款：无边框透明底、悬停换底色与字色），margin-left:auto
+    把它钉在行右端 —— 块头行的其它格子（● 当前、读取状态）都挤在左边，它一个独占
+    右缘。类名另起 dsh-git-wt- 前缀，不进 repo-box / repo-row 那两本测试按个数认的
+    账（25-worktree.js 顶部注释同一句话）。 */
+.dsh-git-wt-more{flex:none;margin-left:auto;border:0;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:1;padding:1px 4px;border-radius:4px;cursor:pointer}
+.dsh-git-wt-more:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+/* 清除结果的块内辅助信息格（25-worktree.js v1.4）：清除的成败不上面板顶部横幅
+    （worktree 块辅助信息的格调，与「读取失败」灰行同一落点），就写在这格里 ——
+    红/绿两色（语义 token），白字可折行（一键清除的失败汇总一行一条），点一下收起。 */
+.dsh-git-wt-note{margin:3px 5px 0;padding:2px 6px;border-radius:4px;font-size:10px;line-height:14px;white-space:pre-line;cursor:pointer}
+.dsh-git-wt-note-ok{color:var(--dsw-alias-state-success-primary)}
+.dsh-git-wt-note-bad{color:var(--dsw-alias-state-error-primary)}
 
 /* ── 差异页右列：这批修改的来源文件列表 ──
    补丁区 flex:1、右列固定 240px。右列的行复用树行那套类名（dsh-git-trow），

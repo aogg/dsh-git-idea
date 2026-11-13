@@ -3008,6 +3008,27 @@
           })
       }
 
+      /* ── worktree 清除（25-worktree.js v1.4）的 RPC 回调 ──
+
+          与 worktreeAdd 同一条手势：块里只出业务字段（{path}，要清掉的那个工作区），
+          这里补会话与仓库（base = {sessionId, repo: 生效仓库} —— 块里的清单本来就按
+          它读的）统一发 git/worktree-remove（注册在 80-rpc.js，执行体 removeWorktree
+          在 65-worktree.js：对现读清单三道校验、panelMutate 执行 git worktree
+          remove、成功答复带最新 worktrees 清单）。失败也 bump（host 那头的整仓失效
+          可能已经发生）但把失败原样抛回 —— 折人话是块的事：清除的成败走块内 note
+          （worktree 块辅助信息的格调），不上面板顶部错误横幅。历史/变更两页的
+          worktreeProps 共用这一个闭包。 */
+      const worktreeRemove = function (fields) {
+        return rpc('git/worktree-remove', Object.assign(base(effectiveRepo), fields), '清除 worktree 失败')
+          .then(function (reply) {
+            bump()
+            return reply
+          }, function (failure) {
+            if (failure.reply !== undefined) bump()
+            throw failure
+          })
+      }
+
       /* 两块侧栏的属性包：组件本身由 RefTree / ChangesPane 用 h() 挂（RepoSwitcher 有
          自己的 useState —— 当函数直接调会把它的钩子混进父组件的钩子序列，换页时数量
          一变就是坏状态）。 */
@@ -5751,6 +5772,11 @@
             },
             onPickWorktree: function (path) { repoSingle('changes', path) },
             onWorktreeAdd: worktreeAdd,
+            /* onWorktreeRemove（25-worktree.js v1.4）：worktree 块清除（游离 / 目录
+               已失联的行右键、块头「…」一键清除）的发单回调 —— 上面 worktreeRemove
+               统一发 git/worktree-remove + bump 重读；清单刷新全靠 bump，块自己
+               不再按答复清单刷一遍。 */
+            onWorktreeRemove: worktreeRemove,
           },
           groups: changeGroups,
           onRepoSingle: function (path) { repoSingle('changes', path) },
@@ -5943,6 +5969,10 @@
                    区」由表单按答复清单里那个工作区站着的分支调 onPickBranch（游离 /
                    清单没带回分支时没有 onPickWorktree 可落，就只剩 bump 那次刷新）。 */
                 onWorktreeAdd: worktreeAdd,
+                /* 「清除」（25-worktree.js v1.4）：发单回调与变更页同一个
+                   worktreeRemove —— 游离 / 目录已失联的行右键、块头「…」一键清除
+                   都走它（git/worktree-remove + bump 重读）。 */
+                onWorktreeRemove: worktreeRemove,
               },
               groups: logSel.length > 0 ? logSel.map(function (repo) {
                 return { repo: repo, refs: repoRefs[repo] === undefined ? null : repoRefs[repo] }
