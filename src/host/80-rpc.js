@@ -652,6 +652,36 @@ onRpc('git/fetch', async function (input) {
   return panelMutate(input, config.fetchPrune === true ? ['fetch', '--all', '--prune'] : ['fetch', '--all'], { net: true, spawn: NET_SPAWN, desc: '取回' })
 })
 
+/* 「暂存后拉取」与「远端覆盖」都站在当前分支上说话：stash 之后的那次 pull、
+   reset --hard 的 @{u}，只对「在某个分支上、且分支有上游」的情形有意义。上游
+   问不到的两种情形在这里用人话说出来（git/pull 的 no-upstream 先例话术），
+   git 的天书不直接上屏；问上来返回 upstream（origin/main 这样的短名）。读是
+   两条只读命令，不进「命令」页。 */
+async function upstreamOfCurrentBranch(input) {
+  const args = argsFor(input)
+  const head = await git(args, ['symbolic-ref', '--quiet', '--short', 'HEAD'], null, {})
+  if (head.exitCode !== 0) {
+    return {
+      fail: true,
+      reply: {
+        ok: false, error: 'detached-head', repo: head.cwd,
+        stderr: '当前是游离 HEAD（不在任何分支上）—— 这个动作要问「当前分支的上游」，游离的 HEAD 答不上来。先从分支列表点一行切到某个分支，再回来试。',
+      },
+    }
+  }
+  const up = await git(args, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], null, {})
+  if (up.exitCode !== 0) {
+    return {
+      fail: true,
+      reply: {
+        ok: false, error: 'no-upstream', repo: up.cwd,
+        stderr: '当前分支还没有上游 —— 不知道要跟谁比、以谁为准。先用分支行右键「修改跟踪分支…」绑一个，再回来试。',
+      },
+    }
+  }
+  return { fail: false, upstream: up.stdout.trim() }
+}
+
 onRpc('git/pull', async function (input) {
   const config = await netConfig()
   /* 「rebase 更新」的语义（顶部 ↷、分支行右键「变基」的当前分支那条）：更新即变基
@@ -659,6 +689,81 @@ onRpc('git/pull', async function (input) {
      （配置只回答「普通 ↓ 默认哪种形状」，不该能反过来压住按钮明说的要求）。
      setUpstream 的绑定流程与这个开关无关 —— 先绑后拉的顺序照旧。 */
   const argv = (input != null && input.rebase === true) || config.pullRebase === true ? ['pull', '--rebase'] : ['pull']
+  /* ── ↓ 右键菜单的两个变体（客户端只说要什么，argv 在这里成形）──
+
+     两个变体都只作用于「读者此刻站着的分支」，所以排在分支行右键那条（input.branch
+     拉别的分支）前面 —— 真把两者一起发来时，变体说了算。不带这两个参数的调用
+     （左键 ↓ / ↷ / 卡片 ↓ / 分支行「拉取」）一个字节都不走这里，行为与从前完全
+     一致。 */
+  /* 「使用远端覆盖本地」（resetToRemote === true）：先把远端搬回来（fetch --all，
+     开了 fetchPrune 加 --prune —— 与 git/fetch 默认款同一副 argv），再
+     `git reset --hard <上游>` 把当前分支连同工作区一起按到远端那一份上。当前分支
+     独有的提交、未提交的改动都随这一下丢掉 —— 破坏性动作错不起，所以上游问不到
+     （游离 HEAD / 没绑上游）就一步都不动手；fetch 失败也就地停（拿旧账覆盖人比
+     不覆盖更糟）。两步各自进「命令」页（desc 区分「覆盖前取回」与「重置到远端」）；
+     分支行「用远端覆盖」（resetLocalToRemote）是另一条路 —— 那条先 switch 保证
+     重置的是读者点中的分支，这里读者本来就在当前分支上，不必切。 */
+  if (input != null && input.resetToRemote === true) {
+    const asked = await upstreamOfCurrentBranch(input)
+    if (asked.fail === true) return asked.reply
+    const fetched = await panelMutate(input,
+      config.fetchPrune === true ? ['fetch', '--all', '--prune'] : ['fetch', '--all'],
+      { net: true, spawn: NET_SPAWN, desc: '覆盖前取回' })
+    if (fetched.ok !== true) {
+      return Object.assign(fetched, { error: 'fetch-failed', resetTo: null })
+    }
+    const done = await panelMutate(input, ['reset', '--hard', asked.upstream], { desc: '重置到远端' })
+    return Object.assign(done, { resetTo: asked.upstream })
+  }
+  /* 「暂存后拉取再恢复」（stashFirst === true）：工作区脏时先
+     `stash push -u -m` 收起改动（-u 连未跟踪的也收），pull 完再 `stash pop` 放回
+     —— 失败语义照检出兜底 switchBranch（66-refs.js）那一套：stash 失败就不 pull
+     （error:'stash-failed'，改动原封没动）；pull 失败时改动安然在 stash 里，stderr
+     前面先说这件事、把 git stash list 的找回办法讲出来（commandDetail 先念
+     stderr，错误条上读到的第一句是人话）；pop 撞冲突时 git 自己会把 stash 条目
+     留着（丢不掉），答复带 popConflict:true，由界面把出路说全。干净的工作区跳过
+     stash（没有改动可收，两步白跑）。开头的 status 是读，不进「命令」页；三步
+     变更各记一笔（desc 与「拉取」区分开）。 */
+  if (input != null && input.stashFirst === true) {
+    const asked = await upstreamOfCurrentBranch(input)
+    if (asked.fail === true) return asked.reply
+    const args = argsFor(input)
+    /* --no-optional-locks 是顶层选项，要坐在子命令前面（switchBranch 同一句）。 */
+    const before = await git(args, ['--no-optional-locks', 'status', '--porcelain=v1', '--untracked-files=normal'], null, {})
+    let dirty = 0
+    const lines = before.stdout.split('\n')
+    for (let i = 0; i < lines.length; i += 1) if (lines[i].length > 0) dirty += 1
+    let stashed = false
+    if (dirty > 0 && before.exitCode === 0) {
+      const saved = await panelMutate(input, ['stash', 'push', '-u', '-m', 'dsh-git-idea: pull 拉取前暂存'], { desc: '暂存改动(拉取前)' })
+      if (saved.ok !== true) {
+        return Object.assign(saved, { error: 'stash-failed', stashed: false, pulled: false, popConflict: false })
+      }
+      stashed = true
+    }
+    const pulled = await commitMutation(input, argv, { net: true, spawn: NET_SPAWN, desc: '拉取' })
+    if (pulled.ok !== true) {
+      if (stashed !== true) {
+        return Object.assign(pulled, { error: 'pull-failed', stashed: false, pulled: false, popConflict: false })
+      }
+      const said = '拉取失败了，你的改动安然在 stash 里：git stash list 能看到它'
+        + '（dsh-git-idea: pull 拉取前暂存），git stash pop 把它放回。\n' + pulled.stderr
+      return Object.assign(pulled, { error: 'pull-failed', stashed: true, pulled: false, popConflict: false, stderr: said })
+    }
+    let popConflict = false
+    let popStdout = ''
+    let popStderr = ''
+    if (stashed) {
+      const popped = await panelMutate(input, ['stash', 'pop'], { desc: '恢复暂存(拉取后)' })
+      popConflict = popped.ok !== true
+      popStdout = popped.stdout
+      popStderr = popped.stderr
+    }
+    return Object.assign(pulled, {
+      stashed: stashed, dirty: dirty, pulled: true,
+      popConflict: popConflict, popStdout: popStdout, popStderr: popStderr,
+    })
+  }
   /* 分支行右键「拉取」落在别的分支上（input.branch 给了、又不等于当前分支）：
      普通 pull 只作用于当前分支，HEAD 不许动 —— 「把那个分支拉一下」要的是把它
      快进(fast-forward)到它的上游，形状是 `git fetch <远端> <远端分支>:<分支>`：

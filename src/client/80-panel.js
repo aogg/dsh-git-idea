@@ -3187,6 +3187,13 @@
             setOkNote('已绑定上游 ' + text(reply.setUpstream.remote) + '/' + text(reply.setUpstream.branch) + ' 并拉取')
             setPullPick(null)
           }
+          if (method === 'git/pull' && reply != null && reply.popConflict === true) {
+            /* 暂存后拉取的最后一撞：pull 本身成了、stash pop 放回改动时撞了冲突 ——
+               git 把 stash 条目留着（丢不掉），出路在这里说全（checkout 那边的
+               popConflict 是同一句话的形状，70-branchpicker.js 的 choose）。 */
+            setError('拉取完成，但恢复暂存（stash pop）撞了冲突：改动大部分已回工作区，冲突文件已标出 —— '
+              + '解决后 git add，stash 条目用 git stash drop 清掉（git stash list 可核对）。')
+          }
           bump()
         }, function (failure) {
           if (ownRun !== true) setBusy(false)
@@ -5070,8 +5077,21 @@
                 y: event != null && typeof event.clientY === 'number' ? event.clientY : 0,
               })
             } }),
+        /* ↓ 的右键（ctxPullItems）：三件「换个拉法」摆在光标处。运行态与左键同一
+           条 runSync('pull', …) —— 转圈、再点保护、错误条全共用。仓库没读出来时
+           左键本来就是禁的，右键也不开菜单 —— 与 ⇣ / ↑ 同一条规矩。 */
         tool('pull', '↓', 'pull：拉取并合入当前分支', function () { runSync('pull', function () { return runOp('git/pull', null, 'pull') }) },
-          { disabled: !repoOk || syncRunningKey('pull'), running: syncRunningKey('pull'), badge: behind }),
+          { disabled: !repoOk || syncRunningKey('pull'), running: syncRunningKey('pull'), badge: behind,
+            onContextMenu: function (event) {
+              event.preventDefault()
+              event.stopPropagation()
+              if (repoOk !== true) return
+              setCtxMenu({
+                kind: 'pull',
+                x: event != null && typeof event.clientX === 'number' ? event.clientX : 0,
+                y: event != null && typeof event.clientY === 'number' ? event.clientY : 0,
+              })
+            } }),
         /* 「rebase 更新」：↓ 的变基款。更新即变基 —— `git pull --rebase`（Host 无视
             pull.rebase 配置：按钮明说的要求，配置压不住），先 fetch 再把当前分支的
             本地提交摘下来重放到上游之后，历史保持一条直线、不造合并提交。走 runOp
@@ -6268,6 +6288,59 @@
           },
         }, '浅取近 ' + String(FETCH_SHALLOW_DEPTH) + ' 条'),
       ]
+      /* ── 顶栏 ↓ 的右键菜单内容（kind === 'pull'）──
+
+         左键已经是最普通的 pull，右键把「换个拉法」的三件摆在光标处，运行态与左键
+         同一条 runSync('pull', …)（↓ 自己转圈、再点保护、错误条全共用）：
+
+           · 普通拉取 —— 与左键单击同一条路（runOp 的 git/pull 默认款，没有上游时
+             照旧进上游选择层）。
+           · 暂存后拉取再恢复 —— git/pull 带 stashFirst:true（Host 先 stash push -u
+             收起改动、pull 完 stash pop 放回；pull 失败时改动留在 stash，错误条会把
+             git stash list 的找回办法说出来；恢复撞冲突时 stash 条目保留）。走
+             runOpApply 直发：没有上游时 Host 的人话错误上错误条，不进 runOp 的
+             上游选择层 —— 那一层是「拉取」自己的兜底，不是这一款的。
+           · 使用远端覆盖本地 —— git/pull 带 resetToRemote:true（Host 先 fetch 再
+             reset --hard @{u}）。破坏性动作：当前分支独有的提交与未提交改动都会被
+             丢弃（提交 reflog 还能找回，未提交改动找不回）—— title 里把「丢什么」
+             说全，让人点之前就读到，而不是点完才从 git 的输出里猜。
+
+         禁用条件与 ↓ 按钮自己对齐（repoOk / 正在拉）。 */
+      const pullSyncGuard = !repoOk || syncRunningKey('pull')
+      const ctxPullItems = ctxMenu === null || ctxMenu.kind !== 'pull' ? [] : [
+        h('button', {
+          key: 'plain', type: 'button', className: 'dsh-git-menu-item',
+          title: 'git pull：拉取并合入当前分支（与左键单击同一条路）',
+          disabled: pullSyncGuard,
+          onClick: function (event) {
+            stopEvent(event)
+            setCtxMenu(null)
+            runSync('pull', function () { return runOp('git/pull', null, 'pull') })
+          },
+        }, '普通拉取'),
+        h('button', {
+          key: 'stash', type: 'button', className: 'dsh-git-menu-item',
+          title: 'stash push -u → git pull → stash pop：先把改动（含未跟踪）收进 stash，拉完再放回。'
+            + 'pull 失败时改动留在 stash（git stash list 可找回）；恢复撞冲突时 stash 条目保留',
+          disabled: pullSyncGuard,
+          onClick: function (event) {
+            stopEvent(event)
+            setCtxMenu(null)
+            runSync('pull', function () { return runOpApply('git/pull', { stashFirst: true }, 'pull') })
+          },
+        }, '暂存后拉取再恢复'),
+        h('button', {
+          key: 'override', type: 'button', className: 'dsh-git-menu-item',
+          title: 'git fetch → git reset --hard @{u}：把当前分支硬重置到它的上游 —— 本地独有的提交与未提交改动都会被丢弃'
+            + '（提交可从 reflog 找回，未提交改动找不回）。破坏性动作，想清楚再点',
+          disabled: pullSyncGuard,
+          onClick: function (event) {
+            stopEvent(event)
+            setCtxMenu(null)
+            runSync('pull', function () { return runOpApply('git/pull', { resetToRemote: true }, 'pull') })
+          },
+        }, '使用远端覆盖本地'),
+      ]
       const ctxCommitItems = ctxMenu === null ? [] : ctxMenu.kind === 'commit' ? [
         h('button', {
           key: 'pick', type: 'button', className: 'dsh-git-menu-item', disabled: !canAct,
@@ -6947,7 +7020,8 @@
             }, ctxMenu.kind === 'file' ? ctxFileItems
               : ctxMenu.kind === 'push' ? ctxPushItems
                 : ctxMenu.kind === 'fetch' ? ctxFetchItems
-                  : ctxMenu.kind === 'gutter' ? ctxGutterItems : ctxCommitItems)
+                  : ctxMenu.kind === 'pull' ? ctxPullItems
+                    : ctxMenu.kind === 'gutter' ? ctxGutterItems : ctxCommitItems)
           : null)
     }
 

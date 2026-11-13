@@ -272,6 +272,13 @@
       /* pull 的「选远端分支」态：false 是正常的分支列表，true 表示当前分支还没有
          上游、远端又没有同名分支 —— 列表区域整个换成远端分支选择（Esc 退回）。 */
       const [pick, setPick] = React.useState(false)
+      /* ↓ 的右键菜单坐标（null = 关着）：BranchPicker 是独立组件，面板的 ctxMenu
+         state 够不着它 —— 这里自己记一份。浮层复用 80-panel.js 的 ContextMenu
+         （拼接后同一个作用域，函数声明运行期可达；先例：本文件早就在用更靠后的
+         78-actions.js 的 runSyncAction），光标锚定、点外/Esc/滚动/resize 关闭与
+         面板一致 —— 它们收发都走 panelNode 的 document，而面板恒挂载（隐藏态也
+         渲染），hover 态下这个节点照样活着。 */
+      const [pullCtx, setPullCtx] = React.useState(null)
 
       /* Where the flyout hangs: the row's own offset inside the scrolling list,
          translated into the card's coordinates. Rows are offset from the list
@@ -649,6 +656,66 @@
         })
       }
 
+      /* ── ↓ 右键菜单（与面板顶栏 ↓ 同三件）──
+
+         普通拉取就是左键那条路（pullAction，没有上游时照旧进绑定/选择层）；另两件
+         各自直发 git/pull 的变体参数（stashFirst / resetToRemote，argv 在 Host 成形），
+         不走绑定层 —— 没有上游或游离 HEAD 时 Host 的人话错误直接上卡内错误行，
+         那正是这一款该说的话。禁用与 chips 同一条：卡片 busy 或共享层里 pull 正在
+         跑（syncActionRuns）—— 面板顶栏那边在跑时，这里的菜单项一样点不动。 */
+      const pullCtxGuard = busy === true || syncActionRuns.pull === true
+      /* 暂存款（stashFirst）的 go：runCardSync 只认「go 回 null = 成」，而「暂存后
+         拉取」有一种半成的成功要报到 —— pull 本身成了、stash pop 放回改动时撞了
+         冲突（答复 ok:true 带 popConflict:true，stash 条目 git 自己留着）。照 go
+         的契约把这次答复印成一次失败交出去，卡内错误行把出路说全（checkout 那边
+         的 popConflict 是同一句话的形状）。go 永不 reject（runCardSync 的 started
+         只挂了成功回调），fulfill 里返回失败对象就够。 */
+      const pullStashGo = function () {
+        return rpc('git/pull', request({ stashFirst: true }), 'pull 失败').then(function (reply) {
+          if (reply != null && reply.popConflict === true) {
+            const failure = new Error('拉取完成，但恢复暂存（stash pop）撞了冲突：改动大部分已回工作区，冲突文件已标出 —— '
+              + '解决后 git add，stash 条目用 git stash drop 清掉（git stash list 可核对）。')
+            failure.reply = reply
+            return failure
+          }
+          return null
+        }, function (failure) { return failure })
+      }
+      const pullCtxItems = [
+        h('button', {
+          key: 'plain', type: 'button', className: 'dsh-git-menu-item',
+          title: 'git pull：拉取并合入当前分支（与左键单击同一条路）',
+          disabled: pullCtxGuard,
+          onClick: function (event) {
+            stopEvent(event)
+            setPullCtx(null)
+            pullAction()
+          },
+        }, '普通拉取'),
+        h('button', {
+          key: 'stash', type: 'button', className: 'dsh-git-menu-item',
+          title: 'stash push -u → git pull → stash pop：先把改动（含未跟踪）收进 stash，拉完再放回。'
+            + 'pull 失败时改动留在 stash（git stash list 可找回）；恢复撞冲突时 stash 条目保留',
+          disabled: pullCtxGuard,
+          onClick: function (event) {
+            stopEvent(event)
+            setPullCtx(null)
+            runCardSync('pull', 'git/pull', null, 'pull', { go: pullStashGo, fullTree: true })
+          },
+        }, '暂存后拉取再恢复'),
+        h('button', {
+          key: 'override', type: 'button', className: 'dsh-git-menu-item',
+          title: 'git fetch → git reset --hard @{u}：把当前分支硬重置到它的上游 —— 本地独有的提交与未提交改动都会被丢弃'
+            + '（提交可从 reflog 找回，未提交改动找不回）。破坏性动作，想清楚再点',
+          disabled: pullCtxGuard,
+          onClick: function (event) {
+            stopEvent(event)
+            setPullCtx(null)
+            runCardSync('pull', 'git/pull', { resetToRemote: true }, 'pull', { fullTree: true })
+          },
+        }, '使用远端覆盖本地'),
+      ]
+
       /* 不在「同步动作」那一份里的卡片动作（合并到当前分支 = git/sequence 等）：
          就地反馈、不开链、不与面板共享运行中标记 —— 它们本来就是卡片自己的手势。 */
       const act = function (method, payload, label) {
@@ -1016,6 +1083,16 @@
           disabled: busy === true || syncBusy === true,
           onMouseEnter: function () { setIndex(i) },
           onClick: function (event) { stopEvent(event); def.run() },
+          /* 只有 ↓ 有右键（三件「换个拉法」）：照面板顶栏的规矩拦掉浏览器自带
+             菜单。这里不看 busy —— 菜单开开无妨，三项照 chips 的禁用口径一起灰。 */
+          onContextMenu: def.id !== 'pull' ? undefined : function (event) {
+            event.preventDefault()
+            event.stopPropagation()
+            setPullCtx({
+              x: event != null && typeof event.clientX === 'number' ? event.clientX : 0,
+              y: event != null && typeof event.clientY === 'number' ? event.clientY : 0,
+            })
+          },
         }, parts))
       }
       chips.push(h('button', {
@@ -1241,6 +1318,15 @@
           onScroll: function () { clearFlyTimer(); setFly(null) },
         }, items),
         flyNode,
+        /* ↓ 的右键菜单：与面板同一块 ContextMenu 浮层（position:fixed 挂在本组件
+           树里 —— 它是卡的 DOM 后代，hover 态的 pointerleave 把它算「在里面」，
+           指针移进菜单不会把卡收走，行尾那个 flyout 靠的是同一条事实）。 */
+        pullCtx !== null
+          ? h(ContextMenu, {
+              key: 'pullctx', open: true, x: pullCtx.x, y: pullCtx.y,
+              onClose: function () { setPullCtx(null) },
+            }, pullCtxItems)
+          : null,
         note !== null ? h('div', { key: 'n', className: 'dsh-git-hint dsh-git-warn' }, note) : null,
         error !== null ? h('div', { key: 'e', className: 'dsh-git-hint dsh-git-error' }, error) : null,
         createRow,
