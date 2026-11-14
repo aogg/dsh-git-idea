@@ -111,6 +111,16 @@
 .dsh-git-trow-head .dsh-git-tname{font-weight:600}
 .dsh-git-trow-scope{box-shadow:inset 2px 0 0 var(--dsw-alias-brand-primary)}
 .dsh-git-trow-scope .dsh-git-tname{color:var(--dsw-alias-brand-primary)}
+/* fetch 后新出现的分支行「闪一下」（10-state.js 的 fetch 新分支高亮账，50-log.js 挂
+   dsh-git-branch-new）：品牌色底实住约一半时长再淡到无，名字跟着底色从白淡回主题色。
+   一次性动画 + forwards 停在结束态 —— 账到 TTL 被清扫摘掉时行已完全透明，摘除本身
+   没有任何可察觉的跳变；类名还挂着的窗口里若行因折叠/展开被重建，动画会重播一次，
+   这是「非常驻高亮」可接受的边缘。时长与 10-state.js 的 BRANCH_HIGHLIGHT_TTL_MS 是
+   同一个数（6s），改一处要记得另一处。 */
+@keyframes dsh-git-branch-new-bg{0%,55%{background-color:var(--dsw-alias-brand-primary)}100%{background-color:transparent}}
+@keyframes dsh-git-branch-new-fg{0%,55%{color:#fff}100%{color:var(--dsw-alias-label-primary)}}
+.dsh-git-trow.dsh-git-branch-new{animation:dsh-git-branch-new-bg 6s ease-out forwards}
+.dsh-git-trow.dsh-git-branch-new .dsh-git-tname{animation:dsh-git-branch-new-fg 6s ease-out forwards}
 .dsh-git-tw{flex:none;width:10px;color:var(--dsw-alias-label-secondary);font-size:9px;cursor:pointer}
 .dsh-git-tname{overflow:hidden;text-overflow:ellipsis;min-width:0}
 /* 分支行名字下面的一行小字（50-log.js）：这个分支跟踪的上游名。纵向列包住名字与

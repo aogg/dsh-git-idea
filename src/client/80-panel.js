@@ -2393,6 +2393,11 @@
          一个都不渲染，CSS 变量也不挂（46-css.js 按变量算线位），折叠行为一字不改。 */
       const split = logSplitSignal.use()
       const [splitting, setSplitting] = React.useState(null)
+      /* fetch 新分支高亮账（10-state.js）的订阅：信号一响就重画 —— 集合写入时
+         分支行挂上 dsh-git-branch-new，清扫到点摘掉。账按仓库分格，面板只管听这一
+         声铃（useBranchPrefs 同款裸订阅，返回值没人用）；读集合发生在 RefTree 渲染
+         时（下面的 newBranchesOf）。 */
+      useBranchHighlights()
       /* 锚点容器（输入区 overlay 槽位）量到的 {top, ceiling, vh}。null = 还没量过
          （首帧、或没有布局的环境），此时不钳制，维持 CSS 的 74vh / 记忆的 size.h。
          top 是锚点上沿（面板下沿就在它上面 8px）；ceiling 是真实上界（14-geometry.js
@@ -3200,6 +3205,12 @@
             setError('拉取完成，但恢复暂存（stash pop）撞了冲突：改动大部分已回工作区，冲突文件已标出 —— '
               + '解决后 git add，stash 条目用 git stash drop 清掉（git stash list 可核对）。')
           }
+          /* fetch 成功先钉基线再 bump（次序有讲究）：基线是 refsTreeStored（63-storedlists.js）
+             里该仓最近一份 ok 答复 —— 此刻它还是 fetch 前的样子；bump 一推，refs effect
+             的重读答复一到，settleBranchFetch（10-state.js）就拿它结算净新增的分支并
+             让分支树闪一下。顶栏 ⇣ 与它的右键两件（unshallow / 浅取）都汇在 runOp 的
+             这一个成功回调里，arm 也只挂这一处。 */
+          if (method === 'git/fetch') armBranchFetchBaseline(appliedRepo)
           bump()
         }, function (failure) {
           if (ownRun !== true) setBusy(false)
@@ -3371,6 +3382,9 @@
       React.useEffect(function () {
         if (!repoOk || props.ready !== true) return undefined
         let alive = true
+        /* 生效仓库报一声（10-state.js 的 markBranchHighlightScope）：真换了仓库就把
+           别的仓的高亮格清掉（切仓库即失效）；同一仓库的重入在那一头被挡住，不清。 */
+        markBranchHighlightScope(appliedRepo)
         /* 首帧垫底（63-storedlists.js 的盘账）：内存里还没有这个仓库的账（刷新后
            必然如此，或刚从别的仓库切过来）就先把盘上那份摆上去画。RPC 照发，答复
            一到整个盖掉 —— 盘账只管「首帧不空」，已持有同一仓库的 ok 内存账时不许
@@ -3394,6 +3408,10 @@
           })
           if (data != null && data.ok === true) refsTreeStored.put(appliedRepo, data)
           else refsTreeStored.drop(appliedRepo)
+          /* fetch 新分支的结算口（10-state.js）：挂起的 fetch 基线在这里被这份答复
+             消费 —— 内容变没变都要走这一步（setRefs 的去重只管重画；「fetch 之后
+             refs 恰好没变」的那次 fetch 也要把基线收掉，否则它会一直挂着等下一份）。 */
+          settleBranchFetch(appliedRepo, data)
         }).catch(function (failure) {
           if (alive) setError(failureText(failure))
         })
@@ -3439,6 +3457,11 @@
             })
             if (data != null && data.ok === true) refsTreeStored.put(repo, data)
             else refsTreeStored.drop(repo)
+            /* fetch 新分支的结算口（多选这半）：生效仓库 fetch 后 bump，这里也会跟着
+               重读 —— 生效仓库的答复多半先从上面那条 effect 到达，arm 在那头已被
+               消费，这里对同一仓库的第二次 settle 自然落空；若该仓库只在多选列表里
+               被读到（比如面板刚切进多选的那一拍），这一口就是唯一的结算机会。 */
+            settleBranchFetch(repo, data)
           }).catch(function (failure) {
             /* 一份 ref 表读不动不该连别的组也不画：记进日志，那一组显示「无法读取
                分支」。 */
@@ -6054,6 +6077,13 @@
             h(RefTree, {
               refs: refs, collapsed: collapsed, selectedKey: effectiveSelection,
               headName: currentName,
+              /* fetch 新分支高亮（10-state.js 的账）：按行所属仓库查名字集，行上据此
+                 挂 dsh-git-branch-new（46-css.js 的一次性淡出）。单仓库的行归属生效
+                 仓库（树那头递上来的 repo 是 ''），多选分组各行归属各自仓库；signal
+                 的订阅在组件顶上（useBranchHighlights），账变这里就会重画。 */
+              newBranchesOf: function (repo) {
+                return branchHighlightNamesOf(repo.length > 0 ? repo : appliedRepo)
+              },
               /* The changes that are not committed yet, shown on the branch they
                  would be committed to. Zero until the working-tree read lands,
                  which is why the badge appears a moment after the tree. */

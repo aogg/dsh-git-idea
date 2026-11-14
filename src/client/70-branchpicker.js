@@ -503,6 +503,18 @@
         started.then(function (outcome) {
           setBusy(false)
           if (outcome == null) {
+            /* 卡片里的 fetch 也是「插件内 fetch 动作」（10-state.js 的账管得到的那类）：
+               成功即钉基线，必须赶在 bumpData 之前 —— bump 推着重读的 refs 答复一到，
+               settleBranchFetch（面板那条 refs 读路的 then 里）就要拿它结算。仓库归属：
+               显式 repo 优先，否则回落会话的生效仓库、再回落工作区默认仓库（92-chip.js
+               的 autoPushRun 同一套口径）；三处都落不到路径就不 arm —— 归属不了的账
+               宁可不立，不错把别的仓库的新分支算到这次 fetch 头上。 */
+            if (method === 'git/fetch') {
+              const applied = sessionRepo(props.sessionId)
+              armBranchFetchBaseline(props.repo != null && props.repo.length > 0
+                ? props.repo
+                : (applied.length > 0 ? applied : chipInfoFor(props.sessionId).repo))
+            }
             bumpData()
             if (opts.fullTree === true) ringTreeReload()
             /* 动作自己的收尾（比如「绑定并拉取」成功后把卡内那张远端分支选择收掉）：

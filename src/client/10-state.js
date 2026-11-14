@@ -879,3 +879,202 @@
     function savePanelSize() {
       saveWorkspaceLayout()
     }
+
+    /* ── fetch 新分支高亮账（50-log.js 分支行上的「闪一下」）──
+
+       链路只有一条：插件内的 fetch 动作成功（80-panel.js 的 runOpApply 与
+       70-branchpicker.js 的 runCardSync 两个成功回调）→ armBranchFetchBaseline 把
+       fetch 前的分支名集合钉下来 → bump 推着 git/refs 重读，答复到达时
+       settleBranchFetch 结算净新增 → 新名字进 branchHighlights → RefTree 的分支行
+       查 branchHighlightNamesOf 挂上 dsh-git-branch-new（46-css.js 的一次性淡出
+       动画）→ 定时清扫到点把集合摘掉，行回归无高亮。
+
+       三条刻意的边界，都对应「别把不是新分支的东西闪出来」：
+         · 基线读不到（该仓库从未读过 refs —— 面板从没打开过、或上次读失败）时
+           arm 记 null，settle 直接丢弃 —— 没有 fetch 前集合就不高亮任何东西；
+         · fetch 前集合为空（刚 init 的空库，第一次 fetch 把全部远端分支创建出来）
+           时 settle 也丢弃 —— 那不是「新增」，是「从无到有」，全量闪一遍是噪音；
+         · 只有 git/fetch 成功才 arm：外部 CLI 改 refs、pull/tag/建分支都不 arm，
+           没有 fetch 动作标记就不把别的变化当成新分支。
+
+       名字口径与分支树现有行完全一致（host 66-refs.js）：本地分支取答复 local 各项
+       的 data（short 名，如 main），远端跟踪分支取 remote 各组 refs 各项的 data
+       （带远端前缀，如 origin/main）—— 树里叶子行显示与右键菜单用的正是这两个
+       data（50-log.js 的 text(node.data)），同名远端跟踪分支与本地分支天然各算
+       一行，不发明第二套口径。current 不收：那是 unborn 推导不是 ref，真实当前
+       分支本来就在 local 里。集合按仓库绝对路径分格，切生效仓库时
+       markBranchHighlightScope 把别的格清掉（切仓库即失效）。
+
+       高亮是内存账，不进 localStorage：它是即时反馈，刷新页面即失正合「非常驻」
+       的本意；集合行数（一次 fetch 的净新增）远够小，也不值得占盘。TTL 与
+       46-css.js 的 dsh-git-branch-new 动画时长同一个数（6s 量级）—— 动画播完停在
+       透明（fill-mode forwards），账摘掉时行上没有任何可察觉的跳变。 */
+    const BRANCH_HIGHLIGHT_TTL_MS = 6000
+
+    /* { [仓库绝对路径]: { names: { 分支名: true }, at: 写入时刻 } }，names 按上文的
+       口径装净新增的分支名；at 供清扫判断，格子合并（连续两次 fetch）时更新。 */
+    let branchHighlights = {}
+    let branchHighlightVersion = 0
+    const branchHighlightSignal = createSignal(function () { return branchHighlightVersion })
+    const useBranchHighlights = branchHighlightSignal.use
+
+    /* 挂起的 fetch 基线：{ [仓库路径]: { before: 名字集 | null, at } }。before 为
+       null = fetch 时手里没有该仓的 refs 答复（上文边界一）。同仓连续两次 fetch
+       时后一次覆盖前一次 —— 前一次的基线与后一次相等（fetch 只增不减 refs，两次
+       arm 之间内存账没变过），覆盖不丢东西。 */
+    const branchFetchArms = {}
+
+    /* 挂着的清扫定时器（拆销函数，hoverTimer 同款存法）与「当前生效仓库」：后者
+       让切仓库的失效只写一处判断（80-panel.js 的 refs effect 每次重跑都调
+       markBranchHighlightScope，同仓重入是常事，不能每次都清一遍账）。 */
+    let branchHighlightTimer = null
+    let branchHighlightScope = ''
+
+    /* 一份 git/refs 答复里的全部分支名（口径见段注释）：答复坏（null / ok!==true）
+       返回 null，调用方据此把基线记成「不可知」。空库（刚 init）返回空对象 ——
+       「读过但一个分支都没有」与「没读过」是两件事，settle 分别按边界一/二处理。 */
+    function refNamesOfRefsReply(data) {
+      if (data == null || data.ok !== true) return null
+      const names = {}
+      const local = Array.isArray(data.local) ? data.local : []
+      for (let i = 0; i < local.length; i += 1) {
+        const name = text(local[i] != null ? local[i].data : '')
+        if (name.length > 0) names[name] = true
+      }
+      const remote = Array.isArray(data.remote) ? data.remote : []
+      for (let i = 0; i < remote.length; i += 1) {
+        const group = remote[i]
+        const refs = group != null && Array.isArray(group.refs) ? group.refs : []
+        for (let k = 0; k < refs.length; k += 1) {
+          const name = text(refs[k] != null ? refs[k].data : '')
+          if (name.length > 0) names[name] = true
+        }
+      }
+      return names
+    }
+
+    /* fetch 动作成功的那一刻调用（必须先于 bump —— bump 推的重读答复一到，
+       settle 就要拿这份基线结算）。基线取 refsTreeStored（63-storedlists.js）里
+       该仓最近一份 ok 答复：它正是「fetch 前最后已知」的那份 —— 面板与盘账同拍
+       更新，fetch 本身不改它。仓库路径为空（面板还没落到任何工作区、卡片归属不
+       了仓库）时不 arm：归属不了的账宁可不立。 */
+    function armBranchFetchBaseline(repo) {
+      const key = text(repo)
+      if (key.length === 0) return
+      branchFetchArms[key] = { before: refNamesOfRefsReply(refsTreeStored.get(key)), at: Date.now() }
+    }
+
+    /* 一份 refs 答复到达时调用（80-panel.js 两条 refs 读路的 then 里，单仓库与
+       多选各一处）。按请求键与答复自报的仓库路径（data.repo，Host 解析后的实际
+       cwd，与请求路径可能有符号链接之类的名字差）找到挂起的 arm，谁在用谁；命中
+       即删（一次 arm 只结算一次，两条读路先后到达同一仓库的答复是常态，第二条
+       到时 arm 已不在，自然无事）。 */
+    function settleBranchFetch(repoKey, data) {
+      const requested = text(repoKey)
+      const answered = data != null ? text(data.repo) : ''
+      const armKey = branchFetchArms[requested] !== undefined ? requested
+        : (branchFetchArms[answered] !== undefined ? answered : null)
+      if (armKey === null) return
+      const arm = branchFetchArms[armKey]
+      delete branchFetchArms[armKey]
+      /* 边界一：fetch 时手里没有基线（从未读过 refs / 上次读失败）—— 不高亮。 */
+      if (arm == null || arm.before === null) return
+      /* 边界二：fetch 前是空库 —— 第一次 fetch 创建出来的全部远端分支不算新增。
+          答复本身坏（ok!==true）时同样什么都不做：arm 已删，下一次 fetch 会重新
+          arm，不为一次读失败留下陈账。 */
+      const before = arm.before
+      let beforeCount = 0
+      const beforeKeys = Object.keys(before)
+      for (let i = 0; i < beforeKeys.length; i += 1) if (before[beforeKeys[i]] === true) beforeCount += 1
+      if (data == null || data.ok !== true || beforeCount === 0) return
+      const after = refNamesOfRefsReply(data)
+      if (after === null) return
+      const afterKeys = Object.keys(after)
+      const fresh = {}
+      let freshCount = 0
+      for (let i = 0; i < afterKeys.length; i += 1) {
+        const name = afterKeys[i]
+        if (after[name] === true && before[name] !== true) { fresh[name] = true; freshCount += 1 }
+      }
+      if (freshCount === 0) return
+      /* 归属双写：请求键（渲染查询用的就是它）与答复键（Host 的 cwd）各落一格，
+         同一份 names 对象，两键相同时只写一次。写入是这条链上唯一改账的口，清扫
+         定时器与重绘通知也只在这里排/发 —— RefTree 的分支行挂上类名靠的是这一次
+         通知，6 秒后摘掉靠的是这一次排的 sweep（TTL 与 46-css.js 的动画时长同一个
+         数：动画播完停在透明，账摘掉时没有任何跳变）。 */
+      putBranchHighlightCell(requested, fresh)
+      if (answered.length > 0 && answered !== requested) putBranchHighlightCell(answered, fresh)
+      branchHighlightVersion += 1
+      branchHighlightSignal.notify()
+      scheduleBranchHighlightSweep(BRANCH_HIGHLIGHT_TTL_MS)
+    }
+
+    /* 落一格高亮：格子已开（上一批还没淡完）就把新名字并进去、at 挪到现在 —— 旧
+       名字的动画此时多半已播完停在透明，推迟摘除没有可察觉的视觉；同名分支只在
+       第一次进集合（对象键语义天然去重），「同名只闪一次」由这一半保证。 */
+    function putBranchHighlightCell(repo, names) {
+      const key = text(repo)
+      if (key.length === 0 || names == null) return
+      const existing = branchHighlights[key]
+      if (existing != null) {
+        Object.assign(existing.names, names)
+        existing.at = Date.now()
+        return
+      }
+      branchHighlights[key] = { names: names, at: Date.now() }
+    }
+
+    /* 渲染查询（50-log.js 的分支行）：该仓库有挂着的高亮就返回名字集，否则 null。
+       调用方（RefTree）拿它判分支行要不要挂 dsh-git-branch-new。 */
+    function branchHighlightNamesOf(repo) {
+      const key = text(repo)
+      if (key.length === 0) return null
+      const cell = branchHighlights[key]
+      return cell != null ? cell.names : null
+    }
+
+    /* 切生效仓库的失效（需求口径「切仓库即失效」）：80-panel.js 的 refs effect 每次重跑
+       都报一声当前的仓库，这里的 lastSeen 判断把「同仓重入」挡在清账之外 —— 只有
+       真的换仓才把别的格清掉。多选视图不算切仓：appliedRepo 没动，别的仓的高亮在
+       自己的 TTL 里走完自己的淡出。 */
+    function markBranchHighlightScope(repo) {
+      const key = text(repo)
+      if (key.length === 0 || key === branchHighlightScope) return
+      branchHighlightScope = key
+      const keys = Object.keys(branchHighlights)
+      let changed = false
+      for (let i = 0; i < keys.length; i += 1) {
+        if (keys[i] !== key) { delete branchHighlights[keys[i]]; changed = true }
+      }
+      if (changed === true) {
+        branchHighlightVersion += 1
+        branchHighlightSignal.notify()
+      }
+    }
+
+    /* 清扫：只摘到龄的格（每格的 at 独立），没到龄的续排最近的一次到点。写入时
+       一律按满 TTL 重排即可 —— sweep 到点自会续，不用写入端算剩余时间。 */
+    function scheduleBranchHighlightSweep(delay) {
+      if (branchHighlightTimer != null) branchHighlightTimer()
+      branchHighlightTimer = timerOf().timeout(sweepBranchHighlights, delay)
+    }
+
+    function sweepBranchHighlights() {
+      branchHighlightTimer = null
+      const now = Date.now()
+      const keys = Object.keys(branchHighlights)
+      let changed = false
+      let next = 0
+      for (let i = 0; i < keys.length; i += 1) {
+        const cell = branchHighlights[keys[i]]
+        if (cell == null) { delete branchHighlights[keys[i]]; changed = true; continue }
+        const age = now - cell.at
+        if (age >= BRANCH_HIGHLIGHT_TTL_MS) { delete branchHighlights[keys[i]]; changed = true }
+        else if (next === 0 || BRANCH_HIGHLIGHT_TTL_MS - age < next) next = BRANCH_HIGHLIGHT_TTL_MS - age
+      }
+      if (changed === true) {
+        branchHighlightVersion += 1
+        branchHighlightSignal.notify()
+      }
+      if (next > 0) scheduleBranchHighlightSweep(next)
+    }

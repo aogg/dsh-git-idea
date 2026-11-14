@@ -342,6 +342,12 @@
          repositories' entries from colliding inside those same maps. */
       const rowsForRefs = function (one, prefix, opts) {
         const keyOf = function (key) { return prefix.length === 0 ? key : prefix + key }
+        /* fetch 新分支高亮（10-state.js 的账）：这一组行所属仓库的净新增名字集。
+           单仓库时 opts.repo 是 ''（渲染端在面板里按生效仓库查），多选分组是各自的
+           绝对路径。HEAD 组的行不参与 —— fetch 不改 HEAD，fetch 前后当前分支不可能是
+           「新长出来的」那一个，集合里查不到它；本地与远程组的叶子行（树里新长出来的
+           那些行）才是要闪的。 */
+        const newSet = typeof props.newBranchesOf === 'function' ? props.newBranchesOf(opts.repo) : null
         /* Branch names are only unique inside one repository: in a grouped tree
            the selection key carries the prefix, in a single tree it stays the
            bare name the rest of the panel has always used. */
@@ -483,7 +489,8 @@
                 className: 'dsh-git-trow'
                   + (onHead ? ' dsh-git-trow-head' : '')
                   + (props.selectedKey === selOf(branchName) ? ' dsh-git-trow-sel' : '')
-                  + (prefix.length === 0 && props.activeRef === branchName ? ' dsh-git-trow-scope' : ''),
+                  + (prefix.length === 0 && props.activeRef === branchName ? ' dsh-git-trow-scope' : '')
+                  + (newSet != null && newSet[branchName] === true ? ' dsh-git-branch-new' : ''),
                 key: node.id,
                 style: { paddingLeft: (6 + node.depth * 12) + 'px' },
                 title: tip.join('\n'),
