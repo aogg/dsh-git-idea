@@ -117,6 +117,29 @@ const check = (label, value) => {
 const wait = (ms) => new Promise((r) => setTimeout(r, ms || 25))
 /* 一条保存事件的处置要过 liveRepoList（首次要起进程读插件配置），给足落地时间。 */
 const settle = (ms) => wait(ms || 80)
+/* 事件处置的落地时间没有上界保证（起真进程读配置，机器一忙 80ms 就不够）——
+   对「会出现的」状态改成有界轮询：等到为止（默认 8s），等不到再让断言去红。
+   条件成立后再补一次 settle，让同批的其余落点（读缓存失效等）也落地。 */
+const isPipeSpawn = (cmd) => cmd.indexOf('printf %s ') >= 0 && cmd.indexOf(' >> ') >= 0
+const realSpawns = (a) => a.spawns.filter((cmd) => isPipeSpawn(cmd) !== true)
+/* 「spawns 不动」类断言的测量窗口要从安静态起算：上一条事件的处置（起进程读插件
+ * 配置）在慢机器上可能还没落地，直接 mark 会把它的尾巴算进窗口。等计数连两次
+ * 采样不变再开始量。 */
+const waitSpawnsQuiet = async (a, ms) => {
+  const deadline = Date.now() + (ms || 8000)
+  let last = -1
+  while (Date.now() < deadline) {
+    await wait(250)
+    const n = realSpawns(a).length
+    if (n === last) return
+    last = n
+  }
+}
+const settleUntil = async (cond, ms) => {
+  const deadline = Date.now() + (ms || 8000)
+  while (cond() !== true && Date.now() < deadline) await wait(50)
+  await settle()
+}
 /* 防抖定时器全是 1500 的 timeout；79-live-watch 的会话 interval 也是 1500，靠 kind 区分。 */
 const saveTimers = (a) => a.timers.filter((t) => t.kind === 'timeout' && t.delay === SAVE_MS)
 const saveAlive = (a) => saveTimers(a).filter((t) => t.dead !== true)
@@ -167,16 +190,17 @@ await settle(150)
   check('不在任何已知仓库：安静返回，不挂防抖、不推送',
     saveTimers(c).length === 0 && hubC.lines.length === 0)
 
-  const first = c.spawns.length
+  const first = realSpawns(c).length
   await c.H('git/panel')({ repo: R })
-  const warmed = c.spawns.length
+  const warmed = realSpawns(c).length
   await c.H('git/panel')({ repo: R })
-  check('对照组：读缓存生效，第二次 git/panel 没再起进程', c.spawns.length === warmed && warmed > first)
+  check('对照组：读缓存生效，第二次 git/panel 没再起进程（记账管道的写盘不算）', realSpawns(c).length === warmed && warmed > first)
 
-  const mark = c.spawns.length
+  await waitSpawnsQuiet(c)
+  const mark = realSpawns(c).length
   c.emit(EVENT, { sessionId: 's1', path: R + '/a.txt', at: 2 }) /* 绝对路径，无 cwd */
-  await settle()
-  check('事件处置本身不起进程（配置已缓存）：spawns 不动', c.spawns.length === mark)
+  await settleUntil(() => saveAlive(c).length === 1)
+  check('事件处置本身不起进程（配置已缓存）：spawns 不动（记账管道的写盘不算）', realSpawns(c).length === mark)
   check('命中已知仓库：立刻挂起一个 1.5s 防抖，此刻还没广播',
     saveAlive(c).length === 1 && hubC.lines.length === 0)
   await c.H('git/panel')({ repo: R })
@@ -193,7 +217,7 @@ console.log('=== 命中会话工作区：相对路径与 cwd 拼接 ===')
 {
   const before = hubC.lines.length
   c.emit(EVENT, { sessionId: 'sc', cwd: R3, path: 'c.txt', at: 3 })
-  await settle()
+  await settleUntil(() => saveAlive(c).length === 1)
   check('相对 path + cwd 拼成绝对路径，命中会话工作区：挂起防抖', saveAlive(c).length === 1)
   fireAll(c)
   check('广播 {kind:"repo-changed", repo:会话工作区}', hubC.lines.length === before + 1
@@ -225,7 +249,7 @@ console.log('=== 尾沿防抖：一波保存只广播一次，定时器对齐最
   c.emit(EVENT, { sessionId: 's1', path: R + '/a.txt', at: 6 })
   c.emit(EVENT, { sessionId: 's1', path: R + '/a.txt', at: 7 })
   c.emit(EVENT, { sessionId: 's1', path: R + '/a.txt', at: 8 })
-  await settle()
+  await settleUntil(() => saveAlive(c).length === 1)
   check('连存三下：仍只挂一个防抖定时器', saveAlive(c).length === 1)
   check('挂着先拆再挂：前两个定时器都被拆掉（对齐最后一次保存）',
     saveTimers(c).filter((t) => t.dead === true).length === deadBefore + 2)
@@ -237,7 +261,7 @@ console.log('=== 尾沿防抖：一波保存只广播一次，定时器对齐最
   const before2 = hubC.lines.length
   c.emit(EVENT, { sessionId: 'sc', cwd: R3, path: 'c.txt', at: 9 })
   c.emit(EVENT, { sessionId: 's1', path: R2 + '/b.txt', at: 9 })
-  await settle()
+  await settleUntil(() => saveAlive(c).length === 2)
   check('不同仓库各挂各的防抖：两个定时器并存', saveAlive(c).length === 2)
   fireAll(c)
   const repos = hubC.lines.slice(before2).map((p) => p.repo).sort()
@@ -269,14 +293,14 @@ console.log('')
 console.log('=== 不属于任何已知仓库：不失效缓存、不广播 ===')
 {
   await c.H('git/panel')({ repo: R })
-  const warm = c.spawns.length
+  const warm = realSpawns(c).length
   await c.H('git/panel')({ repo: R })
-  const mark = c.spawns.length
+  const mark = realSpawns(c).length
   check('前置：读缓存是热的', mark === warm)
   c.emit(EVENT, { sessionId: 's1', cwd: OUTSIDE, path: OUTSIDE + '/f.txt', at: 13 })
   await settle()
   await c.H('git/panel')({ repo: R })
-  check('命不中：R 的读缓存原封不动（没有 invalidateRepo）', c.spawns.length === mark)
+  check('命不中：R 的读缓存原封不动（没有 invalidateRepo）', realSpawns(c).length === mark)
   check('命不中：不挂防抖、不广播', saveAlive(c).length === 0
     && hubC.lines.every((p) => p.repo !== OUTSIDE))
 }
@@ -331,11 +355,11 @@ console.log('=== bridge 形状（无 liveHub）：watch 不启用，事件链照
     b.timers.filter((t) => t.kind === 'interval').length === 0)
   check('file-save 订阅照挂', (b.subs.get(EVENT) || []).length === 1)
   b.emit(EVENT, { sessionId: 's1', path: R + '/a.txt', at: 1 })
-  await settle()
+  await settleUntil(() => saveAlive(b).length === 1)
   check('防抖照挂（订阅与读缓存失效不受 bridge 影响）', saveAlive(b).length === 1)
   let threw = false
   try { fireAll(b) } catch (error) { threw = true }
-  await settle()
+  await settleUntil(() => saveAlive(b).length === 0)
   check('到点的广播一步被 typeof 守卫安静跳过，不抛', threw === false && saveAlive(b).length === 0)
 }
 

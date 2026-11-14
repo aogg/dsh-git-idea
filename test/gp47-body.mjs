@@ -5,13 +5,14 @@
  *      给它们打了 conflict 标）在 scopeRows 里单独分桶成「冲突」组（key @conflict），
  *      排在「默认变更列表」之前；组内按 path 排序 —— git 回答的顺序不作数。没有冲突
  *      时这组整个不出现：组头、指引行、CF 格一样都不留，树和从前一字不差；
- *   2. 冲突组展开时组头之下有一行 dsh-git-dim 指引，文字说点行打开三方合并界面
- *      与「git add 标记已解决」（gp50 起冲突行点击进合并界面，文案跟着换了）；
+ *   2. 冲突组展开时组头之下有一行 dsh-git-dim 指引，文字说点行打开三方合并界面、
+ *      解决后勾选并点组工具条的「标记已解决」（gp50 起冲突行点击进合并界面、勾选add
+ *      起那句「出路」换成按钮，文案跟着换了两次）；
  *   3. fileRow 对冲突行：状态格画完整双码（class dsh-git-st dsh-git-st-CF，title 说
- *      未解决的冲突），勾选框的措辞换成「标记已解决，普通修改行（单字母 M）与
- *      未跟踪行（?）照旧；
- *   4. 组头勾选框：冲突组说「把这一组全部标记已解决（git add）」，默认变更列表组
- *      仍是「把这一组全部暂存」—— 同一个框，两种动作，话不能混；
+ *      未解决的冲突），勾选框是选中语义、话术把「解决」指去组工具条；普通修改行
+ *      （单字母 M）与未跟踪行（?）照旧；
+ *   4. 组头的框是全选/全不选这一组的勾选账（三组一个话术，零 rpc）；冲突组的工具条
+ *      只有「标记已解决」，对象是勾选项 —— 勾一条点它，git/stage 落在那条冲突路径上；
  *   5. 右栏提交区：conflictCount > 0 时出现 dsh-git-hint dsh-git-warn 警告（N 正确），
  *      无冲突时不出现；多选视图里警告只数生效仓库的冲突，别的仓库不进这个数。
  *
@@ -94,15 +95,18 @@ ok('冲突组出现了：key @conflict:title、组头样式 dsh-git-cgroup、lab
 ok('组顺序：冲突 → 默认变更列表 → 新增的文件（置顶，不插在中间）',
   ci < keys.indexOf('@tracked:title') && keys.indexOf('@tracked:title') < keys.indexOf('@new:title'))
 const guide = allRows[ci + 1]
-/* 指引行的文案随 gp50 换过：冲突行的活儿从「编辑文件找标记」变成「点开三方合并
-   界面」，灰字说的是新手势（点行打开界面）+ 老出路（勾选＝git add 标记已解决）。 */
-ok('指引行紧跟冲突组头：key 带 repo（单仓库是 guide:）、dim 行，文字说三方合并界面与「git add 标记已解决」',
+/* 指引行的文案随 gp50 与勾选add 两次改造换过：冲突行的活儿是「点开三方合并界面
+   逐块解决」，解决后勾选（选中）并点组工具条的「标记已解决」按钮 —— 那一下才是
+   git add。 */
+ok('指引行紧跟冲突组头：key 带 repo（单仓库是 guide:）、dim 行，文字说三方合并界面与「标记已解决」（git add）',
   guide !== undefined && guide.key === 'guide:'
   && String(guide.props.className).indexOf('dsh-git-dim') >= 0
   && textOf(guide).indexOf('三方合并界面') >= 0
-  && textOf(guide).indexOf('git add 标记已解决') >= 0)
+  && textOf(guide).indexOf('标记已解决') >= 0 && textOf(guide).indexOf('git add') >= 0)
 const ti = keys.indexOf('@tracked:title')
 const ni = keys.indexOf('@new:title')
+/* 冲突组头之下是灰字指引，再往下是组工具条（「标记已解决」，dsh-git-ctools 不算
+   trow，不进这个清单），文件行从 ci+2 开始。 */
 const segConflict = allRows.slice(ci + 2, ti)
 const segTracked = allRows.slice(ti + 1, ni)
 const segNew = allRows.slice(ni + 1)
@@ -115,7 +119,7 @@ ok('分桶不串组：mod.txt 归默认变更列表，brand-new.txt 归新增的
   && !segmentHas(segConflict, 'mod.txt') && !segmentHas(segConflict, 'brand-new.txt'))
 
 console.log('')
-console.log('== 冲突行的状态格与勾选框：红色双码，措辞换成「标记已解决」 ==')
+console.log('== 冲突行的状态格与勾选框：红色双码，框是选中语义 ==')
 const cfCells = byClass(tree, 'dsh-git-st-CF')
 ok('两条冲突行都画 CF 状态格（别的行一个都没有）', cfCells.length === 2)
 const uuCell = cfCells.find((c) => textOf(c) === 'UU')
@@ -127,26 +131,54 @@ ok('DU 格：同款双码（不是 statusClass 落进去的黄色 M）',
   duCell !== undefined && duCell.props.className === 'dsh-git-st dsh-git-st-CF' && textOf(duCell) === 'DU')
 const rowA = segConflict.find((r) => textOf(r).indexOf('a-conflict.txt') >= 0)
 const boxA = byClass(rowA, 'dsh-git-cbox')[0]
-const markBoxTitle = '标记已解决（git add）'
-ok('冲突行勾选框的措辞是「标记已解决（git add）」，不再是普通的「暂存」',
-  boxA !== undefined && boxA.props.title === markBoxTitle)
+const SEL_OFF = '选中（只是标记，不动索引；用「添加」批量暂存，或直接提交）'
+ok('冲突行勾选框也是选中语义：没勾时空框，话术把「解决」指去组里的按钮',
+  boxA !== undefined && textOf(boxA) === '☐'
+  && boxA.props.title === '选中（组里的「标记已解决」按钮会对勾选项 git add）')
 const mRow = segTracked.find((r) => textOf(r).indexOf('mod.txt') >= 0)
 const mCell = byClass(mRow, 'dsh-git-st')[0]
-ok('普通修改行照旧：单字母 M、class「dsh-git-st dsh-git-st-M」、勾选框还是「暂存」',
+ok('普通修改行照旧：单字母 M、class「dsh-git-st dsh-git-st-M」，框是选中语义（不再写「暂存」）',
   mCell !== undefined && mCell.props.className === 'dsh-git-st dsh-git-st-M' && textOf(mCell) === 'M'
-  && byClass(mRow, 'dsh-git-cbox')[0].props.title === '暂存')
+  && byClass(mRow, 'dsh-git-cbox')[0].props.title === SEL_OFF)
 const nRow = segNew.find((r) => textOf(r).indexOf('brand-new.txt') >= 0)
 const nCell = byClass(nRow, 'dsh-git-st')[0]
 ok('未跟踪行照旧：单字 ?、class「dsh-git-st dsh-git-st-U」',
   nCell !== undefined && nCell.props.className === 'dsh-git-st dsh-git-st-U' && textOf(nCell) === '?')
 
 console.log('')
-console.log('== 组头的框：冲突组说「标记已解决」，默认变更列表组说「暂存」 ==')
-const markGroupTitle = '把这一组全部标记已解决（git add）'
-ok('冲突组头的框：「把这一组全部标记已解决（git add）」',
-  byClass(allRows[ci], 'dsh-git-cbox')[0].props.title === markGroupTitle)
-ok('默认变更列表组头的框：仍是「把这一组全部暂存」',
-  byClass(allRows[ti], 'dsh-git-cbox')[0].props.title === '把这一组全部暂存')
+console.log('== 组头的框：全选/全不选这一组的勾选账（勾=选中，零 rpc） ==')
+const SEL_GROUP = '全选这一组（勾选只是标记，不动索引）'
+ok('冲突组头的框：全选这一组（选中语义，不再是「把这一组全部标记已解决」）',
+  byClass(allRows[ci], 'dsh-git-cbox')[0].props.title === SEL_GROUP)
+ok('默认变更列表组头的框：同一句话（组头不再碰索引，三组一个话术）',
+  byClass(allRows[ti], 'dsh-git-cbox')[0].props.title === SEL_GROUP)
+
+console.log('')
+console.log('== 冲突组的工具条：只有「标记已解决」，对象是勾选项 ==')
+let bars = byClass(tree, 'dsh-git-ctools')
+ok('三个展开的组各一条工具条（冲突 / 默认变更列表 / 新增）', bars.length === 3)
+const conflictBarButtons = bars.length === 3 ? buttons(bars[0]) : []
+ok('冲突组的工具条只有一个按钮，文字就是「标记已解决」',
+  conflictBarButtons.length === 1 && textOf(conflictBarButtons[0]) === '标记已解决')
+ok('一个都没勾时它禁用，计数行说「已勾选 0 项」',
+  conflictBarButtons.length === 1 && conflictBarButtons[0].props.disabled === true
+  && textOf(bars[0]).indexOf('已勾选 0 项') >= 0)
+const mark = calls.length
+boxA.props.onClick({ stopPropagation: function () {} })
+await wait(10)
+tree = await settle()
+bars = byClass(tree, 'dsh-git-ctools')
+ok('勾上一条冲突：点框零 rpc，计数「已勾选 1 项」，按钮可用',
+  calls.length === mark && textOf(bars[0]).indexOf('已勾选 1 项') >= 0
+  && buttons(bars[0])[0].props.disabled !== true)
+ok('组头变半选 ▣（两条里勾了一条）',
+  textOf(byClass(collect(tree).find((r) => String(r.props.key) === '@conflict:title'), 'dsh-git-cbox')[0]) === '▣')
+const stageMark = calls.length
+await clickText(bars[0], '标记已解决')
+tree = await settle()
+const markCalls = calls.slice(stageMark).filter((c) => c.method === 'git/stage')
+ok('点「标记已解决」：git/stage 落在勾选的那条冲突路径上',
+  markCalls.length === 1 && JSON.stringify(markCalls[0].args.paths) === '["a-conflict.txt"]')
 
 console.log('')
 console.log('== 提交区：conflictCount > 0 先警告，N 说得对 ==')

@@ -8,14 +8,14 @@
    3. 行号来自 @@ 的计数，删除行只出现在旧文件一侧
    4. 未跟踪的二进制文件不当作文本显示；只有一次读取
    5. 提交下的文件读的是那次提交（重命名的旧路径一起带上）
-   6. 勾选框在固定的一列；git 折叠掉的未跟踪目录也有行
-   7. 点一下勾选框：立刻画出来，不会被迟到的读抹掉
+   6. 勾选框在固定的一列；git 折叠掉的未跟踪目录也有行；点框=选中（零 rpc）
+   7. 点一下勾选框：只写勾选账本，零 rpc；迟到的整树读翻不掉勾，读照常落地
    8. 树行的手势：单击只选中，双击或点三角才展开
    9. 展开未跟踪目录的那一瞬间：读还没回来时列表是 undefined，不能崩
    10. 两个分组（默认变更列表 / 新增的文件）和两个视图（树 / 扁平）
-   11. 一组一个框；勾上新文件之后它留在那一组里（不跳进变更列表）
-   12. 未跟踪条目的两种形状（字符串 / 对象）
-   13. 勾一下只动那一行：不变暗、不挪窝、不跳组，改动排队
+   11. 一组一个框＝全选/全不选这一组的勾选账（▣=部分勾），零 rpc
+   12. 未跟踪条目的两种形状（字符串 / 对象）—— 经组工具条「添加」的确认读覆盖
+   13. 勾一下只动账本：零 rpc、不变暗、不挪窝；提交跟着勾选走（git/commit 带 paths）
    14. 提交的文件列表里也有目录行，而且和引用树是同一份构造
    17b. 左右对比的行模型：多行块配对、空半、整行 colSpan=2、词级高亮与护栏、回车符开关 */
 
@@ -426,29 +426,44 @@ byClass(changeRow(tree, 'deep'), 'dsh-git-tw')[0].props.onClick({ stopPropagatio
 await wait(10)
 tree = await settle()
 ok('再展开：底下的文件行回来', changeRow(tree, 'b.txt') !== undefined)
+/* 勾选=选中（勾选add 那次改造起）：点框只写勾选账本（80-panel 的 checked），一条
+   rpc 都不发；真把勾选变成索引改动的是组工具条的「添加」、右键菜单与提交按钮的
+   自动 add。这里钉两件事：零 rpc，以及框的字形立刻跟着账本走。目录整勾时，里面
+   已展开的叶子是「被目录盖住」的亮。 */
 const deepBox = byClass(changeRow(tree, 'b.txt'), 'dsh-git-cbox')[0]
 const beforeChildStage = calls.length
 if (deepBox !== undefined) deepBox.props.onClick({ stopPropagation: function () {} })
 await wait(10)
 tree = await settle()
-ok('子行的勾选框暂存的是那个文件本身',
-  calls.some(function (c) { return c.method === 'git/stage' && c.args.paths[0] === 'newdir/deep/b.txt' }))
+ok('子行的勾选框点一下只是选中：一条 rpc 都没发（不再顺手 git add）',
+  calls.length === beforeChildStage)
+ok('子行的框就地亮了（☑），路径记进勾选账本',
+  changeRow(tree, 'b.txt') !== undefined
+  && textOf(byClass(changeRow(tree, 'b.txt'), 'dsh-git-cbox')[0]) === '☑')
 
 const beforeDirStage = calls.length
 const dirAgain = changeRow(tree, 'newdir/')
 const dirBox = dirAgain === undefined ? undefined : byClass(dirAgain, 'dsh-git-cbox')[0]
 if (dirBox !== undefined) dirBox.props.onClick({ stopPropagation: function () {} })
 await wait(10)
-await settle()
-ok('目录那一行的勾选框暂存整个目录（git add -- dir 不需要先列出内容）',
-  calls.some(function (c) { return c.method === 'git/stage' && c.args.paths[0] === 'newdir/' }))
+tree = await settle()
+ok('目录那一行的框点一下同样是零 rpc：整目录的选中记的是目录键（一个 pathspec 就能 add）',
+  calls.length === beforeDirStage)
+ok('目录框亮了（☑），里面已展开的叶子是「被目录盖住」的亮（a.txt 也是 ☑）',
+  changeRow(tree, 'newdir/') !== undefined
+  && textOf(byClass(changeRow(tree, 'newdir/'), 'dsh-git-cbox')[0]) === '☑'
+  && changeRow(tree, 'a.txt') !== undefined
+  && textOf(byClass(changeRow(tree, 'a.txt'), 'dsh-git-cbox')[0]) === '☑')
+ok('组工具条的「已勾选」按组的条目数算（目录条目算一项：已勾选 1 项）',
+  textOf(tree).indexOf('已勾选 1 项') >= 0)
 
-/* ── 7. 点一下勾选框：立刻有反应，而且不会被迟到的读抹掉 ──
+/* ── 7. 点一下勾选框：只写勾选账本，一条 rpc 都不发 ──
 
-   在读者那台机器上量过：`git add` 是 98–236ms，而面板原来要等一次整棵树的
-   `git status` 才把框画出来 —— 那里是 7.4s（冷的时候 13.6s）。点一下等七秒，
-   和点一下没反应是同一件事，所以框现在从点击本身画出来，随后的读只确认它。
-   下面盯的就是这条链的四件事：立刻画、只问这些路径、失败就还原、旧读不许翻盘。 */
+   勾选框曾经直接是暂存开关（乐观补丁 + 按路径确认读 + 排队那一整套都是为它买的）。
+   勾选add 那次改造起，勾=选中：点击只改 80-panel 的勾选账本（按仓库分格、按路径
+   保留），git 一概不惊动。这一节钉四件事：点了立刻亮、零 rpc、「已暂存」计数不动
+   （索引没被碰），以及迟到的整树读既翻不掉账上的勾、也照常把自己带来的新行画上去
+   —— 勾选不再需要「旧读不许翻盘」的机制伺候。 */
 
 console.log('')
 console.log('== 点一下勾选框 ==')
@@ -469,51 +484,21 @@ const clickBox = async function (label) {
   return await settle()
 }
 
-/* 7a. git 还没回话，框就得动 */
+/* 7a. 点框 = 选中：立刻亮，零 rpc */
 const beforeTick = changeRow(tree, 'notes.md')
-ok('点之前 notes.md 是没暂存的空框', glyphOf(beforeTick) === '☐' && stagedLine(tree).indexOf('已暂存 1 ') >= 0)
-let releaseStage = null
-host.call = function (method, args) {
-  if (method === 'git/stage') {
-    calls.push({ method: method, args: args })
-    return new Promise(function (resolve) { releaseStage = resolve })
-  }
-  return savedCall(method, args)
-}
+ok('点之前 notes.md 是没选中的空框（索引里它也没暂存）', glyphOf(beforeTick) === '☐' && stagedLine(tree).indexOf('已暂存 1 ') >= 0)
 const tickCalls = calls.length
 tree = await clickBox('notes.md')
-ok('git 还没回话，框就已经是已暂存（不再等那一次整树读）', glyphOf(changeRow(tree, 'notes.md')) === '☑')
-ok('「已暂存 N」跟着动（还是没等 git）', stagedLine(tree).indexOf('已暂存 2 ') >= 0)
-ok('这一下确实发出去了', calls.length > tickCalls
-  && calls.some(function (c) { return c.method === 'git/stage' && c.args.paths[0] === 'notes.md' }))
+ok('点了立刻亮（☑）：不用等任何 git 回话', glyphOf(changeRow(tree, 'notes.md')) === '☑')
+ok('零 rpc：git/stage 与任何读取都没发（勾选账本是纯前端状态）', calls.length === tickCalls)
+ok('「已暂存 N」不动（索引没被碰，还是 1）', stagedLine(tree).indexOf('已暂存 1 ') >= 0)
+ok('勾选进了默认变更列表那组的账：工具条说「已勾选 1 项」', textOf(tree).indexOf('已勾选 1 项') >= 0)
 
-/* 7b. 确认读只问这些路径 —— 整棵树 7.4s，这些路径 0.5s */
-const targetReads = function () {
-  return calls.filter(function (c) {
-    return c.method === 'git/panel' && c.args.quick !== true && Array.isArray(c.args.paths)
-  })
-}
-if (releaseStage !== null) releaseStage({ ok: true, repo: '/tmp/ws', stdout: '', stderr: '', exitCode: 0 })
-host.call = savedCall
-tree = await settle()
-const confirmAsk = targetReads()[targetReads().length - 1]
-ok('确认读按路径问（不是整棵树）', confirmAsk !== undefined && confirmAsk.args.paths.length === 1
-  && confirmAsk.args.paths[0] === 'notes.md')
-ok('确认读仍带着这个会话', confirmAsk.args.sessionId === 's-1' && confirmAsk.args.repo === undefined)
-
-/* 7c. 一次正在飞的整树读，不许把刚点的框擦回去 */
+/* 7b. 一次正在飞的整树读：勾照样立刻画上，读回来也翻不掉账上的勾 */
 let releaseFull = null
 host.call = function (method, args) {
   if (method === 'git/panel' && args != null && args.quick !== true) {
     calls.push({ method: method, args: args })
-    if (Array.isArray(args.paths)) {
-      /* 这一节里 mock 照刚才那次点击回答，这样确认读真的是「确认」 */
-      return Promise.resolve({
-        ok: true, partial: true, paths: args.paths, repo: '/tmp/ws', branch: 'main', detached: false,
-        upstream: '', ahead: 0, behind: 0, sequencer: null,
-        staged: [{ path: 'notes.md', code: 'M' }], unstaged: [], untracked: [], unmerged: [],
-      })
-    }
     return new Promise(function (resolve) { releaseFull = resolve })
   }
   return savedCall(method, args)
@@ -522,10 +507,11 @@ toolByTitle(tree, '重新读取仓库（忽略缓存）').props.onClick()
 await wait(10)
 tree = await settle()
 ok('刷新键发出的是一次整树读，它还没回来', releaseFull !== null)
-tree = await clickBox('notes.md')
-ok('在读还没回来的时候点：框照样立刻是已暂存', glyphOf(changeRow(tree, 'notes.md')) === '☑')
+tree = await clickBox('tmp.bin')
+ok('整树读没回来时点框：照样立刻亮（勾选不排队、不等读）', glyphOf(changeRow(tree, 'tmp.bin')) === '☑')
 if (releaseFull !== null) {
-  /* 这份回答描述的是点击之前的工作区：它要是画上去，刚点的那一下就没了 */
+  /* 这份回答描述的是点击之前的旧工作区：notes.md 在里面是未暂存的。它照常落地 ——
+     读管树，勾选账按路径活着，两件事不再互相牵制。 */
   releaseFull({
     ok: true, repo: '/tmp/ws', branch: 'main', detached: false, upstream: '', ahead: 0, behind: 0, sequencer: null,
     staged: [], unstaged: [{ path: 'notes.md', code: 'M' }, { path: 'stale.txt', code: 'M' }], untracked: [], unmerged: [],
@@ -533,22 +519,26 @@ if (releaseFull !== null) {
 }
 host.call = savedCall
 tree = await settle()
-ok('迟到的旧读被丢掉，框还在（这就是「点一下又丢失」的那个 bug）', glyphOf(changeRow(tree, 'notes.md')) === '☑')
-ok('旧读里的别的改动也没被画上去', changeRow(tree, 'stale.txt') === undefined)
+ok('迟到的旧读照常落地：它带来的新行画出来（勾选不再要求丢弃整树读）',
+  changeRow(tree, 'stale.txt') !== undefined)
+ok('勾选账按路径活着：notes.md 的勾没有被旧读抹掉（「点一下又丢失」不会再犯）',
+  glyphOf(changeRow(tree, 'notes.md')) === '☑')
+ok('旧读里已经不在的路径自然过滤：tmp.bin 的行没了，也不崩',
+  changeRow(tree, 'tmp.bin') === undefined)
 
-/* 7d. git 拒绝的时候：还原，并且说清楚 */
-const failBefore = host.call
-host.call = function (method, args) {
-  if (method === 'git/stage') {
-    calls.push({ method: method, args: args })
-    return Promise.resolve({ ok: false, repo: '/tmp/ws', stdout: '', stderr: 'fatal: pathspec did not match', exitCode: 1, command: 'git add -- tmp.bin' })
-  }
-  return failBefore(method, args)
-}
-tree = await clickBox('tmp.bin')
-ok('git 拒绝了：框退回原样', glyphOf(changeRow(tree, 'tmp.bin')) === '☐')
-ok('并且把 git 的话显示出来', byClass(tree, 'dsh-git-error').length > 0 && textOf(tree).indexOf('pathspec did not match') >= 0)
-host.call = failBefore
+/* 7c. 再点一下：取消选中，同样零 rpc */
+const untickCalls = calls.length
+tree = await clickBox('notes.md')
+ok('再点一下取消选中：框就地翻空', glyphOf(changeRow(tree, 'notes.md')) === '☐')
+ok('取消选中同样零 rpc', calls.length === untickCalls)
+
+/* 7b 的旧读把它自己那份工作区换上了屏；刷新一次把本套件固定的工作区请回来 ——
+   顺带再钉一遍：tmp.bin 的勾是 7b 里点的，跨一次整树读还在（账本按路径保留）。 */
+toolByTitle(tree, '重新读取仓库（忽略缓存）').props.onClick()
+await wait(10)
+tree = await settle()
+ok('刷新回固定工作区：tmp.bin 的行回来了，7b 点的勾还亮着',
+  glyphOf(changeRow(tree, 'tmp.bin')) === '☑' && changeRow(tree, 'src') !== undefined)
 await settle()
 
 /* ── 8. 树行的手势：单击只选中，双击或点三角才展开 ──
@@ -932,182 +922,53 @@ const stageLineOf = function (t) {
   const line = collect(t).filter(function (n) { return String(textOf(n)).indexOf('已暂存 /') >= 0 || String(textOf(n)).indexOf('已暂存 ') === 0 })[0]
   return line === undefined ? '' : textOf(line)
 }
-ok('变更列表那一组的框是半选（组里有已暂存的、也有没暂存的）',
-  groupBox(tree, '默认变更列表') !== undefined && textOf(groupBox(tree, '默认变更列表')) === '▣')
-ok('未跟踪那一组的框是空的（它们按定义都还没进索引）',
-  groupBox(tree, '新增的文件') !== undefined && textOf(groupBox(tree, '新增的文件')) === '☐')
+/* 组头的框＝全选/全不选这一组的勾选账（勾=选中，见第 6/7 节）：点它零 rpc，组里
+   有勾有不勾画 ▣。真把整组送进索引的是组工具条的「添加」（gp45/gp91 钉）。 */
+ok('两组的框都空着：勾选账本是干净的（框不再反映索引——变更列表组里明明有已暂存的）',
+  groupBox(tree, '默认变更列表') !== undefined && textOf(groupBox(tree, '默认变更列表')) === '☐'
+  && groupBox(tree, '新增的文件') !== undefined && textOf(groupBox(tree, '新增的文件')) === '☐')
 ok('条数把文件和目录分开数（不再把折叠的目录算成 1 个文件）',
   textOf(groupRow(tree, '新增的文件')).indexOf('1 个文件 + 1 个目录') >= 0
   && textOf(groupRow(tree, '默认变更列表')).indexOf('2 个文件') >= 0
   && textOf(groupRow(tree, '新增的文件')).indexOf('个目录') >= 0)
-ok('右边那句数的是框（项），不再是「个文件」',
+ok('右边那句数的是框（项），不再是「个文件」（这句跟勾选账无关，照旧）',
   stageLineOf(tree).indexOf('已暂存 1 / 共 4 项') >= 0)
 
-/* 点一组的框：整组的路径都发给 git，本地这一帧就全勾上（不等 git 回话）。
-
-   mock 照着 Host 的样子回答：按路径的问法只回答被问到的那几条，而且**记住**刚被暂存的
-   东西。这是必须的 —— 面板现在把改动按点击顺序排队（80-panel.js 的 queueMutation：
-   并发的 `git add` 会互相抢 .git/index.lock，在 /tmp 里量过一次，39 个并发 add 有 **29
-   个**直接死在 `Unable to create .git/index.lock: File exists`），所以第二次点击要等
-   第一次被回答才会发出去。mock 要还是扣着不回答，第二次点击就只会排在队里。 */
-const groupIdentity = {
-  ok: true, repo: '/tmp/ws', branch: 'main', detached: false,
-  upstream: 'origin/main', ahead: 0, behind: 0, sequencer: null,
-}
-const groupState = {
-  staged: [{ path: 'src/app.js', code: 'M.' }],
-  unstaged: [{ path: 'src/app.js', code: 'M.' }, { path: 'notes.md', code: 'M.' }],
-  untracked: [{ path: 'tmp.bin', code: '??' }, { path: 'newdir/', code: '??' }],
-}
-const GROUP_TRACKED = { 'src/app.js': true, 'notes.md': true }
-const groupSaved = host.call
-let groupAsk = null
-const groupDrop = function (list, path) {
-  for (let i = list.length - 1; i >= 0; i -= 1) if (list[i].path === path) list.splice(i, 1)
-}
-const groupApply = function (method, paths) {
-  for (let i = 0; i < paths.length; i += 1) {
-    const p = paths[i]
-    groupDrop(groupState.staged, p); groupDrop(groupState.unstaged, p); groupDrop(groupState.untracked, p)
-    if (method === 'git/stage') {
-      /* git 折叠未跟踪目录：暂存 `newdir/` 之后索引里是它里面的文件。已经跟踪过的
-         文件暂存起来是 `M.`（改动的那个字母），只有 HEAD 没有过的路径才是 `A.` ——
-         这个字母就是分组判据本身，mock 写错了整组都会换地方。 */
-      if (p.slice(-1) === '/') groupState.staged.push({ path: p + 'a.txt', code: 'A.' }, { path: p + 'deep/b.txt', code: 'A.' })
-      else groupState.staged.push({ path: p, code: GROUP_TRACKED[p] === true ? 'M.' : 'A.' })
-    } else if (GROUP_TRACKED[p] === true) {
-      groupState.unstaged.push({ path: p, code: '.M' })
-    } else {
-      groupState.untracked.push({ path: p, code: '??' })
-    }
-  }
-  /* 撤出索引之后那个目录又整个是未跟踪的；整树读会把它重新折叠成一条（量过真 git：
-     `git restore --staged -- newdir/a.txt newdir/deep/b.txt` 之后整树读是 `? newdir/`，
-     而按这两个文件的路径去问，回答的是 `? newdir/a.txt` / `? newdir/deep/b.txt`，
-     不折叠）。所以折叠只发生在整树读那次回答里。 */
-}
-const groupCollapsed = function (entries) {
-  const out = []
-  const seen = {}
-  for (let i = 0; i < entries.length; i += 1) {
-    const p = entries[i].path
-    const cut = p.lastIndexOf('/')
-    if (cut < 0) { out.push(entries[i]); continue }
-    const top = p.slice(0, cut + 1)
-    if (seen[top] === true) continue
-    seen[top] = true
-    out.push({ path: top, code: '??' })
-  }
-  return out
-}
-const groupReplyFor = function (paths) {
-  const wanted = function (p) {
-    for (let i = 0; i < paths.length; i += 1) {
-      const one = paths[i]
-      if (p === one) return true
-      if (one.slice(-1) === '/' && p.indexOf(one) === 0) return true
-    }
-    return false
-  }
-  const pick = function (entries) {
-    return entries.filter(function (e) { return wanted(e.path) }).map(function (e) { return { path: e.path, code: e.code } })
-  }
-  return Object.assign({}, groupIdentity, {
-    partial: true, paths: paths,
-    staged: pick(groupState.staged), unstaged: pick(groupState.unstaged),
-    untracked: pick(groupState.untracked), unmerged: [],
-  })
-}
-host.call = function (method, args) {
-  if (method === 'git/panel') {
-    calls.push({ method: method, args: args })
-    if (args != null && args.quick === true) return Promise.resolve(groupIdentity)
-    if (args != null && Array.isArray(args.paths)) return Promise.resolve(groupReplyFor(args.paths))
-    return Promise.resolve(Object.assign({}, groupIdentity, {
-      staged: groupState.staged.slice(), unstaged: groupState.unstaged.slice(),
-      untracked: groupCollapsed(groupState.untracked), unmerged: [],
-    }))
-  }
-  if (method === 'git/stage' || method === 'git/unstage') {
-    calls.push({ method: method, args: args })
-    groupAsk = { method: method, args: args }
-    groupApply(method, args.paths)
-    return Promise.resolve({ ok: true, repo: '/tmp/ws', stdout: '', stderr: '', exitCode: 0 })
-  }
-  return groupSaved(method, args)
-}
-
-/* 半选的那一组：点一次 = 把组里剩下的也暂存，这一帧里它的框变成全选 */
+const groupCallsBefore = calls.length
 press(groupBox(tree, '默认变更列表'), 'onClick', { stopPropagation: function () {} })
 await wait(10)
 tree = await settle()
-ok('半选的组点一下 = 整组暂存（路径正好是这一组两个）',
-  groupAsk != null && groupAsk.method === 'git/stage'
-  && groupAsk.args.paths.slice().sort().join(',') === 'notes.md,src/app.js')
-ok('这一帧里那一组的框变成全选 ☑',
-  groupBox(tree, '默认变更列表') !== undefined && textOf(groupBox(tree, '默认变更列表')) === '☑')
+ok('点变更列表的组头框：整组全选（零 rpc，notes.md 与 src/app.js 都进账）',
+  calls.length === groupCallsBefore
+  && groupBox(tree, '默认变更列表') !== undefined && textOf(groupBox(tree, '默认变更列表')) === '☑'
+  && glyphOf(changeRow(tree, 'notes.md')) === '☑' && glyphOf(changeRow(tree, 'app.js')) === '☑')
 ok('点框不算选中这一行（框自己 stopPropagation）',
   String(groupRow(tree, '默认变更列表').props.className).indexOf('dsh-git-trow-sel') < 0)
 
-/* 全选之后，同一个框是「整组撤出索引」 */
-groupAsk = null
+/* 全选之后，同一个框是「全不选」 */
 press(groupBox(tree, '默认变更列表'), 'onClick', { stopPropagation: function () {} })
 await wait(10)
 tree = await settle()
-ok('全选的组再点一次：整组撤出索引（发的是 unstage，路径还是整组）',
-  groupAsk != null && groupAsk.method === 'git/unstage'
-  && groupAsk.args.paths.slice().sort().join(',') === 'notes.md,src/app.js')
-ok('这一帧里那一组的框回到空 ☐',
-  groupBox(tree, '默认变更列表') !== undefined && textOf(groupBox(tree, '默认变更列表')) === '☐')
+ok('全选的组再点一次：整组全不选（还是零 rpc，账全撤了）',
+  calls.length === groupCallsBefore
+  && groupBox(tree, '默认变更列表') !== undefined && textOf(groupBox(tree, '默认变更列表')) === '☐'
+  && glyphOf(changeRow(tree, 'notes.md')) === '☐')
 
-/* 新增的文件那一组：它是空的框，点一下整组进索引 —— 而这一组的行**留在原地**。
-   （以前它们会跳进变更列表：`untracked` 一个判据说了算，勾上 = 进了索引 = 不再是
-   未跟踪的，于是整组跟着消失，读者刚勾上的东西一下全看不见了。现在判据是「HEAD
-   从来没有过这个路径」：`untracked` 或者索引里的 `A…`，勾上只是框变了。） */
-groupAsk = null
-press(groupBox(tree, '新增的文件'), 'onClick', { stopPropagation: function () {} })
+/* 半选：只勾组里的一个文件，组头画 ▣，另一组不受影响 */
+byClass(changeRow(tree, 'notes.md'), 'dsh-git-cbox')[0].props.onClick({ stopPropagation: function () {} })
 await wait(10)
 tree = await settle()
-ok('点新增那一组的框：整组的两个路径一次发出去',
-  groupAsk != null && groupAsk.method === 'git/stage'
-  && groupAsk.args.paths.slice().sort().join(',') === 'newdir/,tmp.bin')
-ok('本地这一帧就勾上了（tmp.bin 的框已是 ☑）',
+ok('组里一个文件勾着：组头是半选 ▣（▣=部分勾），组里另一行还是空框',
+  groupBox(tree, '默认变更列表') !== undefined && textOf(groupBox(tree, '默认变更列表')) === '▣'
+  && glyphOf(changeRow(tree, 'app.js')) === '☐')
+ok('另一组的框不受牵连（勾选账按组分格）',
+  groupBox(tree, '新增的文件') !== undefined && textOf(groupBox(tree, '新增的文件')) === '☐')
+ok('工具条跟着勾选走：这一组说「已勾选 1 项」，另一组说「已勾选 0 项」',
   (function () {
-    const row = changeRow(tree, 'tmp.bin')
-    return row !== undefined && textOf(byClass(row, 'dsh-git-cbox')[0]) === '☑'
+    const bars = byClass(tree, 'dsh-git-ctools')
+    return bars.length === 2 && textOf(bars[0]).indexOf('已勾选 1 项') >= 0
+      && textOf(bars[1]).indexOf('已勾选 0 项') >= 0
   })())
-ok('这一组还在（没有跳进变更列表）：tmp.bin 留在这一组，那个目录展开成它里面的文件也在',
-  groupRow(tree, '新增的文件') !== undefined
-  && membersOf(tree, '新增的文件').some(function (x) { return x.indexOf('tmp.bin') >= 0 })
-  && membersOf(tree, '新增的文件').some(function (x) { return x.indexOf('a.txt') >= 0 }))
-ok('这一组的框变成全选 ☑（组里的行都进索引了）',
-  groupBox(tree, '新增的文件') !== undefined && textOf(groupBox(tree, '新增的文件')) === '☑')
-ok('变更列表里没有混进新文件（新文件还在自己那一组里）',
-  membersOf(tree, '默认变更列表').every(function (x) {
-    return x.indexOf('tmp.bin') < 0 && x.indexOf('newdir') < 0 && x.indexOf('a.txt') < 0
-  }))
-
-/* 再点一次：整组撤出索引，行还是留在这一组里，只是框回到空的（可以来回切）。
-   组里的条目这时是索引里的三个文件 —— `newdir/` 一旦进了索引就展开成了它里面的文件，
-   所以这次发出去的是那三个路径，不是折叠的那一条。撤出之后 git 又把那个目录折叠回一条。 */
-groupAsk = null
-press(groupBox(tree, '新增的文件'), 'onClick', { stopPropagation: function () {} })
-await wait(10)
-tree = await settle()
-ok('再点一次是整组撤出索引（unstage，路径是组里此刻的三条）',
-  groupAsk != null && groupAsk.method === 'git/unstage'
-  && groupAsk.args.paths.slice().sort().join(',') === 'newdir/a.txt,newdir/deep/b.txt,tmp.bin')
-ok('撤出之后这一组照样在，框回到空的',
-  groupRow(tree, '新增的文件') !== undefined
-  && textOf(groupBox(tree, '新增的文件')) === '☐'
-  && changeRow(tree, 'tmp.bin') !== undefined)
-ok('撤出之后组里的条目回到未跟踪（同一组，框都是空的）',
-  membersOf(tree, '新增的文件').some(function (x) { return x.indexOf('a.txt') >= 0 })
-  && membersOf(tree, '新增的文件').some(function (x) { return x.indexOf('tmp.bin') >= 0 }))
-
-host.call = groupSaved
-await wait(10)
-tree = await settle()
 
 /* ── 12. 未跟踪的条目：字符串形状也要认 ──
 
@@ -1156,7 +1017,16 @@ host.call = function (method, args) {
   return shapeSaved(method, args)
 }
 const shapeDir = changeRow(tree, 'newdir/')
+/* 勾选只把目录记进选中账（零 rpc）；把勾选变成索引改动的是组工具条的「添加」。
+   走它正好把这一节要钉的读路径也踩到：确认读按路径问（mock 只答被问的）。 */
 if (shapeDir !== undefined) byClass(shapeDir, 'dsh-git-cbox')[0].props.onClick({ stopPropagation: function () {} })
+await wait(10)
+tree = await settle()
+const shapeTools = byClass(tree, 'dsh-git-ctools').filter(function (t) { return textOf(t).indexOf('已勾选 1 项') >= 0 })[0]
+const shapeAdd = shapeTools === undefined ? undefined : buttons(shapeTools).filter(function (b) { return textOf(b) === '添加' })[0]
+ok('（前情）勾选目录之后，新增那组工具条的「添加」可用了',
+  shapeAdd !== undefined && shapeAdd.props.disabled !== true)
+if (shapeAdd !== undefined) shapeAdd.props.onClick()
 await wait(30)
 tree = await settle()
 host.call = shapeSaved
@@ -1178,29 +1048,22 @@ ok('按路径的读和「问哪些路径」都走 entryPath（一个读法，两
   && /function pathsOfInterest[\s\S]{0,1600}entryPath\(/.test(panelCss)
   && /function stageLocally[\s\S]{0,1600}entryPath\(/.test(panelCss))
 
-/* ── 13. 勾一下只动那一行 ──
+/* ── 13. 勾一下只动账本：零 rpc、不变暗、不挪窝 ──
 
-   读者看着运行中的面板说「还是有点闪动」。一帧一帧量过之后，闪的是三处，都不是点击
-   本身：
+   勾选还是暂存开关的年代，这一节钉的是乐观补丁那条链（一次 git/stage + 一次按路径
+   的确认读 + busy 全局面板 + 行挪窝/跳组）。勾选add 那次改造之后，勾=选中：点击只写
+   勾选账本（纯前端状态），那套链对点框整个用不上了。老三样 guards 换成新三样：
 
-   1. 整个面板变暗。勾一下会抬起面板级的 `busy`，而 `busy` 是全局的：头部四个工具和
-      提交按钮在它挂着的时候按 40–45% 不透明度渲染，提交按钮的文字还换成「处理中…」
-      （宽度一变，右边整块跟着动）。`git add` 在这台机器上是 98–236ms，所以每勾一下，
-      工具条和提交那一栏都闪一次。
-   2. 那一行自己会跳。`mergeChanges` 的次序来自 git 回答的列表（索引在前、工作区次之、
-      未跟踪最后），于是条目在列表里的位置说明了它来自哪个列表；勾上 = 进索引 = 挪到本组
-      最前面。量到：三个新文件里勾第二个，这一组从 `[tmp.bin, zztail.bin, newdir/]`
-      重画成 `[zztail.bin, tmp.bin, newdir/]`，取消勾选再挪一次。
-   3. 取消勾选时那一行会**跳到另一组再跳回来**。`stageLocally` 的「回到未跟踪」分支比的
-      是整串 `indexCode === 'A'`，而 Host 报的是 porcelain 的两个字母 `A.` / `AM`（同一
-      份代码里 `isNewFile` 走的是首字母）。于是取消勾选被预测成「工作区改了」，行落进
-      默认变更列表，等 `git restore --staged` 和它后面那次读回来才跳回新增的文件。
+   1. 零 rpc：点了不发 git/stage、不发确认读（真把勾选变成索引改动的只有组工具条的
+      「添加」、右键菜单和提交按钮的自动 add）；
+   2. 不变暗：面板级 busy 不为点框抬起 —— 头部工具与提交按钮的透明度、提交按钮的
+      「处理中…」换字，都不该出现；
+   3. 不挪窝：行的次序只由路径决定，勾上/取消勾选都不改行序、不改组。
+   4. 提交跟着勾选走：勾选后点提交，git/commit 直接带着 paths（勾选中尚未暂存的）
+      发出去，不 stageAll、也没有独立的 git/stage；提交成功把这次勾选清账。 */
 
-   这一节把三件事都钉住：行的次序只由路径决定，勾一下不碰面板级的任何东西，取消勾选
-   预测的是「回到未跟踪」。用的 mock 和 Host 一样回答 `partial`（按路径的问法），并且
-   按帧渲染 —— 变暗和跳组都只发生在中途那一两帧里，settle 之后是看不见的。 */
 console.log('')
-console.log('== 勾一下只动那一行 ==')
+console.log('== 勾一下只动账本 ==')
 
 const rowsInGroup = function (t, label) {
   const rws = byClass(t, 'dsh-git-trow')
@@ -1209,8 +1072,8 @@ const rowsInGroup = function (t, label) {
   for (let i = 0; i < rws.length; i += 1) {
     if (String(rws[i].props.className).indexOf('dsh-git-cgroup') >= 0) { cur = textOf(rws[i]); continue }
     if (cur.indexOf(label) >= 0) {
-      /* 名字那一格，不是整行的文字：行里还有框、状态字母（? → A 正是勾选该做的事），
-         次序要比的是「哪个文件在第几个」，那些都不是位置。 */
+      /* 名字那一格，不是整行的文字：行里还有框、状态字母，次序要比的是
+         「哪个文件在第几个」，那些都不是位置。 */
       const cell = byClass(rws[i], 'dsh-git-tname')[0]
       out.push(cell === undefined ? textOf(rws[i]) : textOf(cell))
     }
@@ -1228,7 +1091,7 @@ const sameOrder = function (a, b) {
   return a.length === b.length && a.every(function (x, i) { return x === b[i] })
 }
 
-/* 一个有状态的 mock 仓库：勾了会记得，按路径读只回答被问到的路径。 */
+/* 三个未跟踪条目（zztail 故意排在中间）：行序前提要 ≥3 条才数得出「挪窝」。 */
 const tickState = {
   staged: [{ path: 'src/app.js', code: 'M.' }],
   unstaged: [{ path: 'src/app.js', code: 'M.' }, { path: 'notes.md', code: 'M.' }],
@@ -1238,81 +1101,24 @@ const tickIdentity = {
   ok: true, repo: '/tmp/ws', branch: 'main', detached: false,
   upstream: 'origin/main', ahead: 0, behind: 0, sequencer: null,
 }
-const tickReply = function (paths) {
-  const wanted = function (p) {
-    for (let i = 0; i < paths.length; i += 1) {
-      const one = paths[i]
-      if (p === one) return true
-      if (one.slice(-1) === '/' && p.indexOf(one) === 0) return true
-    }
-    return false
-  }
-  const pick = function (entries) {
-    return entries.filter(function (e) { return wanted(e.path) }).map(function (e) { return { path: e.path, code: e.code } })
-  }
-  return Object.assign({}, tickIdentity, {
-    partial: true, paths: paths,
-    staged: pick(tickState.staged), unstaged: pick(tickState.unstaged),
-    untracked: pick(tickState.untracked), unmerged: [],
-  })
-}
-const tickWhole = function () {
-  return Object.assign({}, tickIdentity, {
-    staged: tickState.staged.slice(), unstaged: tickState.unstaged.slice(),
-    untracked: tickState.untracked.slice(), unmerged: [],
-  })
-}
-const heldStage = []
-const heldTickRead = []
 const tickSaved = host.call
+let commitAsk = null
 host.call = function (method, args) {
   if (method === 'git/panel') {
     calls.push({ method: method, args: args })
     if (args != null && args.quick === true) return Promise.resolve(tickIdentity)
-    if (args != null && Array.isArray(args.paths)) {
-      return new Promise(function (resolve) { heldTickRead.push({ paths: args.paths, resolve: resolve }) })
-    }
-    return Promise.resolve(tickWhole())
+    return Promise.resolve(Object.assign({}, tickIdentity, {
+      staged: tickState.staged.slice(), unstaged: tickState.unstaged.slice(),
+      untracked: tickState.untracked.slice(), unmerged: [],
+    }))
   }
-  if (method === 'git/stage' || method === 'git/unstage') {
-    calls.push({ method: method, args: args })
-    return new Promise(function (resolve) { heldStage.push({ method: method, args: args, resolve: resolve }) })
+  if (method === 'git/commit') {
+    commitAsk = { method: method, args: args }
+    return Promise.resolve({ ok: true, repo: '/tmp/ws', stdout: '', stderr: '', exitCode: 0 })
   }
   return tickSaved(method, args)
 }
-const applyHeldStage = function (entry) {
-  const paths = entry.args.paths
-  for (let i = 0; i < paths.length; i += 1) {
-    const p = paths[i]
-    const drop = function (list) { for (let k = list.length - 1; k >= 0; k -= 1) if (list[k].path === p) list.splice(k, 1) }
-    drop(tickState.staged); drop(tickState.unstaged); drop(tickState.untracked)
-    if (entry.method === 'git/stage') {
-      if (p.slice(-1) === '/') tickState.staged.push({ path: p + 'a.txt', code: 'A.' }, { path: p + 'deep/b.txt', code: 'A.' })
-      else tickState.staged.push({ path: p, code: 'A.' })
-    } else {
-      tickState.untracked.push({ path: p, code: '??' })
-    }
-  }
-}
-const answerStage = function () {
-  const done = heldStage.splice(0)
-  for (let i = 0; i < done.length; i += 1) {
-    applyHeldStage(done[i])
-    done[i].resolve({ ok: true, repo: '/tmp/ws', stdout: '', stderr: '', exitCode: 0 })
-  }
-  return done.length
-}
-const answerTickReads = function () {
-  const pending = heldTickRead.splice(0)
-  for (let i = 0; i < pending.length; i += 1) pending[i].resolve(tickReply(pending[i].paths))
-  return pending.length
-}
 const tickElement = function () { return makeElement(popover, { sessionId: 's-1' }) }
-const targetTickReads = function () {
-  return calls.filter(function (c) {
-    return c.method === 'git/panel' && c.args.quick !== true && Array.isArray(c.args.paths)
-  })
-}
 
 fibers.clear()
 tree = await openPanel()
@@ -1320,98 +1126,89 @@ press(tabBtn(tree, '变更'), 'onClick')
 await wait(10)
 tree = await settle()
 
-ok('前提：两组都按路径排，和索引状态无关（新增那一组是 newdir/ · tmp.bin · zztail.bin）',
+ok('前提：两组都按路径排，和勾选状态无关（新增那一组是 newdir/ · tmp.bin · zztail.bin）',
   sameOrder(rowsInGroup(tree, '新增的文件'), ['newdir/', 'tmp.bin', 'zztail.bin'])
   && sameOrder(rowsInGroup(tree, '默认变更列表'), ['src', 'app.js', 'notes.md']))
 
-const tickOn = async function (label) {
+const tickFrame = async function (label) {
   const row = changeRow(tree, label)
   const box = row === undefined ? undefined : byClass(row, 'dsh-git-cbox')[0]
   if (box === undefined) return null
   calls.length = 0
   box.props.onClick({ stopPropagation: function () {} })
   const frame1 = renderRoot(tickElement(), 'pop')
-  await wait(1)
-  const sent = answerStage()
-  await wait(1)
-  const frame2 = renderRoot(tickElement(), 'pop')
-  const reads = answerTickReads()
   await wait(20)
   tree = await settle()
-  return { sent: sent, reads: reads, frame1: frame1, frame2: frame2, frame3: tree, calls: calls.slice() }
+  return { frame1: frame1, calls: calls.slice() }
 }
 
 /* ── 勾上 ── */
 const orderBefore = rowsInGroup(tree, '新增的文件')
-const on = await tickOn('zztail.bin')
-ok('勾上：一次 git/stage，路径正好是那一条',
-  on !== null && on.sent === 1
-  && on.calls.filter(function (c) { return c.method === 'git/stage' })[0].args.paths.join(',') === 'zztail.bin')
-ok('勾上：随后照旧有一次按路径的确认读（问的就是这一条）',
-  on !== null && on.reads >= 1
-  && on.calls.filter(function (c) { return c.method === 'git/panel' && Array.isArray(c.args.paths) })[0].args.paths.join(',') === 'zztail.bin')
-ok('勾上：三帧里那一行的位置一模一样（行序只由路径决定）',
+const on = await tickFrame('zztail.bin')
+ok('勾上：零 rpc（一条 git/stage、一条确认读都没有）',
+  on !== null && on.calls.length === 0)
+ok('勾上：第一帧框就亮了（不用等任何回话）',
+  on !== null && glyphOf(changeRow(on.frame1, 'zztail.bin')) === '☑')
+ok('勾上：这一帧和落定帧里那一行的位置一模一样（行序只由路径决定）',
   on !== null && sameOrder(rowsInGroup(on.frame1, '新增的文件'), orderBefore)
-  && sameOrder(rowsInGroup(on.frame2, '新增的文件'), orderBefore)
-  && sameOrder(rowsInGroup(on.frame3, '新增的文件'), orderBefore))
-ok('勾上：它还在新增的文件里，只是框变成 ☑',
-  on !== null && glyphOf(changeRow(on.frame1, 'zztail.bin')) === '☑'
-  && rowsInGroup(on.frame3, '新增的文件').indexOf('zztail.bin') >= 0
-  && membersOf(on.frame3, '默认变更列表').every(function (x) { return x.indexOf('zztail.bin') < 0 }))
+  && sameOrder(rowsInGroup(tree, '新增的文件'), orderBefore))
+ok('勾上：它还在新增的文件里（选中不挪组），默认变更列表里没有它',
+  on !== null && rowsInGroup(tree, '新增的文件').indexOf('zztail.bin') >= 0
+  && membersOf(tree, '默认变更列表').every(function (x) { return x.indexOf('zztail.bin') < 0 }))
 ok('勾上：这一刻面板没有变暗 —— 头部没有工具被禁用',
   on !== null && dimmedTools(on.frame1) === 0)
-ok('勾上：提交按钮还是那句话，没有变成「处理中…」',
-  on !== null && primaryText(on.frame1).indexOf('提交') === 0
+ok('勾上：提交按钮换成「提交 勾选1 项」，没有变成「处理中…」',
+  on !== null && primaryText(on.frame1) === '提交 勾选1 项'
   && primaryText(on.frame1).indexOf('处理中') < 0)
 
-/* ── 取消勾选：这一行不许跳进另一组再跳回来 ── */
-const off = await tickOn('zztail.bin')
-ok('取消勾选：一次 git/unstage',
-  off !== null && off.sent === 1
-  && off.calls.filter(function (c) { return c.method === 'git/unstage' })[0].args.paths.join(',') === 'zztail.bin')
-ok('取消勾选：预测的是「回到未跟踪」（A. 也要认，以前只认裸 A）',
+/* ── 取消勾选：不挪窝，也不跳组 ── */
+const off = await tickFrame('zztail.bin')
+ok('取消勾选：同样零 rpc',
+  off !== null && off.calls.length === 0)
+ok('取消勾选：框就地翻空，状态字母还是 ?（留在未跟踪组里）',
   off !== null && glyphOf(changeRow(off.frame1, 'zztail.bin')) === '☐'
   && textOf(byClass(changeRow(off.frame1, 'zztail.bin'), 'dsh-git-st')[0]) === '?'
   && membersOf(off.frame1, '默认变更列表').every(function (x) { return x.indexOf('zztail.bin') < 0 }))
-ok('取消勾选：三帧都不动，它留在原处',
+ok('取消勾选：帧序不动，它留在原处',
   off !== null && sameOrder(rowsInGroup(off.frame1, '新增的文件'), orderBefore)
-  && sameOrder(rowsInGroup(off.frame2, '新增的文件'), orderBefore)
-  && sameOrder(rowsInGroup(off.frame3, '新增的文件'), orderBefore))
-ok('取消勾选：面板同样没有变暗，按钮也没换字',
+  && sameOrder(rowsInGroup(tree, '新增的文件'), orderBefore))
+ok('取消勾选：面板同样没有变暗，按钮没换字',
   off !== null && dimmedTools(off.frame1) === 0 && primaryText(off.frame1).indexOf('处理中') < 0)
 
-/* ── 提交排在勾选后面 ──
-   `busy` 以前是提交按钮的锁（勾选在飞的时候它按不动），撤掉它就得把这把锁换个地方：
-   命令按点击顺序排队，提交排在前面那次勾选后面。 */
-const commitOrder = await (async function () {
+/* ── 提交跟着勾选走：勾选的未暂存路径随 git/commit 的 paths 一起提交 ── */
+const commitFlow = await (async function () {
   const box = byClass(changeRow(tree, 'tmp.bin'), 'dsh-git-cbox')[0]
   calls.length = 0
   box.props.onClick({ stopPropagation: function () {} })
-  await wait(1)
+  await wait(5)
   const textarea = collect(tree).filter(function (n) { return n.type === 'textarea' })[0]
   if (textarea !== undefined) textarea.props.onChange({ target: { value: '把这次勾上提交掉' } })
   await wait(5)
   tree = await settle()
   const button = byClass(tree, 'dsh-git-primary')[0]
-  const enabled = button !== undefined && button.props.disabled !== true
-  if (enabled) button.props.onClick()
-  await wait(5)
-  const beforeAnswer = calls.map(function (c) { return c.method })
-  const sent = answerStage()
+  const label = button === undefined ? '' : textOf(button)
+  const title = button === undefined ? '' : String(button.props.title)
+  if (button !== undefined && button.props.disabled !== true) button.props.onClick()
   await wait(10)
-  answerTickReads()
-  await wait(20)
   tree = await settle()
-  return { enabled: enabled, beforeAnswer: beforeAnswer, sent: sent, after: calls.map(function (c) { return c.method }) }
+  return { label: label, title: title, methods: calls.map(function (c) { return c.method }) }
 })()
-ok('勾选在飞的时候提交按钮是可按的（不再靠禁用闪一下来挡）', commitOrder.enabled)
-ok('但那一次提交还没发出去（排队等前面那次勾选）',
-  commitOrder.beforeAnswer.indexOf('git/commit') < 0)
-ok('勾选一被回答，提交才跟着发出去（顺序不会反）',
-  commitOrder.sent === 1 && commitOrder.after.indexOf('git/commit') > commitOrder.after.indexOf('git/unstage'))
+ok('勾选后提交按钮的话术带着勾选数（提交 勾选1 项），title 说先 add 再提交',
+  commitFlow.label === '提交 勾选1 项' && commitFlow.title.indexOf('git add') >= 0
+  && commitFlow.title.indexOf('再提交') >= 0)
+ok('点提交直接发出 git/commit，paths 就是勾选的那条，不带 stageAll',
+  commitAsk != null && commitAsk.args.message === '把这次勾上提交掉'
+  && JSON.stringify(commitAsk.args.paths) === '["tmp.bin"]'
+  && commitAsk.args.stageAll === undefined)
+ok('没有独立的 git/stage（add 在 commit 里捎带，不发第二条 rpc）',
+  commitFlow.methods.indexOf('git/stage') < 0)
+ok('提交成功把这次勾选清账：框回到空，按钮话术回到索引现状',
+  glyphOf(changeRow(tree, 'tmp.bin')) === '☐'
+  && textOf(tree).indexOf('已勾选 0 项') >= 0
+  && primaryText(tree).indexOf('提交 勾选') < 0 && primaryText(tree).indexOf('提交') === 0)
 
-/* 同一个判据只能有一处：「这个路径是新增吗」。分组规则（isNewFile）和取消勾选的预测
-   （stageLocally）必须问同一个问题，不然两种字母形状又会各认各的。 */
+/* 同一个判据只能有一处：「这个路径是新增吗」。分组规则（isNewFile）和暂存乐观补丁的
+   预测（stageLocally）必须问同一个问题，不然两种字母形状又会各认各的。 */
 ok('「是不是新增」只有一个读法（isNewFile 和 stageLocally 都走 addedInIndex）',
   /function addedInIndex[\s\S]{0,200}slice\(0, 1\) === 'A'/.test(panelCss)
   && /function isNewFile[\s\S]{0,400}addedInIndex\(/.test(panelCss)
@@ -1784,39 +1581,28 @@ sideService = null
 
 /* ═══ 17. 差异头部的勾选框：变更列表那一只，跟到差异视图里来 ═══
    变更树的每一行都有勾选框，单击行打开差异之后它就看不见了 —— 而读补丁的时候
-   恰恰要顺手决定「这个文件进不进这次提交」。头部画的是列表那一只：stageBox 同一
-   份构造，class/字形/悬停话术一字不差；语义也是列表的语义 —— 勾上 = 这条路径的
-   改动在索引里（文件暂存之后又改过也照勾），点一下走 onStage（80-panel.js 接成
-   setStaged）。提交那一路（kind === 'commit'）没有暂存这回事，框不画；宿主没接
-   onStage 时也不画。 */
+   恰恰要顺手决定「这个文件算不算下次批量操作的目标」。头部画的是列表那一只：
+   stageBox 同一份构造，class/字形/点击手势一字不差；语义也是列表的语义 —— 勾=选中
+   （纯前端账本，点框零 rpc），账本住在面板层（80-panel 的 checked），开差异时
+   ChangesPane 整个卸载它也不丢。提交那一路（kind === 'commit'）读的是某一次提交
+   的补丁，勾选对它无从谈起，框不画；宿主没接 onToggleCheck 时也不画。 */
 
 console.log('')
 console.log('== 差异头部的勾选框 ==')
 
-/* 上一节结束时 src/app.js 的差异还开着（staged + 再次修改的那一行）。先钉住
-   「框反映的是现在的状态」：这一路的 status 由本节自己的面板答复说话，git/stage、
-   git/unstage 之后的确认读答的也是点击后的真值 —— 框才不会亮了又灭。 */
+/* 上一节结束时 src/app.js 的差异还开着。头部框读的是勾选账本，不是索引 —— 本节
+   自己的面板答复里 src/app.js 明明是已暂存的，框也照空画。 */
 const boxSaved = host.call
-let appStaged = true
-const boxPanel = function () {
-  return {
-    ok: true, repo: '/tmp/ws', branch: 'main', detached: false, upstream: '', ahead: 0, behind: 0,
-    sequencer: null,
-    staged: appStaged === true ? [{ path: 'src/app.js', code: 'M' }] : [],
-    unstaged: [{ path: 'src/app.js', code: 'M' }, { path: 'notes.md', code: 'M' }],
-    untracked: [], unmerged: [],
-  }
-}
-const boxStageCalls = []
 host.call = function (method, args) {
   if (method === 'git/panel') {
     calls.push({ method: method, args: args })
-    return Promise.resolve(boxPanel())
-  }
-  if (method === 'git/stage' || method === 'git/unstage') {
-    boxStageCalls.push({ method: method, args: args })
-    appStaged = method === 'git/stage'
-    return Promise.resolve({ ok: true, repo: '/tmp/ws', stdout: '', stderr: '', exitCode: 0 })
+    return Promise.resolve({
+      ok: true, repo: '/tmp/ws', branch: 'main', detached: false, upstream: '', ahead: 0, behind: 0,
+      sequencer: null,
+      staged: [{ path: 'src/app.js', code: 'M' }],
+      unstaged: [{ path: 'src/app.js', code: 'M' }, { path: 'notes.md', code: 'M' }],
+      untracked: [], unmerged: [],
+    })
   }
   return boxSaved(method, args)
 }
@@ -1825,59 +1611,55 @@ tree = await settle()
 const headBoxes = function (t) { return byClass(t, 'dsh-git-cbox') }
 let boxNow = headBoxes(tree)[0]
 ok('差异头部有勾选框，就是列表那一只（同一个 dsh-git-cbox）', boxNow !== undefined)
-ok('已暂存 + 再次修改的文件，框是勾着的（列表的勾选语义原样：勾只看改动在不在索引里）',
-  boxNow !== undefined && String(boxNow.props.className).indexOf('dsh-git-cbox-on') >= 0
-  && textOf(boxNow) === '☑')
-ok('悬停话术与列表同款（勾着说的是「取消暂存」）', boxNow !== undefined && boxNow.props.title === '取消暂存')
+ok('框读的是勾选账，不是索引：app.js 明明已暂存，没勾过就是空框',
+  boxNow !== undefined && String(boxNow.props.className).indexOf('dsh-git-cbox-on') < 0
+  && textOf(boxNow) === '☐')
+ok('悬停话术是选中语义（勾=选中，真暂存在「添加」和提交里）',
+  boxNow !== undefined && boxNow.props.title === '选中（只是标记，不动索引；用「添加」批量暂存，或直接提交）')
 const diffHeadNow = byClass(tree, 'dsh-git-diffhead')[0]
 const headKidTexts = diffHeadNow === undefined ? [] : diffHeadNow.props.children.map(function (c) { return textOf(c) })
 ok('框排在路径之前 —— 和列表行同一个读法：先框，再状态，再名字',
-  headKidTexts.indexOf('☑') >= 0 && headKidTexts.indexOf('☑') < headKidTexts.indexOf('src/app.js'))
+  headKidTexts.indexOf('☐') >= 0 && headKidTexts.indexOf('☐') < headKidTexts.indexOf('src/app.js'))
 
-/* 点一下：走 setStaged 同一条通道（git/unstage），框就地翻空 —— 不用退回去再进。 */
-const boxCallsBefore = boxStageCalls.length
+/* 点一下：只写勾选账本，零 rpc，框就地亮。 */
+const headCallsBefore = calls.length
 boxNow.props.onClick({ stopPropagation: function () {} })
 await wait(10)
 tree = await settle()
 boxNow = headBoxes(tree)[0]
-ok('点勾着的框发的是 git/unstage、路径就是这一个文件',
-  boxStageCalls.length === boxCallsBefore + 1
-  && boxStageCalls[boxStageCalls.length - 1].method === 'git/unstage'
-  && boxStageCalls[boxStageCalls.length - 1].args.paths.length === 1
-  && boxStageCalls[boxStageCalls.length - 1].args.paths[0] === 'src/app.js')
-ok('框就地翻空（点开那一刻的旧快照不许把它按回勾着的样子）',
-  boxNow !== undefined && String(boxNow.props.className).indexOf('dsh-git-cbox-on') < 0
-  && textOf(boxNow) === '☐' && boxNow.props.title === '暂存')
+ok('点头部框：零 rpc（不发 git/stage、也不发读取）', calls.length === headCallsBefore)
+ok('框就地亮了（☑），话术换成「取消选中」',
+  boxNow !== undefined && String(boxNow.props.className).indexOf('dsh-git-cbox-on') >= 0
+  && textOf(boxNow) === '☑' && boxNow.props.title === '取消选中')
 
-/* 空框点回去：git/stage。 */
-boxNow.props.onClick({ stopPropagation: function () {} })
-await wait(10)
-tree = await settle()
-boxNow = headBoxes(tree)[0]
-ok('再点一下翻回勾着（发 git/stage）',
-  boxStageCalls[boxStageCalls.length - 1].method === 'git/stage'
-  && boxNow !== undefined && textOf(boxNow) === '☑')
-
-/* 没暂存过的文件：框一开始就是空的。 */
+/* 账本在面板层：开差异把 ChangesPane 整个卸载，勾选也不丢 —— 退回列表，行框还亮着。 */
 toolByTitle(tree, '返回文件列表').props.onClick()
 await wait(10)
 tree = await settle()
-const notesRow = changeRow(tree, 'notes.md')
-notesRow.props.onClick()
+ok('回到列表：src/app.js 那一行的框还是勾着（头部与列表是同一本账）',
+  glyphOf(changeRow(tree, 'app.js')) === '☑')
+changeRow(tree, 'app.js').props.onClick()
 await wait(10)
 tree = await settle()
 boxNow = headBoxes(tree)[0]
-ok('未暂存的文件，差异头部的框一开始就是空的',
-  boxNow !== undefined && String(boxNow.props.className).indexOf('dsh-git-cbox-on') < 0
-  && textOf(boxNow) === '☐' && boxNow.props.title === '暂存')
+ok('重开差异：框还是勾着（列表里勾过、到这里还认账）',
+  boxNow !== undefined && textOf(boxNow) === '☑')
 
-/* 提交那一路：读的是某一次提交的补丁，「暂存」对它无从谈起 —— 暂存的框不画。
+/* 再点一下取消选中，退回列表行框跟着翻空。 */
+boxNow.props.onClick({ stopPropagation: function () {} })
+await wait(10)
+tree = await settle()
+toolByTitle(tree, '返回文件列表').props.onClick()
+await wait(10)
+tree = await settle()
+ok('差异里取消选中：列表那一行的框也翻空（写回的是同一本账）',
+  glyphOf(changeRow(tree, 'app.js')) === '☐')
+
+/* 提交那一路：读的是某一次提交的补丁，「勾选」对它无从谈起 —— 选中那只框不画。
    头部现在恒有「回车符」开关，那只框也是 dsh-git-cbox（包在 dsh-git-diffcr 里），
-   所以识别口径按真实意图改成「头部不许有暂存那只框，只许有回车符那只」：按 key
-   （crbox / stagebox）与悬停话术认框，而不是数 dsh-git-cbox 的个数。 */
-toolByTitle(tree, '返回文件列表').props.onClick()
-await wait(10)
-tree = await settle()
+   所以识别口径按真实意图改成「头部不许有选中那只框，只许有回车符那只」：按 key
+   （crbox / stagebox）与悬停话术认框，而不是数 dsh-git-cbox 的个数。
+   （上一段结束时已经在列表上：取消选中那一步是退回列表确认的。） */
 press(buttons(tree).find(function (b) { return textOf(b).indexOf('历史') >= 0 }), 'onClick')
 await wait(10)
 tree = await settle()
@@ -1912,9 +1694,9 @@ const diffBoxSource = sourceText.slice(diffBoxFrom, sourceText.indexOf('dsh-git-
 ok('勾选框只有一份构造（stageBox 定义一次），列表与差异头部都是调用点',
   (sourceText.match(/const stageBox = function/g) || []).length === 1
   && boxSource.length > 0 && diffBoxSource.indexOf('stageBox(') >= 0)
-ok('两道守卫都在：kind 不是 file 不画、宿主没接 onStage 不画',
+ok('两道守卫都在：kind 不是 file 不画、宿主没接 onToggleCheck 不画',
   diffBoxSource.indexOf("target.kind !== 'file'") >= 0
-  && diffBoxSource.indexOf("typeof props.onStage !== 'function'") >= 0)
+  && diffBoxSource.indexOf("typeof props.onToggleCheck !== 'function'") >= 0)
 
 host.call = boxSaved
 tree = await settle()

@@ -43,6 +43,12 @@ function sh(cmd, cwd) {
   })
 }
 
+/* 记录器逮的是 shell 层的每一条命令，宿主的两条攒批写盘管道（读耗时日志的
+   rpclogFlush 与命令页的 cmdrecAppendLines，各自的定时器到点就发）也走这一层 ——
+   那是记账的管道，不是被测的 git 调用。两条管道的形状都是「printf %s '...'
+   >> 文件」，真正的 git/watch/panel 脚本里没有这个组合，按它滤掉。 */
+const isGitRun = (cmd) => (cmd.indexOf('printf %s ') >= 0 && cmd.indexOf(' >> ') >= 0) !== true
+
 const R = '/tmp/gp34-repo'
 const O = '/tmp/gp34-origin'
 const F = '/tmp/gp34-fork'
@@ -567,14 +573,15 @@ const realRunIdent = shellService.run
 shellService.run = (spec) => { identCommitCommands.push(spec.command); return realRunIdent(spec) }
 const nidCommitReply = await H('git/commit')({ repo: NID, message: 'first' })
 shellService.run = realRunIdent
-console.log('  被拒的提交起的进程:', identCommitCommands.map((c) => (c.indexOf('GIT_AUTHOR_IDENT') >= 0 ? 'git var' : 'git ' + c.split('\n')[1].slice(4, 30))))
+const identGitRuns = identCommitCommands.filter(isGitRun)
+console.log('  被拒的提交起的进程:', identGitRuns.map((c) => (c.indexOf('GIT_AUTHOR_IDENT') >= 0 ? 'git var' : 'git ' + c.split('\n')[1].slice(4, 30))))
 console.log('  被拒的提交:', JSON.stringify({ ok: nidCommitReply.ok, exitCode: nidCommitReply.exitCode, needsIdentity: nidCommitReply.needsIdentity, stderr: nidCommitReply.stderr.trim().split('\n').slice(-1)[0] }))
 check('提交失败时答复里明说是身份的问题（不让读者自己去猜那八行）',
   nidCommitReply.ok !== true && nidCommitReply.exitCode !== 0 && nidCommitReply.needsIdentity === true)
-check('判据只在那一次失败之后才问（成功路径一次都不多花）',
-  identCommitCommands.length === 2
-  && identCommitCommands[0].indexOf('GIT_AUTHOR_IDENT') < 0
-  && identCommitCommands[1].indexOf('GIT_AUTHOR_IDENT') >= 0)
+check('判据只在那一次失败之后才问（成功路径一次都不多花；日志冲刷的管道命令不算）',
+  identGitRuns.length === 2
+  && identGitRuns[0].indexOf('GIT_AUTHOR_IDENT') < 0
+  && identGitRuns[1].indexOf('GIT_AUTHOR_IDENT') >= 0)
 
 /* 负对照三条：这一个是同一类误诊的三张脸 —— 判据写松成「提交失败了」、写松成
    「这个仓库读过一次没有身份」，都会在这里先红。 */
@@ -621,13 +628,13 @@ shellService.run = (spec) => { panelCommands.push(spec.command); return realRunI
 const fullReply = await H('git/panel')({ repo: R })
 shellService.run = realRunIdent
 check('廉价读里没有这一行（身份只影响提交区，chip 不为它多起进程）',
-  quickCommands.length === 1 && quickCommands[0].indexOf('GIT_AUTHOR_IDENT') < 0
+  quickCommands.filter(isGitRun).length === 1 && quickCommands.filter(isGitRun)[0].indexOf('GIT_AUTHOR_IDENT') < 0
   && quickReply.ok === true && fullReply.ok === true)
-check('整树读里那一条只在 $gd 的守卫里面（不在仓库里就不问）',
-  panelCommands.length === 1
-  && panelCommands[0].indexOf('GIT_AUTHOR_IDENT') >= 0
-  && panelCommands[0].indexOf('if [ -n "$gd" ]; then') < panelCommands[0].indexOf('GIT_AUTHOR_IDENT')
-  && /\n\s*LC_ALL=C git -C [^\n]*GIT_AUTHOR_IDENT[^\n]*\n\s*fi\n/.test(panelCommands[0]))
+check('整树读里那一条只在 $gd 的守卫里面（不在仓库里就不问；日志冲刷的管道命令不算）',
+  panelCommands.filter(isGitRun).length === 1
+  && panelCommands.filter(isGitRun)[0].indexOf('GIT_AUTHOR_IDENT') >= 0
+  && panelCommands.filter(isGitRun)[0].indexOf('if [ -n "$gd" ]; then') < panelCommands.filter(isGitRun)[0].indexOf('GIT_AUTHOR_IDENT')
+  && /\n\s*LC_ALL=C git -C [^\n]*GIT_AUTHOR_IDENT[^\n]*\n\s*fi\n/.test(panelCommands.filter(isGitRun)[0]))
 check('那一条在源码里也只有一处（判据不许有第二份写法）',
   (body.match(/GIT_AUTHOR_IDENT >\/dev\/null 2>&1 \|\| printf/g) || []).length === 1)
 
@@ -684,10 +691,13 @@ await H('git/diff')({ repo: LOCK, mode: 'staged', path: 'f' })
 await H('git/diff')({ repo: LOCK, mode: 'untracked', path: 'untr.txt' })
 await H('git/diff')({ repo: LOCK, mode: 'commit', path: 'f', ref: lockHead })
 shellService.run = realRun
+/* 同上：攒批的日志冲刷命令也走 shell 层，撞上这四条之间就把计数顶到 5 —— 滤掉
+   管道命令，只数真正的 git 调用（四种模式恰好四条）。 */
+const diffGitRuns = diffCommands.filter(isGitRun)
 console.log('  四种模式的命令:')
-for (const cmd of diffCommands) console.log('    ' + cmd)
-check('四种模式的命令里都带着 --no-optional-locks，而且在子命令前面',
-  diffCommands.length === 4 && diffCommands.every(function (cmd) {
+for (const cmd of diffGitRuns) console.log('    ' + cmd)
+check('四种模式的命令里都带着 --no-optional-locks，而且在子命令前面（日志冲刷的管道命令不算）',
+  diffGitRuns.length === 4 && diffGitRuns.every(function (cmd) {
     const at = cmd.indexOf("'--no-optional-locks'")
     return at >= 0 && at < cmd.search(/'diff'|'show'/)
   }))
@@ -722,11 +732,12 @@ shellService.run = realRunForPaths
 console.log('  只问 f 的那次:', JSON.stringify({ partial: targeted.partial, paths: targeted.paths, branch: targeted.branch }))
 console.log('  它说 f 的状态:', targeted.staged.map((e) => e.code + ' ' + e.path).join(',') || '(不在索引里)',
   '| 未跟踪:', JSON.stringify(targeted.untracked))
-console.log('  命令:', pathCommands[pathCommands.length - 1])
+const pathGitRuns = pathCommands.filter(isGitRun)
+console.log('  命令:', pathGitRuns[pathGitRuns.length - 1])
 check('按路径的读自报 partial，并且把问的路径原样带回来',
   targeted.ok === true && targeted.partial === true && targeted.paths.length === 1 && targeted.paths[0] === 'f')
-check('命令里确实带着 pathspec（在 -- 之后）',
-  pathCommands.length >= 1 && /status --porcelain=v2 --branch --untracked-files=normal -- 'f'/.test(pathCommands[pathCommands.length - 1]))
+check('命令里确实带着 pathspec（在 -- 之后；日志冲刷的管道命令不算）',
+  pathGitRuns.length >= 1 && /status --porcelain=v2 --branch --untracked-files=normal -- 'f'/.test(pathGitRuns[pathGitRuns.length - 1]))
 check('答案只说这些路径（整树读里有的 untr.txt 不在这里）',
   targeted.untracked.length === 0 && targeted.staged.length === 1 && targeted.staged[0].path === 'f')
 check('分支、领先落后照旧作答（路径不影响身份那半边）',
@@ -756,8 +767,9 @@ const watchFew = await H('git/watch')({ repo: LOCK, deep: true, paths: ['f'] })
 const watchAll = await H('git/watch')({ repo: LOCK, deep: true })
 shellService.run = realRunForWatch
 console.log('  只问 f 的签名行数:', watchFew.sig.trim().split('\n').length, ' 整棵树:', watchAll.sig.trim().split('\n').length)
-check('轮询的深读也带着 pathspec', /status --porcelain=v2 --branch --untracked-files=normal -- 'f'/.test(watchCommands[0])
-  && watchCommands[1].indexOf('status --porcelain=v2 --branch --untracked-files=normal -- ') < 0)
+const watchGitRuns = watchCommands.filter(isGitRun)
+check('轮询的深读也带着 pathspec（日志冲刷的管道命令不算）', /status --porcelain=v2 --branch --untracked-files=normal -- 'f'/.test(watchGitRuns[0])
+  && watchGitRuns[1].indexOf('status --porcelain=v2 --branch --untracked-files=normal -- ') < 0)
 check('按路径的签名只说这些路径（untr.txt 不在里面），整棵树的签名说全部',
   watchFew.sig.indexOf('untr.txt') < 0 && watchAll.sig.indexOf('untr.txt') >= 0)
 check('同一个问题同一个签名（不然每个 tick 都像变了）',

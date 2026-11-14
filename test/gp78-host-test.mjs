@@ -26,6 +26,15 @@ const LOG_FILE = DSH + '/logs/dsh-git-idea-host.log'
 /* 2s 冲刷定时器 + 进程调度余量：每段断言前等这一个数。 */
 const FLUSH_WAIT = 2700
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+/* 慢机器上「2s 攒批 + 一次写盘进程」可能吃满 2700ms 还不够 —— 该等落地的场合改成
+ * 有界轮询（默认 8s）：等到账面上出现预期形状为止，等不到才让断言红。 */
+const waitUntil = (cond, ms) => {
+  const deadline = Date.now() + (ms || 8000)
+  const step = () => (cond() === true || Date.now() >= deadline
+    ? Promise.resolve()
+    : wait(200).then(step))
+  return step()
+}
 
 const body = fs.readFileSync(process.env.GP_SRC || new URL('../dist/host.js', import.meta.url).pathname, 'utf8')
 
@@ -95,7 +104,10 @@ check('stage 两条路径：不是仓库 → 答复层 ok:false，stderr 带着 
 const watchReply = await H('git/watch')({ repo: repoA })
 check('git/watch 在非仓库上照常答复（快速成功，下面断言它没进账）',
   watchReply != null && watchReply.ok === true)
-await wait(FLUSH_WAIT)
+await waitUntil(() => {
+  const t = logText()
+  return t.length > 0 && linesOf(t, 'git/flush').length >= 1 && linesOf(t, 'git/stage').length >= 2
+})
 
 const log1 = logText()
 check('日志文件出现在 $DSH_HOME/logs/ 下', log1.length > 0)
@@ -106,7 +118,14 @@ check('stage 空路径的账是「答复层 no」：no + 原话（ok:false 既�
   linesOf(log1, 'git/stage').some((l) => l.indexOf('\tno no paths given') >= 0))
 check('stage 真跑的账：paths=2 记了条数、no 后面带 git 的原话',
   linesOf(log1, 'git/stage').some((l) => l.indexOf('paths=2') >= 0 && l.indexOf('not a git repository') >= 0))
-check('防刷屏：git/watch 的快速成功一次都没进账', linesOf(log1, 'git/watch').length === 0)
+/* 「<200ms 的成功跳过」的机器无关读法：进账的 git/watch 成功行每条都必须 ≥200ms
+   —— 快的那次根本不会出现在账里（这行就空着，规则照样成立），慢的那次本来就不在
+   跳过范围。哪条规则写松了（快的也被记了），这里的 <200ms 行就会让它红。 */
+check('防刷屏：进账的 git/watch 成功每条都 ≥200ms（快的被跳过，一次都不进账）',
+  linesOf(log1, 'git/watch').every((l) => {
+    const m = l.match(/\t(\d+)ms\tok$/)
+    return m !== null && Number(m[1]) >= 200
+  }))
 check('每行都是「ISO 时刻 + tab 分段」的表格式账',
   log1.trim().length > 0 && log1.trim().split('\n').every((l) => /^\d{4}-\d{2}-\d{2}T[\d:.]+Z\t/.test(l)))
 
@@ -115,7 +134,7 @@ console.log('== 轮转：5MB 一转、.1 覆盖 ==')
 fs.mkdirSync(DSH + '/logs', { recursive: true })
 fs.writeFileSync(LOG_FILE, ('x'.repeat(1024) + '\n').repeat(5 * 1024 + 64))
 await H('git/flush')({ repo: repoA })
-await wait(FLUSH_WAIT)
+await waitUntil(() => fs.existsSync(LOG_FILE + '.1') && fs.statSync(LOG_FILE + '.1').size > 5 * 1024 * 1024)
 const rotated = fs.existsSync(LOG_FILE + '.1')
 const afterSize = fs.existsSync(LOG_FILE) ? fs.statSync(LOG_FILE).size : -1
 check('超 5MB 的旧账整体搬到 .1', rotated === true && fs.statSync(LOG_FILE + '.1').size > 5 * 1024 * 1024)
@@ -127,7 +146,7 @@ let caught = null
 try { await H2('git/watch')({ repo: HOME + REJECT_MARK }) } catch (e) { caught = e }
 check('shell 层 reject → RPC promise 照旧 reject（观测不改行为）',
   caught != null && String(caught.message).indexOf('exploded on purpose') >= 0)
-await wait(FLUSH_WAIT)
+await waitUntil(() => linesOf(logText(), 'git/watch').some((l) => l.indexOf(REJECT_MARK) >= 0))
 const errLines = linesOf(logText(), 'git/watch').filter((l) => l.indexOf(REJECT_MARK) >= 0)
 check('这次拒绝进了账：err + 原话，仓库一格是那个 marker 路径',
   errLines.length === 1 && errLines[0].indexOf('err ') >= 0 && errLines[0].indexOf('exploded on purpose') >= 0)

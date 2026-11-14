@@ -83,6 +83,12 @@ new Function('ctx', 'harness', 'console', 'btoa', 'atob', 'TextEncoder', 'TextDe
   { send: (payload) => { try { pushes.push(JSON.parse(payload)) } catch (e) { pushes.push({ raw: payload }) } } }).apply(ctx76)
 const H = (n) => handlers.get(n)
 const ask = (extra) => H('git/command-log')(Object.assign({ sessionId: 'sX', sessionCwd: WS, limit: 500 }, extra))
+/* 增量刷新挂在 1.5s 的 tick 上：睡一个 1500ms 在慢机器上等不到「tick 触发 + 重扫 +
+ * 推送」整套落地。改成有界轮询：反复热读/看推送，直到预期形状出现（默认 8s）。 */
+const waitUntil = async (cond, ms) => {
+  const deadline = Date.now() + (ms || 8000)
+  while (cond() !== true && Date.now() < deadline) await wait(200)
+}
 
 const guards = []
 const check = (label, value) => {
@@ -146,7 +152,7 @@ writeSession('s1', [
 const hot2 = await ask()
 check('答复还是账里的旧账（3 行，没有 c4）—— 刷新在后台',
   hot2.ok === true && hot2.commands.length === 3 && hot2.commands.every((r) => r.command !== 'git add -A'))
-await wait(1500)
+await waitUntil(() => pushes.some((p) => p.kind === 'cmdlog-refresh'))
 const refreshPushes = pushes.filter((p) => p.kind === 'cmdlog-refresh')
 check('后台刷完推送一次 cmdlog-refresh：workspace 对号，c4 带着耗时 600 进来',
   refreshPushes.length === 1 && refreshPushes[0].workspace === WS
@@ -161,14 +167,14 @@ console.log('== 4｜新会话目录进来 / 消失：账本跟着长与摘 ==')
 writeSession('s2', [callRec('c5', 4000, 'git fetch --all')])
 const hot4 = await ask()
 check('答复还是 4 行（s2 还没进账）', hot4.ok === true && hot4.commands.length === 4)
-await wait(1500)
+await waitUntil(async () => { const r = await ask(); return r.ok === true && r.commands.length === 5 })
 const hot5 = await ask()
 check('增量刷新把新文件收进账：5 行，s2 的行 sessionId 是 s2',
   hot5.ok === true && hot5.commands.length === 5
   && slim(hot5.commands).some((r) => r.command === 'git fetch --all' && r.sessionId === 's2'))
 fs.rmSync(SLUG_DIR + '/s2', { recursive: true, force: true })
 await ask()
-await wait(1500)
+await waitUntil(async () => { const r = await ask(); return r.ok === true && r.commands.length === 4 })
 const hot6 = await ask()
 check('消失的文件从账本摘除：回到 4 行，c5 不还魂',
   hot6.ok === true && hot6.commands.length === 4 && hot6.commands.every((r) => r.command !== 'git fetch --all'))
