@@ -2599,6 +2599,19 @@
          on the click that opens one, never for the whole tree up front. */
       const [untrackedOpen, setUntrackedOpen] = React.useState({})
       const [untrackedFiles, setUntrackedFiles] = React.useState({})
+      /* ── 变更树的勾选 = 选中（纯前端状态，不发任何 git 命令）──
+
+         勾选框不再表示「在不在索引里」—— 它只标记「批量操作的目标」：勾上的行是
+         「添加」按钮与提交按钮要动的对象，取消勾选只是取消标记。真正的暂存只发生在
+         四个显式入口：各组工具条的「添加」、右键菜单「暂存」、「全部暂存」、以及
+         提交按钮对勾选中尚未暂存路径的自动 add（git/commit 的 input.paths）。
+
+         账本按路径记（与 collapsed / untrackedOpen 同一套前缀规矩：生效仓库的键不带
+         前缀，多仓库分组的键带 仓库+\u001f 前缀），git status 刷新后按路径保留 ——
+         条目从树里消失的路径渲染时自然过滤，路径回来勾选还在。放面板这一层而不是
+         ChangesPane 里，有两个硬理由：开差异时 ChangesPane 整个卸载（body 二选一），
+         state 跟着蒸发；差异头部的勾选框（55-diff.js）要读写同一份账。 */
+      const [checked, setChecked] = React.useState({})
       /* ── the working tree, read by pathspec ──
 
          `git status` stats every tracked file and walks every untracked
@@ -4759,6 +4772,48 @@
         })
       }
 
+      /* ── 勾选账本的两支笔 ──
+
+         setCheckedAt：整段路径一批置/清（目录行、组头一次勾的就是一组叶子）。与
+         collapsed 同一条前缀规矩：repo 为空 = 生效仓库（单仓库视图），键不带前缀；
+         多仓库分组的回调带仓库全路径，键带前缀 —— 两个仓库里同名文件各勾各的。
+
+         clearCheckedFor：提交成功后清掉生效仓库的勾选。这次提交里，勾选的路径要么
+         本来就在索引里、要么刚被 git/commit 的 paths add 进去 —— 全都随提交离开了
+         变更树；账本里留着它们，下次同名路径再改动时会凭空带着一个旧勾。生效仓库的
+         键有两种形状（单仓库的无前缀键、多仓库分组的仓库前缀键），两种都清；别的
+         仓库的分组勾选原样留着 —— 它们的提交没有发生。 */
+      const setCheckedAt = function (repo, paths, on) {
+        const at = text(repo)
+        const prefix = at.length > 0 ? at + '\u001f' : ''
+        setChecked(function (previous) {
+          const next = Object.assign({}, previous)
+          for (let i = 0; i < paths.length; i += 1) {
+            const path = text(paths[i])
+            if (path.length === 0) continue
+            const key = prefix + path
+            if (on === true) next[key] = true
+            else delete next[key]
+          }
+          return next
+        })
+      }
+      const clearCheckedFor = function () {
+        const groupPrefix = appliedRepo.length > 0 ? appliedRepo + '\u001f' : ''
+        setChecked(function (previous) {
+          const next = {}
+          for (const key in previous) {
+            if (!Object.prototype.hasOwnProperty.call(previous, key)) continue
+            /* 无 \u001f 的键只可能来自单仓库视图的生效仓库（\u001f 是控制字符，
+               不会出现在路径里 —— 与 collapsed 的键位约定同一条底线）。 */
+            if (key.indexOf('\u001f') < 0) continue
+            if (groupPrefix.length > 0 && key.indexOf(groupPrefix) === 0) continue
+            next[key] = previous[key]
+          }
+          return next
+        })
+      }
+
       /* The mutation's own answer. Asked about the paths that changed, it costs a
          fraction of a whole-tree read, so the tick the reader just made is
          confirmed while they are still looking at it — and if another click has
@@ -4850,16 +4905,17 @@
         })
       }
 
-      /* ── 默认变更列表的三件套：还原 / 暂存（54-changes.js 的工具条）──
+      /* ── 组工具条的四件套：添加 / 还原 / 暂存（54-changes.js 的工具条）──
 
-         「添加」那一件就是 git add，走上面那个 setStaged —— 勾选==已暂存，所以它幂等，
-         不需要自己的处理器。这两件不同：restore 把路径从索引和工作区一起抹回 HEAD，
-         stash 把它们收进 stash 栈，答案都是「那几个路径现在干净了」，善后因此照
-         setStaged 的样子：只问那几条路径的确认读（confirmStaged，0.2s 那条路），列表里
-         那几行立刻消失，不为它们排一次全树读。
+         「添加」那一件就是 git add，走上面那个 setStaged —— add 本来就幂等，不需要
+         自己的处理器（勾选已经是纯选中了，能走到按钮手的只有显式点击）。这几件不同：
+         restore 把路径从索引和工作区一起抹回 HEAD，stash 把它们收进 stash 栈，答案都
+         是「那几个路径现在干净了」，善后因此照 setStaged 的样子：只问那几条路径的
+         确认读（confirmStaged，0.2s 那条路），列表里那几行立刻消失，不为它们排一次
+         全树读。
 
-         与 tick 不同，这两个要动面板的 busy：它们各只有一次点击、没有乐观补丁可打
-         （git 说了算），点下去到读回来之间，按钮自己得看得见在忙 —— tick 那条
+         与点框（纯选中，零 rpc）不同，这些按钮要动面板的 busy：它们各只有一次点击、
+         没有乐观补丁可打（git 说了算），点下去到读回来之间，按钮自己得看得见在忙 ——
          「不许让面板闪」的规矩（见 queueMutation 的注释）买的是连点，这里没有连点。 */
       const pickedPaths = function (files) {
         const paths = []
@@ -4938,11 +4994,19 @@
         setStaged(changes, stagedCount === 0)
       }
 
-      const commit = function () {
+      /* checkedPaths：变更页提交栏传来的勾选未暂存路径（生效仓库那一份）。非空时
+         请求带 paths —— Host 在 commit 之前先 `git add -- 这些路径`，勾选即随
+         这次提交走；不传 stageAll。为空时行为与从前一字不差：索引里有东西就裸提
+         交，索引是空的（一件都没勾也没暂存过）才 stageAll 兜底。 */
+      const commit = function (checkedPaths) {
         setBusy(true)
         const request = base(appliedRepo)
         request.message = message.trim()
-        if (stagedCount === 0) request.stageAll = true
+        const picked = Array.isArray(checkedPaths)
+          ? checkedPaths.filter(function (path) { return typeof path === 'string' && path.length > 0 })
+          : []
+        if (picked.length > 0) request.paths = picked
+        else if (stagedCount === 0) request.stageAll = true
         /* 提交用的就是屏上这一条：不等防抖，先把它按生效仓库存进 Host，草稿与
            这次提交才不会各说各话（同值在 Host 那边不写盘，多这一次往返都没有）。 */
         flushDraftSave(effectiveRepo, message)
@@ -4959,6 +5023,9 @@
                或紧接着再提一次）恰恰要沿用同一条信息。它已经随 flush 存进 Host
                按这个仓库记着 —— 真想要空框，clearable 的 × 一下，那也是一条被
                记下来的「空」。 */
+            /* 勾选账本跟着这次提交清账（理由见 clearCheckedFor）：失败不清 ——
+               重试还得靠原来那批勾。 */
+            clearCheckedFor()
             panelBox.needFull = false
             bump()
           }, function (failure) {
@@ -5692,17 +5759,17 @@
         }
         /* ── 打开的差异跟着这一行现在的样子走 ──
 
-           diffTarget 记的是点开那一刻那一行的快照；可头部那只勾选框（55-diff.js 的
-           stageToggle）和「暂存」按钮要回答的是「此刻这条路径的改动在不在索引里」，
-           而勾一下、乐观补丁与确认读先后改掉 status 里的这一行 —— 拿点开时的旧
-           快照画，框就勾了不亮、亮了不灭。这里不写 state（渲染途中不许 set）：
+           diffTarget 记的是点开那一刻那一行的快照；可头部的「暂存」按钮（和补丁的
+           分节，diffRequests 吃 target.staged）要回答的是「此刻这条路径的改动在不在
+           索引里」，而暂存按钮、乐观补丁与确认读先后改掉 status 里的这一行 —— 拿
+           点开时的旧快照画，按钮就说了不算。这里不写 state（渲染途中不许 set）：
            从同一份变更读数里把这一行现在的样子合出一枚新 target 交给 DiffView，
-           补丁的分节（diffRequests 吃 target.staged）因此也跟着对；diffTarget
-           本身原样留着 —— 右列导航、返回键要的还是「当初点开的那一行」。
-           多选分组里点开的文件属于它自己的仓库，找这一行得去那一仓的读数
-           （railChanges）里找，生效仓库的 changes 里没有它。找不到（未跟踪目录
-           展开后点开的文件、文件已被提交或还原掉）就照旧用旧快照 —— 和今天
-           一字不差。 */
+           补丁的分节因此也跟着对（头部那只勾选框已经改管选中账了，见下面 checked
+           那一格 —— 它不读这份快照）；diffTarget 本身原样留着 —— 右列导航、返回键
+           要的还是「当初点开的那一行」。多选分组里点开的文件属于它自己的仓库，找
+           这一行得去那一仓的读数（railChanges）里找，生效仓库的 changes 里没有它。
+           找不到（未跟踪目录展开后点开的文件、文件已被提交或还原掉）就照旧用旧
+           快照 —— 和今天一字不差。 */
         let diffTargetNow = diffTarget
         if (diffTarget.kind === 'file') {
           const source = diffRepo !== appliedRepo ? railChanges : changes
@@ -5778,6 +5845,20 @@
           onStage: diffTarget.kind === 'file'
             ? function (staged) { setStaged([{ path: diffTarget.path }], staged, diffRepo) }
             : undefined,
+          /* 头部勾选框的选中账（勾选=选中，见 checked 的注释）：只服务变更页点开的
+             worktree 文件 diff（kind === 'file' 只有这一条路）。键按勾选账本自己的
+             前缀规矩拼 —— 这里的仓库取 diffTarget 原带的那个（单仓库=空串、多仓库
+             =分组仓库），不是 diffRepo 落到生效仓库后的那份，两套名字在这里对齐。 */
+          checked: diffTarget.kind === 'file'
+            ? checked[(text(diffTarget.repo).length > 0 ? text(diffTarget.repo) + '\u001f' : '') + text(diffTarget.path)] === true
+            : undefined,
+          onToggleCheck: diffTarget.kind === 'file'
+            ? function () {
+                const at = text(diffTarget.repo)
+                const key = (at.length > 0 ? at + '\u001f' : '') + text(diffTarget.path)
+                setCheckedAt(at, [text(diffTarget.path)], checked[key] !== true)
+              }
+            : undefined,
         })
       } else if (tab === 'changes') {
         body = h(ChangesPane, {
@@ -5790,6 +5871,11 @@
           onSelect: function (key) { setSelectedKey(key) },
           onSetStaged: setStaged,
           onSetStagedAll: setStagedAll,
+          /* 勾选账本（勾选=选中）：整本按前缀规矩传下去，scope 自己剥出本仓库那一片
+             （makeScope 的 localView）；写回统一走 onSetCheckedAt —— 单仓库 scope
+             传空仓库（键不带前缀），多仓库分组带各自的仓库全路径。 */
+          checked: checked,
+          onSetCheckedAt: setCheckedAt,
           /* 提交信息的变化都从 changeMessage 走（含 clearable 的清空）：上屏之外
              还要排一次防抖的草稿保存 —— 见上面草稿那一块。 */
           onMessage: changeMessage,

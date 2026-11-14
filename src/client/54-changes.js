@@ -11,15 +11,15 @@
 
        ── which group a new file belongs to ──
 
-       Not `untracked` alone. Ticking a box runs `git add`, and the entry comes
-       back as `A.` — a path in the index that HEAD has never seen. Grouping by
-       `untracked` alone therefore made a ticked file leave this group for the
-       changelist, and ticking the group's own box emptied it: the reader pressed
-       one checkbox and lost sight of everything they had just ticked (reported
-       from the running panel: 「全选未跟踪文件列表，会导致这个未跟踪文件列表消失
+       Not `untracked` alone. Staging a new file (`git add`, via the 添加 button,
+       a context menu or the commit's own auto-add) turns the entry into `A.` —
+       a path in the index that HEAD has never seen. Grouping by `untracked`
+       alone therefore made a freshly staged file leave this group for the
+       changelist, and staging the group's own contents emptied it: the reader
+       pressed one button and lost sight of everything they had just added
+       (reported from the running panel: 「全选未跟踪文件列表，会导致这个未跟踪文件列表消失
        合并到默认列表中」). A file that has been *added but not committed* is still
-       a new file, so it stays here, its box just moves. Un-ticking it puts it back
-       in the working tree as untracked, in the same row.
+       a new file, so it stays here.
 
        So the test is "HEAD has never had this path", in two shapes: git has not
        seen it at all (`untracked`), or it is in the index as an addition
@@ -27,15 +27,22 @@
        `AM` for added-then-edited, so only the first letter is the test). A rename
        is `R…` and is not a new file; nor is anything already committed. Staging an
        unversioned *directory* still expands it into the files it holds, and those
-       files stay in this group too — each with its own ticked box.
+       files stay in this group too.
+
+       The test reads the index and nothing else: the boxes are not part of it.
+       A tick is a *selection* — a purely local mark saying "this row belongs to
+       the next batch operation" — and never runs git by itself (see stageBox
+       below); which group a row sits in stays a fact about the index, so ticking
+       can never move a row between groups.
 
        ── 冲突那组 ──
 
        合并、拣选、stash pop 留下的 unmerged 路径（porcelain v2 的 `u` 行，双码
        UU/AA/DU…）不进 staged/unstaged，mergeChanges 给它们打了 `conflict` 标。
-       分桶先看这个标再看新增：冲突行的框语义和别组不同 —— 勾＝`git add` 标记
-       **已解决**，不是普通的「进索引」—— 混进别的组，读者就会在错误的理解下勾框。
-       没有冲突时这组整个不出现，树和从前一字不差。
+       分桶先看这个标再看新增：这一组的活是「解决」，组里那条工具条的「标记已
+       解决」按钮做的 git add 在冲突路径上的含义是「我解决完了」，不是普通的
+       「进索引」—— 混进别的组，读者就会在错误的理解下动手。没有冲突时这组整个
+       不出现，树和从前一字不差。
 
        ── two views ──
 
@@ -51,8 +58,9 @@
 
     function isNewFile(entry) {
       if (entry.untracked === true) return true
-      /* The addition test lives in one place (40-format.js): the untick
-         prediction asks the same question about the same letters. */
+      /* The addition test lives in one place (40-format.js). 勾选已经不管这件事
+         （勾=选中，见 stageBox），这条判定只读索引事实 —— 一个 add 过还没提交的
+         文件留在这一组，与勾不勾无关。 */
       return entry.staged === true && addedInIndex(entry.indexCode)
     }
 
@@ -62,7 +70,9 @@
        只能有一份构造：class（dsh-git-cbox，勾上再挂 dsh-git-cbox-on，部分勾选挂
        dsh-git-cbox-part）、字形（☑ / ▣ / ☐）、悬停话术与「点了不惊动行」的
        stopPropagation 都住在这里。谁再抄一份回去，两处框迟早长得不一样 —— 就像
-       treeDirRow 当年被抄成两份一样。 */
+       treeDirRow 当年被抄成两份一样。state 讲的是「这只框此刻的样子」，由调用方
+       定：变更树的框一律传选中态（勾=选中，见下面的 SEL_TITLE），差异头部同样；
+       回车符那只传的是它自己的开关态。 */
 
     /* 挂在模块层而不是 ChangesPane 里的原因只有一个：55-diff.js 在本片段之后拼接、
        共享同一个作用域，差异头部的勾选框要用的正是这一份（段落的拼接顺序见
@@ -77,6 +87,43 @@
           onClick()
         },
       }, state === 'all' ? '☑' : (state === 'some' ? '▣' : '☐'))
+    }
+
+    /* ── 勾选 = 选中（本文件所有框的共同语义）──
+
+       勾选框曾经直接就是暂存开关：勾一下发一条 `git add`，框的样子跟着索引走。
+       那份耦合付了两笔账：想「只标记几个文件待会儿一起处理」的读者被迫真的改索引；
+       连点几只框就是连发几条 git 命令，面板跟着闪。现在框只标记「批量操作的目标」，
+       是纯前端状态（账本住在 80-panel.js 的 checked，按仓库分格、按路径保留），
+       点框不发任何 git 命令。真正动索引的只剩四个显式入口：各组工具条的「添加」、
+       右键菜单「暂存」、「全部暂存」、提交按钮对勾选中尚未暂存路径的自动 add
+       （git/commit 的 input.paths）。
+
+       话术与三态读法各只有一份，全文件共用。 */
+    const SEL_TITLE_ON = '取消选中'
+    const SEL_TITLE_OFF = '选中（只是标记，不动索引；用「添加」批量暂存，或直接提交）'
+    /* 目录行的悬停话术：一只框管一片，说清楚范围。 */
+    const selDirTitle = function (all, count) {
+      return all
+        ? '取消选中该目录下的全部 ' + String(count) + ' 项'
+        : '选中该目录下的全部 ' + String(count) + ' 项（勾选只是标记，不动索引）'
+    }
+    /* 一组叶子路径的选中三态：组头、目录行共用这一眼。 */
+    const selStateOf = function (scope, leaves) {
+      let hit = 0
+      for (let i = 0; i < leaves.length; i += 1) if (scope.checked[leaves[i]] === true) hit += 1
+      if (leaves.length === 0 || hit === 0) return 'none'
+      return hit === leaves.length ? 'all' : 'some'
+    }
+    /* 「整个目录」勾着的时候，里面任何一片的反勾都不能只删一个键 —— 目录路径
+       盖住一切，删一片账上等于没删。摊开：目录路径从账本撤下，drop 里点名的
+       那些叶子以外的叶子逐条记进账。「部分选中」从此落在叶子上，而不是藏在
+       一个盖住一切的目录路径里。siblings 是展开时读回来的叶子全路径清单。 */
+    const materializeDir = function (scope, dirPath, siblings, drop) {
+      const keep = []
+      for (let i = 0; i < siblings.length; i += 1) if (drop[siblings[i]] !== true) keep.push(siblings[i])
+      scope.onSetChecked([dirPath], false)
+      scope.onSetChecked(keep, true)
     }
 
     /* ── 窄屏判定：量容器自己，不量视口 ──
@@ -251,10 +298,20 @@
         const fileCtx = typeof props.onFileContextAt === 'function'
           ? function (target, event) { props.onFileContextAt(text(repo), target, event) }
           : null
+        /* 勾选账本的写回（勾=选中，见 SEL_TITLE 那段）：单仓库落空仓库（80-panel
+           的键不带前缀），多仓库带组自己的仓库全路径 —— 勾 repo-b 的文件记进
+           repo-b 的账。宿主没接（旧宿主/测试替身）时整个转发为 null，点框的
+           调用方先看一眼再动，与 onOpenDiff 的 typeof 守卫同一条路。 */
+        const setChecked = typeof props.onSetCheckedAt === 'function'
+          ? function (paths, on) { props.onSetCheckedAt(repo, paths, on) }
+          : null
+        /* 账本按仓库剥出本仓库那一片（localView 同款）：单仓库就是整本。 */
+        const checkedView = props.checked == null ? {} : props.checked
         if (repo == null || repo.length === 0) {
           return {
             repo: '', prefix: '', work: one,
             selectedKey: props.selectedKey, collapsed: props.collapsed,
+            checked: checkedView, onSetChecked: setChecked,
             onSelect: props.onSelect, onToggle: props.onToggle,
             onSetStaged: props.onSetStaged, onOpenDiff: props.onOpenDiff,
             onOpenConflict: props.onOpenConflict,
@@ -281,6 +338,7 @@
           repo: repo, prefix: prefix, work: one,
           selectedKey: localViewOne(props.selectedKey, prefix),
           collapsed: localView(props.collapsed),
+          checked: localView(checkedView), onSetChecked: setChecked,
           onSelect: function (key) { props.onSelect(prefix + key) },
           onToggle: function (path) { props.onToggle(prefix + path) },
           /* 勾选与差异都落回**文件自己的**仓库：多选视图里勾 repo-b 的文件得真的
@@ -321,21 +379,25 @@
 
          未解决的冲突（打了 conflict 标的 unmerged 路径）不走 statusClass 的单字母：
          `UU` 在那里落进黄色 M 桶，和一次普通修改长得一样，读者看不出有活要干。
-         这里改画红色加粗的完整双码（git 的 X/Y：UU/AA/DU…），勾选框的措辞也换成
-         「标记已解决」—— `git add` 在冲突路径上的含义是「我解决完了」，不是普通
-         的「进索引」，所以框的悬停话不能照抄。
+         这里改画红色加粗的完整双码（git 的 X/Y：UU/AA/DU…）。
 
-         冲突行的点击也不进 diff（59-merge.js 的三方合并界面）：普通 diff 只有
+         框是选中语义（见 SEL_TITLE 那段）：勾/取消只改勾选账本，不发任何 git 命令。
+         冲突行的框也没了「勾=标记已解决」的旧语义 —— 那一步现在是组工具条里的
+         「标记已解决」按钮（addTools），框的悬停话术把它指过去。
+
+         冲突行的点击不进 diff（59-merge.js 的三方合并界面）：普通 diff 只有
          「现在长什么样」，冲突要的是「两边各改了什么、我留哪边」。分流点就在这
          一步——typeof 守卫与 onOpenDiff 同款，宿主没有新回调时不至于把点行点坏。 */
       const fileRow = function (scope, entry, key, depth, flat, label) {
         const conflict = entry.conflict === true
+        const path = text(entry.path)
+        const ticked = scope.checked[path] === true
         return h('div', {
           className: rowClass(scope, key),
           key: key,
           title: conflict === true
-            ? text(entry.path) + '（未解决的合并冲突：点击打开三方合并界面逐块解决；解决后勾选＝git add 标记已解决）'
-            : text(entry.path) + '（点开看差异）',
+            ? path + '（未解决的合并冲突：点击打开三方合并界面逐块解决；解决后勾选并点组里的「标记已解决」）'
+            : path + '（点开看差异）',
           onClick: function () {
             scope.onSelect(key)
             if (conflict === true && typeof scope.onOpenConflict === 'function') {
@@ -344,14 +406,20 @@
             }
             if (typeof scope.onOpenDiff === 'function') scope.onOpenDiff(entry)
           },
-          onContextMenu: rowCtx(scope, text(entry.path), {
+          onContextMenu: rowCtx(scope, path, {
             untracked: entry.untracked === true, staged: entry.staged === true,
             conflict: conflict, from: '', raw: entry,
           }),
         },
-          stageBox('box', entry.staged === true ? 'all' : 'none',
-            entry.staged === true ? '取消暂存' : (conflict === true ? '标记已解决（git add）' : '暂存'),
-            function () { scope.onSetStaged([entry], entry.staged !== true) }),
+          stageBox('box', ticked ? 'all' : 'none',
+            ticked ? SEL_TITLE_ON
+              : (conflict === true
+                ? '选中（组里的「标记已解决」按钮会对勾选项 git add）'
+                : SEL_TITLE_OFF),
+            function () {
+              if (scope.onSetChecked == null) return
+              scope.onSetChecked([path], !ticked)
+            }),
           indentPad(depth),
           h('span', { className: 'dsh-git-tw' }),
           conflict === true
@@ -364,8 +432,14 @@
 
          扁平与树两个视图共用这一份构造：框、? 状态字母、名字。差别只在键、缩进
          与标签 —— 树视图名字是光秃秃的文件名（路径层级住在上面自己的目录行里），
-         扁平视图一个文件一行，整段相对路径压暗缀在名字右边。 */
-      const insideRow = function (scope, inside, childKey, childDepth, label) {
+         扁平视图一个文件一行，整段相对路径压暗缀在名字右边。
+
+         outerDir / siblings：外层那条目录行的路径（带斜杠的账本键）与展开读回来的
+         叶子清单。目录整勾着时，这一行的框也亮 —— 是被目录盖住的亮；反勾它要走
+         materializeDir 把目录选区摊开成叶子，而不是删一个不存在的键。 */
+      const insideRow = function (scope, inside, childKey, childDepth, label, outerDir, siblings) {
+        const covered = outerDir != null && scope.checked[outerDir] === true
+        const ticked = scope.checked[inside] === true || covered
         return h('div', {
           className: rowClass(scope, childKey),
           key: childKey,
@@ -379,21 +453,39 @@
             raw: { path: inside, workCode: '??', untracked: true, staged: false, displayCode: '?' },
           }),
         },
-          stageBox('box', 'none', '暂存', function () { scope.onSetStaged([{ path: inside, untracked: true }], true) }),
+          stageBox('box', ticked ? 'all' : 'none',
+            ticked ? SEL_TITLE_ON : SEL_TITLE_OFF,
+            function () {
+              if (scope.onSetChecked == null) return
+              if (covered === true) {
+                const drop = {}
+                drop[inside] = true
+                materializeDir(scope, outerDir, siblings, drop)
+                return
+              }
+              scope.onSetChecked([inside], !ticked)
+            }),
           indentPad(childDepth),
           h('span', { className: 'dsh-git-tw' }),
           h('span', { className: 'dsh-git-st dsh-git-st-U' }, '?'),
           nameCell(label, true))
       }
 
-      /* A directory git collapsed: one entry, no contents. Ticking it stages
-         the whole thing (`git add -- dir` needs no listing); opening it is the
-         one read that lists the files, and it happens on the click. The listing
-         is a state of its own: undefined while the read is in flight — which is
-         not a case the loop below may fall through to. */
+      /* A directory git collapsed: one entry, no contents. One box stands for
+         the whole subtree: 勾=选中整片（账本记目录自己的路径键，添加/提交时
+         `git add -- 目录` 一个 pathspec 就够）；反勾=整片撤账。展开读回来的叶子
+         清单让这只框也能画出部分选中（▣）—— 框的状态先看目录键，再看叶子。
+         Opening it is the one read that lists the files, and it happens on the
+         click. The listing is a state of its own: undefined while the read is
+         in flight — which is not a case the loop below may fall through to. */
       const untrackedDirRows = function (scope, entry, key, depth, flat, label) {
         const path = text(entry.path)
         const open = scope.untrackedOpen[path] === true
+        const list = open === true ? scope.untrackedFiles[path] : undefined
+        const known = list != null && list.length > 0 ? list : null
+        const dirSel = scope.checked[path] === true
+        const dirState = dirSel === true ? 'all'
+          : (known !== null ? selStateOf(scope, known) : 'none')
         const rows = [h('div', {
           className: rowClass(scope, key),
           key: key,
@@ -402,15 +494,26 @@
           onDoubleClick: function () { scope.onToggleUntracked(path) },
           onContextMenu: rowCtx(scope, path, { dir: true, untracked: true, raw: entry }),
         },
-          stageBox('box', entry.staged === true ? 'all' : 'none',
-            entry.staged === true ? '取消暂存' : '暂存整个目录',
-            function () { scope.onSetStaged([entry], entry.staged !== true) }),
+          stageBox('box', dirState,
+            dirState === 'all' ? '取消选中该目录（含里面所有文件）' : '选中该目录（含里面所有文件；勾选只是标记，不动索引）',
+            function () {
+              if (scope.onSetChecked == null) return
+              if (dirState === 'all') {
+                /* 反勾整片：目录键与（已知的）叶子一起撤账 —— 展开过就可能有
+                   叶子各自的账（部分选中摊开过的），一起清才干净。 */
+                scope.onSetChecked(known !== null ? [path].concat(known) : [path], false)
+                return
+              }
+              /* 勾整片：目录键一笔进账（`git add -- 目录` 覆盖全部），已知叶子
+                 从账里撤下 —— 一片只记一次，「已勾选 N 项」数的才是框。 */
+              if (known !== null) scope.onSetChecked(known, false)
+              scope.onSetChecked([path], true)
+            }),
           indentPad(depth),
           twisty({ collapsed: !open, onToggle: function () { scope.onToggleUntracked(path) } }),
           h('span', { key: 'ico', className: 'dsh-git-tdir' }, h(Icon, { name: 'folder', size: 12 })),
           nameCell(label, flat))]
         if (open) {
-          const list = scope.untrackedFiles[path]
           if (list === undefined) {
             rows.push(h('div', { key: key + ':wait', className: 'dsh-git-trow dsh-git-dim' },
               indentPad(depth + 1), h('span', { className: 'dsh-git-tname' }, '正在读取…')))
@@ -423,7 +526,7 @@
             const prefix = path.replace(/\/+$/, '') + '/'
             for (let k = 0; k < list.length; k += 1) {
               const inside = list[k]
-              rows.push(insideRow(scope, inside, key + ':f:' + inside, depth + 1, inside))
+              rows.push(insideRow(scope, inside, key + ':f:' + inside, depth + 1, inside, path, list))
             }
           } else {
             /* ── 树视图：中间目录层级长成真正的目录行 ──
@@ -453,9 +556,8 @@
               if (node.kind === 'dir') {
                 const child = node.data
                 const total = child.total === undefined ? 0 : child.total
-                const stagedCount = child.staged === undefined ? 0 : child.staged
-                const allStaged = total > 0 && stagedCount === total
-                const someStaged = stagedCount > 0 && stagedCount < total
+                const leafPaths = collectLeaves(child, []).map(function (d) { return text(d.path) })
+                const nestedState = dirSel === true ? 'all' : selStateOf(scope, leafPaths)
                 /* node.path 带着嵌套自己的命名空间前缀 —— 折叠表认它，菜单与提示的
                    pathspec 不认：拼回仓库里的真实相对路径（外层目录 + 这一层往下）。 */
                 const barePath = node.path.indexOf(nestKey + '/') === 0
@@ -469,12 +571,22 @@
                   onDoubleClick: function () { scope.onToggle(node.path) },
                   onContextMenu: rowCtx(scope, dirPath, { dir: true, untracked: true, raw: child }),
                 },
-                  stageBox('box', allStaged ? 'all' : (someStaged ? 'some' : 'none'),
-                    allStaged ? '取消暂存该目录' : '暂存该目录',
+                  stageBox('box', nestedState, selDirTitle(nestedState === 'all', total),
                     function () {
-                      scope.onSetStaged(collectLeaves(child, []).map(function (d) {
-                        return { path: d.path, untracked: true }
-                      }), !allStaged)
+                      if (scope.onSetChecked == null) return
+                      if (nestedState === 'all') {
+                        if (dirSel === true) {
+                          /* 外层目录整勾着（这片是被动亮的）：先把外层选区摊开成
+                              叶子，再落下这棵子树的反勾 —— 子树外的叶子逐条进账。 */
+                          const drop = {}
+                          for (let k = 0; k < leafPaths.length; k += 1) drop[leafPaths[k]] = true
+                          materializeDir(scope, path, list, drop)
+                          return
+                        }
+                        scope.onSetChecked(leafPaths, false)
+                        return
+                      }
+                      scope.onSetChecked(leafPaths, true)
                     }),
                   indentPad(node.depth),
                   twisty({ collapsed: node.collapsed, onToggle: function () { scope.onToggle(node.path) } }),
@@ -482,7 +594,7 @@
                   h('span', { className: 'dsh-git-tdim' }, String(total) + ' 个文件')))
               } else {
                 const inside = node.data != null && node.data.path != null ? node.data.path : node.name
-                rows.push(insideRow(scope, inside, key + ':f:' + inside, node.depth, node.name))
+                rows.push(insideRow(scope, inside, key + ':f:' + inside, node.depth, node.name, path, list))
               }
             }
           }
@@ -504,9 +616,8 @@
           if (node.kind === 'dir') {
             const child = node.data
             const total = child.total === undefined ? 0 : child.total
-            const stagedCount = child.staged === undefined ? 0 : child.staged
-            const allStaged = total > 0 && stagedCount === total
-            const someStaged = stagedCount > 0 && stagedCount < total
+            const leafPaths = collectLeaves(child, []).map(function (d) { return text(d.path) })
+            const dirSel = selStateOf(scope, leafPaths)
             /* 目录行的 node.path 带着树自己的组前缀（'@tracked/a/b'）—— 折叠键认
                前缀，菜单的 pathspec 不认：剥出仓库里的真实相对路径再拼 target。 */
             const barePath = node.path.indexOf(groupKey + '/') === 0
@@ -519,9 +630,11 @@
               onDoubleClick: function () { scope.onToggle(node.path) },
               onContextMenu: rowCtx(scope, barePath, { dir: true, untracked: false, raw: child }),
             },
-              stageBox('box', allStaged ? 'all' : (someStaged ? 'some' : 'none'),
-                allStaged ? '取消暂存该目录' : '暂存该目录',
-                function () { scope.onSetStaged(collectLeaves(child, []), !allStaged) }),
+              stageBox('box', dirSel, selDirTitle(dirSel === 'all', total),
+                function () {
+                  if (scope.onSetChecked == null) return
+                  scope.onSetChecked(leafPaths, dirSel !== 'all')
+                }),
               indentPad(node.depth),
               twisty({ collapsed: node.collapsed, onToggle: function () { scope.onToggle(node.path) } }),
               h('span', { className: 'dsh-git-tname' }, node.name),
@@ -553,15 +666,13 @@
       /* A group title is a row of the tree, so it obeys the tree's gesture:
          one click selects, the double click or the twisty folds. Its box is the
          group's own — IDEA's changelist node carries one too — and it sits in the
-         same left gutter as every file row's, because it is the same act one
-         level up: tick it and the whole changelist goes into the index, untick it
-         and it comes back out. The untracked group's entries are by definition
-         never staged, so its box only ever reads empty. */
-      const groupTitle = function (scope, label, key, hint, entries, tickTitle) {
-        let staged = 0
-        for (let i = 0; i < entries.length; i += 1) if (entries[i].staged === true) staged += 1
-        const allStaged = entries.length > 0 && staged === entries.length
-        const someStaged = staged > 0 && staged < entries.length
+         same left gutter as every file row's, with the same meaning one level up:
+         勾=全选这一组（选中语义，见 SEL_TITLE 那段），反勾=全不选；组里有勾有
+         不勾就画 ▣。它不再动索引 —— 索引由组工具条的按钮们管。 */
+      const groupTitle = function (scope, label, key, hint, entries) {
+        const paths = []
+        for (let i = 0; i < entries.length; i += 1) paths.push(text(entries[i].path))
+        const state = selStateOf(scope, paths)
         return h('div', {
           className: rowClass(scope, key + ':title', 'dsh-git-cgroup'),
           key: key + ':title',
@@ -569,32 +680,60 @@
           onClick: function () { scope.onSelect(key + ':title') },
           onDoubleClick: function () { scope.onToggle(key) },
         },
-          stageBox('box', allStaged ? 'all' : (someStaged ? 'some' : 'none'),
-            /* tickTitle：组自己那句话（冲突组说「标记已解决」），不给就用默认文案。 */
-            allStaged ? '把这一组全部撤出索引' : (tickTitle == null ? '把这一组全部暂存' : tickTitle),
-            function () { scope.onSetStaged(entries, !allStaged) }),
+          stageBox('box', state,
+            state === 'all' ? '取消全选这一组' : '全选这一组（勾选只是标记，不动索引）',
+            function () {
+              if (scope.onSetChecked == null) return
+              scope.onSetChecked(paths, state !== 'all')
+            }),
           twisty({ collapsed: scope.collapsed[key] === true, onToggle: function () { scope.onToggle(key) } }),
           h('span', { className: 'dsh-git-tname' }, label),
           h('span', { className: 'dsh-git-tdim' }, countText(kindOf(entries))))
       }
 
-      /* ── 默认变更列表的工具条：添加 / 还原 / 暂存，都对着勾选项 ──
+      /* ── 组工具条：按钮们的对象都是「勾选项」──
 
-         勾选==已暂存（见上面 fileRow 的框），所以三个按钮的对象就是组里
-         staged===true 的那些条目，一个都没勾时禁用并说明。只加在 @tracked 这一组：
-         用户要的是「默认变更列表」的工具条，而「新增的文件」那组的语义不同 —— HEAD
-         里还没有那些路径，还原和暂存对它们都说不通。它是组的内容而不是标题的一部分，
-         组一折叠就跟着文件行一起藏起来。
+         勾=选中（见 SEL_TITLE 那段），所以按钮的对象是勾选账本里有的那些条目，
+         一条都没勾时禁用并说明。三个组各一条，都是组的内容而不是标题的一部分，
+         组一折叠就跟着文件行一起藏起来：
 
-         「添加」走 onSetStaged：和勾一个框完全是同一条路（乐观补丁 + 路径确认读），
-         幂等，重复点没有副作用。「还原」是破坏性的，两段式确认 —— arm 键的构成见
-         ChangesPane 开头那个 useState 的注释。「暂存」收进 stash，非破坏，单击即可。 */
-      const trackedTools = function (scope, entries) {
+         · @tracked：添加 / 还原 / 暂存（stash）。还原和 stash 只有它有 —— HEAD 里
+           还没有「新增的文件」那些路径，对它们说不通；冲突组的活是标记已解决。
+         · @new / @conflict：只有「添加」。冲突组把同一件事说成「标记已解决」——
+           git add 在冲突路径上的含义是「我解决完了」（组头那行灰字也这么说）。
+
+         「添加」走 onSetStaged：与右键菜单「暂存」「全部暂存」同一条路（乐观补丁 +
+         路径确认读），幂等，重复点没有副作用 —— 这也是勾选不再自动 add 之后，
+         把勾选变成索引改动的显式入口之一。「还原」是破坏性的，两段式确认 ——
+         arm 键的构成见 ChangesPane 开头那个 useState 的注释。「暂存」收进 stash，
+         非破坏，单击即可。 */
+      const pickedOf = function (scope, entries) {
         const picked = []
-        for (let i = 0; i < entries.length; i += 1) if (entries[i].staged === true) picked.push(entries[i])
+        for (let i = 0; i < entries.length; i += 1) if (scope.checked[text(entries[i].path)] === true) picked.push(entries[i])
+        return picked
+      }
+      const addTools = function (scope, entries, key, addLabel, addDesc) {
+        const picked = pickedOf(scope, entries)
         const count = picked.length
         const idle = props.busy === true
-        const whyNone = '先勾选这一组里的文件（勾上就是已暂存），这三个按钮都对勾选项做事'
+        return h('div', { key: key + ':tools', className: 'dsh-git-ctools' },
+          h('button', {
+            key: 'add', type: 'button', className: 'dsh-git-ctool',
+            disabled: count === 0 || idle,
+            title: count === 0 ? '先勾选这一组里的文件，这个按钮对勾选项做事' : addDesc(count),
+            onClick: function (event) {
+              stopEvent(event)
+              if (count === 0 || idle) return
+              scope.onSetStaged(picked, true)
+            },
+          }, addLabel),
+          h('span', { key: 'n', className: 'dsh-git-tdim' }, '已勾选 ' + String(count) + ' 项'))
+      }
+      const trackedTools = function (scope, entries) {
+        const picked = pickedOf(scope, entries)
+        const count = picked.length
+        const idle = props.busy === true
+        const whyNone = '先勾选这一组里的文件，这三个按钮都对勾选项做事'
         const armKey = (scope.repo.length > 0 ? scope.repo + '\u001f' : '') + '@revert:' + String(count)
         const armed = revertArm === armKey
         return h('div', { key: '@tracked:tools', className: 'dsh-git-ctools' },
@@ -602,7 +741,7 @@
             key: 'add', type: 'button', className: 'dsh-git-ctool',
             disabled: count === 0 || idle,
             title: count === 0 ? whyNone
-              : 'git add 勾选的 ' + String(count) + ' 项（勾选即已暂存，重复执行没有副作用）',
+              : 'git add 勾选的 ' + String(count) + ' 项（幂等，重复执行没有副作用）',
             onClick: function (event) {
               stopEvent(event)
               if (count === 0 || idle) return
@@ -665,8 +804,9 @@
           }, '无法读取这个仓库的变更')]
         }
         const changes = mergeChanges(one)
-        /* 冲突桶在最前：先判 conflict 再判 isNewFile —— 冲突行的框是「标记已解决」，
-           和新增/修改的「进索引」不是一个动作，绝不能让一条冲突被别的关系领走。 */
+        /* 冲突桶在最前：先判 conflict 再判 isNewFile —— 冲突的活是「解决」（工具条
+           的按钮因此叫「标记已解决」），和新增/修改的普通改动不是一个动作，绝不能
+           让一条冲突被别的关系领走。 */
         const conflicted = []
         const tracked = []
         const fresh = []
@@ -686,27 +826,36 @@
         /* 冲突组排第一（要处理的活顶在最上面），entries 为空时下面的循环直接跳过，
            所以没有冲突时这组不存在，列表和从前一字不差。 */
         const scopedGroups = [
-          { key: '@conflict', label: '冲突', hint: '合并/拣选/stash pop 留下的未解决冲突，勾上＝git add 标记已解决', tickTitle: '把这一组全部标记已解决（git add）', entries: conflicted },
-          { key: '@tracked', label: '默认变更列表', hint: 'git 管着的改动，框勾上就是进了索引', entries: tracked },
-          { key: '@new', label: '新增的文件', hint: 'git 还没提交过的文件：勾上就是加入索引，但留在这一组里，直到提交', entries: fresh },
+          { key: '@conflict', label: '冲突', hint: '合并/拣选/stash pop 留下的未解决冲突，解决后勾选并点「标记已解决」', tools: 'conflict', entries: conflicted },
+          { key: '@tracked', label: '默认变更列表', hint: 'git 管着的改动；勾选只是选中，用「添加」进索引或直接提交', tools: 'tracked', entries: tracked },
+          { key: '@new', label: '新增的文件', hint: 'git 还没提交过的文件；勾选只是选中，用「添加」进索引或直接提交', tools: 'new', entries: fresh },
         ]
         let shown = 0
         for (let g = 0; g < scopedGroups.length; g += 1) {
           const group = scopedGroups[g]
           if (group.entries.length === 0) continue
           shown += 1
-          rows.push(groupTitle(scope, group.label, group.key, group.hint, group.entries, group.tickTitle))
+          rows.push(groupTitle(scope, group.label, group.key, group.hint, group.entries))
           if (scope.collapsed[group.key] === true) continue
           if (group.key === '@conflict') {
-            /* 组头之下一行灰字指引，不占别的组：冲突文件该干什么（找标记、勾选的
+            /* 组头之下一行灰字指引，不占别的组：冲突文件该干什么（找标记、按钮的
                含义）第一次见的人未必知道。键带 repo —— 多仓库时每组各来一行，别撞。 */
             rows.push(h('div', {
               key: 'guide:' + repo, className: 'dsh-git-trow dsh-git-dim', style: { paddingLeft: '18px' },
-            }, '点击冲突文件打开三方合并界面（比对三个版本、逐块解决）；解决后勾选暂存＝git add 标记已解决'))
+            }, '点击冲突文件打开三方合并界面（比对三个版本、逐块解决）；解决后勾选并点「标记已解决」（git add）'))
           }
-          /* 工具条只属于默认变更列表那一组（理由见 trackedTools 的注释），且跟着组的
-             展开走：折叠时它和文件行一起收起，组头还留着。 */
-          if (group.key === '@tracked') rows.push(trackedTools(scope, group.entries))
+          /* 各组一条工具条（理由见 trackedTools 的注释），且跟着组的展开走：折叠时
+             它和文件行一起收起，组头还留着。 */
+          if (group.tools === 'tracked') rows.push(trackedTools(scope, group.entries))
+          else if (group.tools === 'conflict') {
+            rows.push(addTools(scope, group.entries, group.key, '标记已解决', function (n) {
+              return 'git add 勾选的 ' + String(n) + ' 项 —— 冲突路径上的 add 就是「标记已解决」'
+            }))
+          } else {
+            rows.push(addTools(scope, group.entries, group.key, '添加', function (n) {
+              return 'git add 勾选的 ' + String(n) + ' 项（加入索引；仍留在这一组，直到提交）'
+            }))
+          }
           rows.push.apply(rows, view === 'flat' ? flatRows(scope, group.entries, group.key) : treeRows(scope, group.entries, group.key))
         }
         /* 多仓库视图里「干净」是某个仓库自己的事：组头底下给一行，而不是整页那句
@@ -761,13 +910,36 @@
          titles, where each number belongs to the rows under it. */
       const kindsTitle = countText(allKind)
         + (allKind.dirs > 0 ? '；目录要展开才知道里面有多少文件' : '')
-      const label = stagedCount > 0
-        ? ('提交 ' + countText(kindOf(stagedEntries)))
-        : ('全部暂存并提交（' + String(totalChanges) + ' 项）')
+      /* ── 生效仓库的勾选账 ──
+
+         提交栏永远属于生效仓库（上面的注释），勾选自然也只算它那份。键有两种形状：
+         单仓库视图的不带前缀，多仓库分组的带仓库前缀 —— 按路径两种都查（组键优先，
+         其实两处不会同时记同一条）。checkedUnstagedPaths 是提交按钮要的清单：勾选
+         中尚未 staged 的路径，提交时先 `git add -- 这些路径` 再提交；已勾选且已在
+         索引里的不用 add，索引里现有的照旧进这次提交。 */
+      const repoAbs = text(work.repo)
+      const checkedBook = props.checked == null ? {} : props.checked
+      const isChecked = function (path) {
+        if (repoAbs.length > 0 && checkedBook[repoAbs + '\u001f' + path] === true) return true
+        return checkedBook[path] === true
+      }
+      const checkedEntries = []
+      const checkedUnstagedPaths = []
+      for (let i = 0; i < changes.length; i += 1) {
+        if (isChecked(changes[i].path) !== true) continue
+        checkedEntries.push(changes[i])
+        if (changes[i].staged !== true) checkedUnstagedPaths.push(changes[i].path)
+      }
+      const checkedCount = checkedEntries.length
+      const label = checkedCount > 0
+        ? ('提交 勾选' + String(checkedCount) + ' 项')
+        : (stagedCount > 0
+          ? ('提交 ' + countText(kindOf(stagedEntries)))
+          : ('全部暂存并提交（' + String(totalChanges) + ' 项）'))
 
       /* 提交这一格永远只属于**生效仓库**（右侧历史、chip、推送用的那一个），多选只是
          变更树的显示方式 —— 把几个仓库的索引搅进同一次提交，等于把读者没看到的改动
-         一起提交了。勾选框则各落各的仓库（见 makeScope 的 onSetStaged）。
+         一起提交了。勾选框则各落各的仓库（见 makeScope 的 onSetChecked）。
 
          ── 折叠的两种形态（第二轮起不再分宽窄）──
          stacked：整页切纵列（树在上、提交在下），dsh-git-changes-narrow 只在这一态挂。
@@ -832,7 +1004,14 @@
           type: 'button',
           className: 'dsh-git-btn dsh-git-primary',
           disabled: !canCommit,
-          onClick: props.onCommit,
+          /* 勾选跟着提交走：先把勾选中尚未暂存的自动 add（不发独立的 stage rpc，
+             Host 的 git/commit 在同一次「提交」里 add 完再 commit），再按原有逻辑
+             提交。一个都没勾时传空清单 —— 80-panel 的 commit 维持现状兜底（索引
+             空则 stageAll 全部暂存并提交）。 */
+          title: checkedCount > 0
+            ? '先 git add 勾选中尚未暂存的 ' + String(checkedUnstagedPaths.length) + ' 项再提交；已暂存的改动照旧一并进这次提交'
+            : (stagedCount > 0 ? '提交索引里已有的改动' : '全部暂存并提交'),
+          onClick: function () { props.onCommit(checkedUnstagedPaths) },
         }, props.busy === true ? '处理中…' : label),
         totalChanges > 0 ? h('button', {
           type: 'button', className: 'dsh-git-btn',

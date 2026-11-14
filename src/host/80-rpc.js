@@ -403,7 +403,19 @@ async function commitMutation(input, argv, options) {
 onRpc('git/commit', function (input) {
   const message = input != null && isStr(input.message) ? input.message.trim() : ''
   if (message.length === 0) return { ok: false, error: 'a commit message is required' }
-  /* stageAll 的 add -A 与 commit 同属「提交」这一次操作，名字也跟着同一条。 */
+  /* 三个来源的优先级在这里写死：paths（客户端提交时顺手 add 的勾选路径） >
+     stageAll（一件都没勾时的兜底） > 裸 commit（索引里已有东西）。客户端保证
+     paths 与 stageAll 不同时给出，但 Host 不信客户端 —— paths 非空就一定先走
+     这一支。清洗照 git/stage 同一份 panelPaths。
+     与 stageAll 的 add -A 一样，这里的 add -- 路径与 commit 同属「提交」这一次
+     操作，名字也跟着同一条。 */
+  const paths = panelPaths(input)
+  if (paths.length > 0) {
+    return panelMutate(input, ['add', '--'].concat(paths), { desc: '提交' }).then(function (staged) {
+      if (staged.ok !== true) return staged
+      return commitMutation(input, ['commit', '-m', message], { desc: '提交' })
+    })
+  }
   if (input != null && input.stageAll === true) {
     return panelMutate(input, ['add', '-A'], { desc: '提交' }).then(function (staged) {
       if (staged.ok !== true) return staged
