@@ -2387,6 +2387,12 @@
          come back to the foreground still showing the branch it used to be on. */
       const reloadAt = useDataVersion()
       const [size, setSize] = React.useState(panelSize)
+      /* ── 历史页分栏（两道竖向分割线）：模块账 logSplit（10-state.js，按工作区上账）
+         的组件面 —— signal 一响就重画；splitting 记着正在拖哪道（null = 没在拖），
+         拖动中给 body 挂 dsh-git-splitting 禁选中。宽屏才有的东西：窄屏折叠形态
+         一个都不渲染，CSS 变量也不挂（46-css.js 按变量算线位），折叠行为一字不改。 */
+      const split = logSplitSignal.use()
+      const [splitting, setSplitting] = React.useState(null)
       /* 锚点容器（输入区 overlay 槽位）量到的 {top, ceiling, vh}。null = 还没量过
          （首帧、或没有布局的环境），此时不钳制，维持 CSS 的 74vh / 记忆的 size.h。
          top 是锚点上沿（面板下沿就在它上面 8px）；ceiling 是真实上界（14-geometry.js
@@ -3880,6 +3886,16 @@
           setSize({ w: panelSize.w, h: panelSize.h })
         })
       }, [])
+
+      /* ── 工作区账随仓库上账（10-state.js 的 applyWorkspaceLayout）──
+         effectiveRepo（生效仓库路径 —— 账本选的那把工作区键）解析出来、或读者切了
+         仓库的那一刻，把那个工作区记的面板尺寸与分栏宽度摆上来：publish 即通知，
+         size 与 split 两份组件账同一帧跟上。挂载那次按声明序跑在本文件 mount effect
+         （loadPanelSize 交 doc + 读旧全局兜底）之后；空键（还没解析出来）由它自己
+         挡下，等 resolved 再上。 */
+      React.useEffect(function () {
+        applyWorkspaceLayout(effectiveRepo)
+      }, [effectiveRepo])
 
       /* ── 面板打开期间，跟着输入框量 ──
 
@@ -5946,7 +5962,94 @@
           detail != null && detail.ok === true && detail.files.length > 0
             ? h('span', { className: 'dsh-git-detailbar-count' }, String(detail.files.length) + ' 个文件')
             : null)
-        body = h('div', { className: 'dsh-git-body', ref: narrowBody.attach },
+        /* ── 两道竖向分割线（宽屏才有）──
+
+           窄屏（narrowBody.narrow，46-css.js 207 行起的折叠形态）一个都不渲染、
+           CSS 变量也不挂 —— 现有折叠行为一字不改。宽屏把两个把手挂进 body：
+           absolute 定位不占布局，位置由 body 上的两个 CSS 变量算（46-css.js 的
+           dsh-git-split-*），平时隐形、hover 亮起，与边角 grip 同一副骨架。右把手
+           只在详情栏真的展开时挂：宽屏偶尔停在折叠态（从窄屏收着拖宽回来），那条
+           28px 展开条没有可拖的宽度。变量只写在这里一处，左栏与详情栏的宽度、两道
+           把手的位置吃的是同一份 split —— 拖动重画时三者永远对齐。 */
+        const wideBody = narrowBody.narrow !== true
+        const splitStyle = wideBody !== true ? undefined : {
+          '--dsh-git-left-w': String(split.left) + 'px',
+          '--dsh-git-detail-w': String(split.detail) + 'px',
+        }
+        /* 拖动手感照抄边角 grip 的 startDrag：pointer 事件（按下 preventDefault +
+           stopPropagation，document 级 move/up/cancel）、拖动中 dsh-git-splitting
+           禁选中、松手落账（saveWorkspaceLayout，尺寸与分栏一格齐落）。钳制在按下
+           那一刻量定：body 现宽（54-changes.js 量 .dsh-git-body 的同一款 clientWidth，
+           量不到按 0 —— 只剩固定上下限兜底）减去主列表至少要留的 280
+           （LOG_SPLIT_MAIN_MIN，54-changes.js 量法表里的同一个数）与另一侧此刻的
+           宽，中间那列永远最后被挤；min/max 的先后写死「下限赢」，body 特别窄时
+           两栏保底、主列表暂时让步，回到宽处再拖就复原。 */
+        const startSplitDrag = function (side) {
+          return function (event) {
+            if (event.button != null && event.button !== 0) return
+            event.preventDefault()
+            event.stopPropagation()
+            const node = panelNode
+            if (node == null) return
+            const doc = node.ownerDocument
+            /* 把手是 body 的直接孩子：从它拿 .dsh-git-body 本尊量宽与左缘。 */
+            const bodyNode = event.currentTarget != null && event.currentTarget.parentElement != null
+              ? event.currentTarget.parentElement
+              : null
+            const bodyW = bodyNode != null && typeof bodyNode.clientWidth === 'number'
+              ? parseInt(bodyNode.clientWidth, 10) : 0
+            const bodyRect = bodyNode != null && typeof bodyNode.getBoundingClientRect === 'function'
+              ? bodyNode.getBoundingClientRect() : null
+            const startLeft = logSplit.left
+            const startDetail = logSplit.detail
+            /* 右侧此刻真占多宽：宽屏折叠态（28px 展开条）时左把手的活动余量按 28
+               算，不按记忆里的详情宽白扣一块。 */
+            const rightW = detailCollapsed === true ? 28 : startDetail
+            const leftMax = bodyW > 0
+              ? Math.min(LOG_SPLIT_LEFT_MAX, bodyW - LOG_SPLIT_MAIN_MIN - rightW)
+              : LOG_SPLIT_LEFT_MAX
+            const detailMax = bodyW > 0
+              ? Math.min(LOG_SPLIT_DETAIL_MAX, bodyW - LOG_SPLIT_MAIN_MIN - startLeft)
+              : LOG_SPLIT_DETAIL_MAX
+            const clampSide = function (value, min, max) {
+              return Math.round(Math.max(min, Math.min(value, max)))
+            }
+            const onMove = function (move) {
+              if (bodyRect == null) return
+              if (side === 'left') {
+                publishLogSplit({
+                  left: clampSide(move.clientX - parseFloat(bodyRect.left), LOG_SPLIT_LEFT_MIN, leftMax),
+                  detail: startDetail,
+                })
+              } else {
+                publishLogSplit({
+                  left: startLeft,
+                  detail: clampSide(parseFloat(bodyRect.right) - move.clientX, LOG_SPLIT_DETAIL_MIN, detailMax),
+                })
+              }
+            }
+            const onUp = function () {
+              if (doc != null) {
+                doc.removeEventListener('pointermove', onMove)
+                doc.removeEventListener('pointerup', onUp)
+                doc.removeEventListener('pointercancel', onUp)
+              }
+              setSplitting(null)
+              saveWorkspaceLayout()
+            }
+            if (doc != null) {
+              doc.addEventListener('pointermove', onMove)
+              doc.addEventListener('pointerup', onUp)
+              doc.addEventListener('pointercancel', onUp)
+            }
+            setSplitting(side)
+          }
+        }
+        body = h('div', {
+          className: 'dsh-git-body' + (splitting !== null ? ' dsh-git-splitting' : ''),
+          ref: narrowBody.attach,
+          style: splitStyle,
+        },
           h('div', { className: 'dsh-git-left' },
             h(RefTree, {
               refs: refs, collapsed: collapsed, selectedKey: effectiveSelection,
@@ -6001,6 +6104,13 @@
               onPickBranch: pickBranch,
               onBranchContext: openBranchMenu,
             })),
+          wideBody === true
+            ? h('div', {
+                className: 'dsh-git-split dsh-git-split-l',
+                title: '拖动调整左栏宽度（分支树）',
+                onPointerDown: startSplitDrag('left'),
+              })
+            : null,
           h('div', { className: 'dsh-git-main' },
             toolbar,
             promptRow,
@@ -6018,6 +6128,13 @@
                  a page. */
               onLoadMore: function () { setMaxCount(function (n) { return n + PAGE_COMMITS }) },
             })),
+          wideBody === true && detailCollapsed !== true
+            ? h('div', {
+                className: 'dsh-git-split dsh-git-split-r',
+                title: '拖动调整详情栏宽度（提交详情）',
+                onPointerDown: startSplitDrag('detail'),
+              })
+            : null,
           detailCollapsed === true ? detailBar : detailSide)
       }
 

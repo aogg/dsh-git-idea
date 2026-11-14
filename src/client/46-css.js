@@ -34,10 +34,10 @@
 .dsh-git-tab-on{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);font-weight:600}
 .dsh-git-title{font-weight:600;flex:none}
 .dsh-git-dim{color:var(--dsw-alias-label-secondary)}
-.dsh-git-body{flex:1;display:flex;min-height:0}
+.dsh-git-body{position:relative;flex:1;display:flex;min-height:0}
 .dsh-git-side{width:200px;flex:none;overflow:auto;padding:4px 0;border-right:1px solid var(--dsw-alias-border-l1)}
 .dsh-git-main{flex:1;min-width:0;display:flex;flex-direction:column}
-.dsh-git-detail{width:280px;flex:none;overflow:auto;padding:6px 8px;border-left:1px solid var(--dsw-alias-border-l1)}
+.dsh-git-detail{width:var(--dsh-git-detail-w,280px);flex:none;overflow:auto;padding:6px 8px;border-left:1px solid var(--dsw-alias-border-l1)}
 .dsh-git-detail-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative}
 .dsh-git-detail-foot{position:absolute;left:0;right:0;bottom:8px;text-align:center;font-size:11px}
 /* IDEA's log toolbar: a bordered search box, then the filters as inline
@@ -331,7 +331,7 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-grow{flex:0 1 auto;min-width:0}
 .dsh-git-banner{flex:none;display:flex;align-items:center;gap:6px;padding:5px 10px;background:var(--dsw-alias-bg-layer-2);border-bottom:1px solid var(--dsw-alias-border-l1);font-size:11px}
 .dsh-git-banner-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-state-warn-primary)}
-.dsh-git-left{width:208px;flex:none;display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--dsw-alias-border-l1)}
+.dsh-git-left{width:var(--dsh-git-left-w,208px);flex:none;display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--dsw-alias-border-l1)}
 .dsh-git-sidewrap{display:flex;flex-direction:column;flex:1;min-height:0;min-width:0}
 .dsh-git-sidehead{display:flex;align-items:center;gap:4px;flex:none;padding:4px 6px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2)}
 .dsh-git-sidehead-ico{display:inline-flex;flex:none;color:var(--dsw-alias-label-secondary)}
@@ -348,6 +348,17 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-grip-nw{left:0;top:0;width:12px;height:12px;cursor:nwse-resize}
 .dsh-git-grip-ne{right:0;top:0;width:12px;height:12px;cursor:nesw-resize}
 .dsh-git-grip:hover{background:var(--dsw-alias-brand-primary);opacity:.3}
+/* ── 历史页两道可拖动的竖向分割线（80-panel.js 的 dsh-git-split-*）──
+    与边角 grip 同一副骨架：absolute 定位不占布局、平时隐形、hover 亮起品牌色。
+    位置由 .dsh-git-body 上的两个 CSS 变量算（JS 只在宽屏挂变量并挂把手 —— 窄屏
+    变量不在、DOM 里也没有这两道线，207 行起的折叠行为一字不改）；6px 命中区骑在
+    现有 border 上（往里让 3px 居中）。拖动中 body 带上 dsh-git-splitting：整块
+    禁选中、光标锁横向 —— 手感对齐面板拖角的「拖动中不许选中文字」。 */
+.dsh-git-split{position:absolute;top:0;bottom:0;width:6px;z-index:5;cursor:ew-resize;touch-action:none}
+.dsh-git-split-l{left:calc(var(--dsh-git-left-w,208px) - 3px)}
+.dsh-git-split-r{right:calc(var(--dsh-git-detail-w,280px) - 3px)}
+.dsh-git-split:hover{background:var(--dsw-alias-brand-primary);opacity:.3}
+.dsh-git-splitting{-webkit-user-select:none;user-select:none;cursor:ew-resize}
 .dsh-git-sync{display:flex;align-items:center;gap:2px;flex:none}
 .dsh-git-branch-chip{display:inline-flex;align-items:center;gap:4px;max-width:220px;flex:none;padding:2px 8px;border-radius:999px;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-primary);font-size:11px;line-height:16px}
 .dsh-git-branch-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}

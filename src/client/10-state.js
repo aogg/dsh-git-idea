@@ -741,9 +741,27 @@
     /* ── panel geometry ──
 
        Zero means "follow the composer width / 74vh", which stays the default;
-       the first drag switches to explicit pixels, and the size is remembered
-       through localStorage when the page exposes one. */
-    const PANEL_SIZE_KEY = 'dsh.git-idea.panel'
+       the first drag switches to explicit pixels.
+
+       ── 账本按工作区分格 ──
+
+       面板尺寸过去是全局单格（PANEL_SIZE_KEY 一份 JSON 走天下）；历史页分栏宽度
+       进来以后，尺寸与分栏一起改成「一个工作区一格」。工作区键的选型：**生效仓库
+       的绝对路径**（GitPanel 里的 effectiveRepo：appliedRepo 优先，其次 Host 解析出
+       的 work.repo）。理由：
+
+       · 跨会话稳定 —— 同一工作区新开会话，Host 解析出的都是同一个目录，账自然还
+         认得；sessionId 每个会话都换，绝不能当键（63-storedlists.js 的 repo-lists
+         按会话 id 存是因为语义本来就是「这个会话扫到的清单」，与这里不同）；
+       · 与后端两份「按工作区」的账同口径 —— appliedRepos（70-config.js 的
+         repoKeyOf）与 branchHistory（79c-branchhistory.js 拿 cwd 当键）都以工作区
+         路径为键，读者拿同一条路径在哪儿都能对上；
+       · 读者在面板里亲手选过别的仓库时，effectiveRepo 就是眼前正在看的那块地，
+         尺寸与分栏跟着它走，比跟着会话最初的目录更贴「工作区」的语义。
+
+       键还没解析出来（空串）时不上账也不落盘：面板此刻还没「在工作区里」，画的是
+       模块现值（新页面天然就是默认账），等 appliedRepo/work.repo 落地那一刻再上。 */
+    const PANEL_SIZE_KEY = 'dsh.git-idea.panel'   /* 旧全局单格：只读作迁移兜底，新账不再写它 */
     let panelSize = { w: 0, h: 0 }
     let panelSizeLoaded = false
     const panelSizeSignal = createSignal(function () { return panelSize })
@@ -753,16 +771,111 @@
       panelSizeSignal.notify()
     }
 
+    /* 旧全局账的一份只读快照：某个工作区还没有自己的账时，面板尺寸回落到它 ——
+       老读者升级后第一次打开面板，还是他拖过的那个大小，不是闪回默认。分栏宽度
+       没有旧账可迁（这版之前不存在持久化），一律回落默认值。 */
+    let panelSizeLegacy = { w: 0, h: 0 }
+
     function loadPanelSize(doc) {
       if (panelSizeLoaded) return
       panelSizeLoaded = true
       localStore(doc)
       const parsed = readStoredJSON(PANEL_SIZE_KEY, null)
       if (parsed != null && typeof parsed.w === 'number' && typeof parsed.h === 'number') {
-        panelSize = { w: parsed.w, h: parsed.h }
+        panelSizeLegacy = { w: parsed.w, h: parsed.h }
       }
     }
 
+    /* ── 历史页分栏（80-panel.js 的两道竖向分割线）与工作区账本 ──
+
+       left = 左栏（.dsh-git-left）宽度、detail = 详情栏（.dsh-git-detail）宽度，
+       像素整型；默认值就是 CSS 里的现值（46-css.js 的 208 / 280）—— 没有账的工作区
+       画出来和今天一字不差。上下限在拖动端（80-panel.js，按 body 现宽再钳）与读入
+       清洗（下面）各守一遍。 */
+    const LOG_SPLIT_LEFT_DEFAULT = 208
+    const LOG_SPLIT_DETAIL_DEFAULT = 280
+    const LOG_SPLIT_LEFT_MIN = 160      /* 分支树一列还读得动的下限 */
+    const LOG_SPLIT_LEFT_MAX = 420
+    const LOG_SPLIT_DETAIL_MIN = 200    /* 文件列表还读得动的下限 */
+    const LOG_SPLIT_DETAIL_MAX = 480
+    /* 主列表至少还要留一列读得动的：54-changes.js 量法表里的同一个数
+       （560 = 280 + 280），拖动端拿它保住中间那列。 */
+    const LOG_SPLIT_MAIN_MIN = 280
+
+    let logSplit = { left: LOG_SPLIT_LEFT_DEFAULT, detail: LOG_SPLIT_DETAIL_DEFAULT }
+    const logSplitSignal = createSignal(function () { return logSplit })
+
+    function publishLogSplit(next) {
+      logSplit = next
+      logSplitSignal.notify()
+    }
+
+    /* 一个分栏宽度的读入清洗：非负有限数字先 parseFloat 取整，再钳进 [min, max]；
+       不是数就回落默认 —— localStorage 是谁都能写的一块地，清洗即读入的合同。 */
+    function clampSplitWidth(value, fallback, min, max) {
+      const n = parseFloat(value)
+      if (!isFinite(n)) return fallback
+      return Math.round(Math.max(min, Math.min(n, max)))
+    }
+
+    function sanitizeWorkspaceLayoutEntry(value) {
+      if (value == null || typeof value !== 'object') return null
+      const data = value.data
+      if (data == null || typeof data !== 'object') return null
+      const w = parseFloat(data.w)
+      const h = parseFloat(data.h)
+      return {
+        data: {
+          left: clampSplitWidth(data.left, LOG_SPLIT_LEFT_DEFAULT, LOG_SPLIT_LEFT_MIN, LOG_SPLIT_LEFT_MAX),
+          detail: clampSplitWidth(data.detail, LOG_SPLIT_DETAIL_DEFAULT, LOG_SPLIT_DETAIL_MIN, LOG_SPLIT_DETAIL_MAX),
+          /* w/h 沿用面板尺寸的老语义：0 = 跟随 composer；负数或不是数都算 0。 */
+          w: isFinite(w) && w > 0 ? Math.round(w) : 0,
+          h: isFinite(h) && h > 0 ? Math.round(h) : 0,
+        },
+        at: typeof value.at === 'number' && isFinite(value.at) ? value.at : 0,
+      }
+    }
+
+    /* 工作区账本的盘上形状与先例同一套（63-storedlists.js 的 createStoredListLayer）：
+       { [工作区路径]: { data: { left, detail, w, h }, at } }，懒加载一次、读入逐条
+       清洗、LRU 先删再插队尾、队首淘汰、localStorage 拿不到或写失败静默只留内存、
+       不设 TTL。容量 30（先例区间 10~50 的中段）：尺寸加两道分栏一人一份，常用仓库
+       三十开外才挤掉最久没人碰的那格。 */
+    const WORKSPACE_LAYOUT_KEY = 'dsh.git-idea.workspace-layout'
+    const WORKSPACE_LAYOUT_MAX = 30
+    const workspaceLayoutStored = createStoredListLayer(WORKSPACE_LAYOUT_KEY, WORKSPACE_LAYOUT_MAX, sanitizeWorkspaceLayoutEntry)
+
+    /* 当前上账的工作区（'' = 还没解析出来）。 */
+    let layoutWorkspace = ''
+
+    /* 把某个工作区的账摆上来：面板尺寸与分栏宽度一起 publish，两份 signal 的读者
+       （面板的 size / split）同一帧跟上。这个工作区还没有自己的账时，尺寸回落旧
+       全局那份（panelSizeLegacy，迁移兜底），分栏回落默认值。 */
+    function applyWorkspaceLayout(workspaceKey) {
+      const key = text(workspaceKey)
+      if (key.length === 0 || key === layoutWorkspace) return
+      layoutWorkspace = key
+      const stored = workspaceLayoutStored.get(key)
+      publishPanelSize(stored != null
+        ? { w: stored.w, h: stored.h }
+        : { w: panelSizeLegacy.w, h: panelSizeLegacy.h })
+      publishLogSplit(stored != null
+        ? { left: stored.left, detail: stored.detail }
+        : { left: LOG_SPLIT_LEFT_DEFAULT, detail: LOG_SPLIT_DETAIL_DEFAULT })
+    }
+
+    /* 当前工作区落一整格账：面板尺寸 + 两道分栏一起写（一次拖动落一次整格，四样
+       数永远互相对得上）。空键（工作区还没解析出来）时这里就挡住 —— 不可归属的账
+       宁可不落盘；写失败静默只留内存（先例同一条）。 */
+    function saveWorkspaceLayout() {
+      if (layoutWorkspace.length === 0) return
+      workspaceLayoutStored.put(layoutWorkspace, {
+        left: logSplit.left, detail: logSplit.detail, w: panelSize.w, h: panelSize.h,
+      })
+    }
+
+    /* 边角 grip（80-panel.js 的 startDrag）与配置页「恢复默认尺寸」的落账口 —— 旧名
+       保留、调用点一字不动：现在落的是当前工作区那一格。 */
     function savePanelSize() {
-      writeStoredJSON(PANEL_SIZE_KEY, panelSize)
+      saveWorkspaceLayout()
     }
