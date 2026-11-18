@@ -3583,6 +3583,95 @@
         return function () { alive = false }
       }, [appliedRepo, repoOk, freshAt, props.ready])
 
+      /* ── 工作树页（26-wtreepane.js）的读数：面板打开后台预读，之后全走 bump ──
+
+          生成与刷新的时机完全学命令页那套（readCmdLog 那块的同一副骨架）：
+            · null = 这个会话还没有读数，第一次生成发生在面板打开那一刻的后台预读
+              里 —— 不用先切到这一页；面板藏着时不发读（open 位放掉，下次打开算
+              新的刷新时机）。
+            · freshAt —— ⟳、变更 git 命令后的 bump、watcher 签名变化都推它；宿主那
+              头每次整仓失效本来就把各仓的 'worktrees' 一格一起作废
+              （65-worktree.js），聚合读重跑拿到的必是新账。
+            · 生效仓库一换（effectiveRepo）—— 行上的 isEffective 高亮与生效组的
+              ↑↓ 徽章都要跟着换；宿主各仓的读缓存热时这次重读毫秒级。
+          只有这一页开着才为后两条补读 —— 读者没在看，就让它一直旧着，切过来那一
+          刻自然补上（命令页同一条规矩）。手里已有清单就绝不清空、绝不置 loading
+          （refreshing 只挂一句轻的），失败不顶掉清单（错误原话记进读数，清单照常
+          能用 —— 命令页后台刷新失败的同一处理）。 */
+      const [wtreeData, setWtreeData] = React.useState(null)
+      const [wtreeBox] = React.useState(function () { return { seq: 0, opens: 0, open: false } })
+      const readWtreeTree = function (at, opens) {
+        wtreeBox.seq += 1
+        const seq = wtreeBox.seq
+        setWtreeData(function (previous) {
+          if (previous != null && previous.sessionId === sessionId) {
+            return Object.assign({}, previous, { at: at, opens: opens, refreshing: true })
+          }
+          return { sessionId: sessionId, loading: true, at: at, opens: opens }
+        })
+        const request = { sessionId: sessionId }
+        if (effectiveRepo.length > 0) request.repo = effectiveRepo
+        callHost('git/worktree-tree', request).then(function (data) {
+          if (seq !== wtreeBox.seq) return
+          setWtreeData(function (previous) {
+            if (previous != null && previous.sessionId !== sessionId) return previous
+            if (data != null && data.ok === true) {
+              /* 内容级去重（63-storedlists.js 同一思路）：组树没变就不重画 ——
+                 ⟳ / watcher 触发的重读在内容没变时静默落地。 */
+              if (previous != null && Array.isArray(previous.groups) === true
+                && previous.effective === data.effective && previous.workspace === data.workspace
+                && sameStoredJSON(previous.groups, data.groups) === true) {
+                return Object.assign({}, previous, { at: at, opens: opens, refreshing: false })
+              }
+              return Object.assign({}, data, { sessionId: sessionId, at: at, opens: opens, refreshing: false })
+            }
+            const said = data != null && text(data.error).length > 0 ? text(data.error) : '读不了仓库清单'
+            if (previous != null && Array.isArray(previous.groups) === true) {
+              return Object.assign({}, previous, { at: at, opens: opens, refreshing: false, error: said })
+            }
+            return { sessionId: sessionId, error: said, at: at, opens: opens }
+          })
+        }, function (failure) {
+          if (seq !== wtreeBox.seq) return
+          const said = failureText(failure)
+          setWtreeData(function (previous) {
+            if (previous != null && previous.sessionId !== sessionId) return previous
+            if (previous != null && Array.isArray(previous.groups) === true) {
+              return Object.assign({}, previous, { at: at, opens: opens, refreshing: false, error: said })
+            }
+            return { sessionId: sessionId, error: said, at: at, opens: opens }
+          })
+        })
+      }
+      React.useEffect(function () {
+        if (props.active !== true || props.ready !== true) {
+          /* 藏着不发读；把「开着」放掉，下次再打开又算一次新的刷新时机。 */
+          wtreeBox.open = false
+          return undefined
+        }
+        if (wtreeBox.open !== true) {
+          wtreeBox.open = true
+          wtreeBox.opens += 1
+        }
+        if (wtreeData === null || wtreeData.sessionId !== sessionId) {
+          readWtreeTree(freshAt, wtreeBox.opens)
+          return undefined
+        }
+        if (wtreeData.opens !== wtreeBox.opens) {
+          readWtreeTree(freshAt, wtreeBox.opens)
+          return undefined
+        }
+        /* at 落后于 freshAt（仓库 bump 过）或生效仓库换了，且这一页正开着：补读。
+           生效仓库的比对按 repoGroupPath 归一（尾斜杠两种写法是同一个目录），空串
+           （生效仓库还没落定）不参与 —— 免得追着「宿主答的会话工作区」空转。 */
+        const wtreeEffectiveNow = repoGroupPath(effectiveRepo)
+        if ((wtreeData.at !== freshAt
+          || (wtreeEffectiveNow.length > 0 && wtreeData.effective !== wtreeEffectiveNow)) && tab === 'wtree') {
+          readWtreeTree(freshAt, wtreeBox.opens)
+        }
+        return undefined
+      }, [props.active, props.ready, sessionId, wtreeData, freshAt, effectiveRepo, tab])
+
       /* 分支树里双击分支。repo 为空 = 今天的单仓库树，行为一字不差；带仓库 = 多选
          分组里双击「切到那个仓库并只看这个分支」—— 两步并成一步，否则在多选视图里
          双击一个分支什么都不发生，看起来就像双击坏了。 */
@@ -5622,6 +5711,12 @@
                 changesBadge > 0 ? h('span', { key: 'n', className: 'dsh-git-tool-badge' }, String(changesBadge)) : null),
               h('button', { type: 'button', className: 'dsh-git-tab' + (tab === 'log' ? ' dsh-git-tab-on' : ''),
                 title: '提交历史', onClick: function () { setTab('log'); setDiffTarget(null); setMergeTarget(null) } }, '历史'),
+              /* 工作树页：每个仓库一组的 worktree 全景（26-wtreepane.js）。不带数字
+                  角标 —— 与命令页同一条理由：组数既不稳定也不指导任何操作，数量在
+                  页里说。 */
+              h('button', { type: 'button', className: 'dsh-git-tab' + (tab === 'wtree' ? ' dsh-git-tab-on' : ''),
+                title: '工作树全景：每个仓库一组 —— 主目录与它经 git worktree add 建出的链接工作树',
+                onClick: function () { setTab('wtree'); setDiffTarget(null); setMergeTarget(null) } }, '工作树'),
               /* 命令页不带数字角标：会话记录里有多少条 git 命令，这个数既不稳定也
                  不指导任何操作，放在页签上只是噪音；数量在读进来之后说在页面里。 */
               h('button', { type: 'button', className: 'dsh-git-tab' + (tab === 'cmdlog' ? ' dsh-git-tab-on' : ''),
@@ -5955,6 +6050,23 @@
           untrackedOpen: untrackedOpen,
           untrackedFiles: untrackedFiles,
           onToggleUntracked: toggleUntracked,
+        })
+      } else if (tab === 'wtree') {
+        /* 工作树页（26-wtreepane.js）：只画手里那份数据 —— 打开面板时的后台预读、
+           ⟳ / bump / 切生效仓库后的重读都在上面那条 [wtreeData] effect 里，组件自身
+           不发读数（25-worktree.js 同一条纪律）。单击行 = repoSingle('changes', …)：
+           与变更页 worktree 块的 onPickWorktree 同一条既有语义 —— 多选先收拢回单
+           仓库、生效仓库切到该行路径、变更列表跟着重读；点的就是当前生效目录时
+           repoSingle 原地返回，无副作用。labels 与仓库清单同名同标（一个仓库在
+           面板里只有一个短名），workspace 给折叠账分键，refs 给生效组的 ↑↓ 徽章
+           免费查。 */
+        body = h(WtreePane, {
+          data: wtreeData,
+          refs: refs,
+          effective: effectiveRepo,
+          workspace: workspaceOf(sessionId),
+          labels: repoLabelMap(shownRepos),
+          onPick: function (path) { repoSingle('changes', path) },
         })
       } else if (tab === 'cmdlog') {
         /* 只读页：列表是上面那条后台路攒下的读数。点「重新读取」也是同一条路：

@@ -133,8 +133,10 @@ const cmdLogHoldNew = function () { const hold = {}; cmdLogHold = hold; return h
 console.log('')
 console.log('=== 配置页：页签、三组与只读的「此刻生效」 ===')
 let tree = await openPanel()
-ok('顶栏现在是 4 个页签，第 4 个是「配置」', buttons(byClass(tree, 'dsh-git-tabs')[0]).length === 4
-  && textOf(buttons(byClass(tree, 'dsh-git-tabs')[0])[3]) === '配置')
+ok('顶栏现在是 5 个页签：第 3 个是「工作树」、第 5 个是「配置」（工作树页签排在历史与命令之间）',
+  buttons(byClass(tree, 'dsh-git-tabs')[0]).length === 5
+  && textOf(buttons(byClass(tree, 'dsh-git-tabs')[0])[2]) === '工作树'
+  && textOf(buttons(byClass(tree, 'dsh-git-tabs')[0])[4]) === '配置')
 await clickText(tree, '配置')
 tree = await settle()
 const groupTexts = (t) => collect(t).filter((n) => n.props.className === 'dsh-git-set-group').map(textOf)

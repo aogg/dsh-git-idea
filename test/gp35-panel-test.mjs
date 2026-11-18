@@ -301,12 +301,15 @@ ok('身份校正正好一对：带 tags 的 flush + 面板这侧的一次 quick 
   flushCalls.length === 1 && JSON.stringify(flushCalls[0].args.tags) === JSON.stringify(['panel-ident', 'branches'])
   && panelCalls.filter((c) => c.tree !== 'chip' && c.args.quick === true).length === 1)
 /* 芯片发两次：先便宜的「哪个仓库哪个分支」，再补工作区状态（走缓存，0ms）。
-   面板这侧是身份校正的一对（上面的 flush + quick 读）+ 打开即发的那一次后台
-   git/command-log 预读 —— 共五条。 */
-ok('芯片两次状态读（走缓存，0ms）+ 身份校正一对 + 打开即发的命令预读',
-  calls.length === 5 && panelCalls.length === 3 && flushCalls.length === 1 && cmdlogCalls.length === 1
-  && calls.every((c) => c.tree === 'chip' || c.method === 'git/command-log' || c.method === 'git/flush' || (c.method === 'git/panel' && c.args.quick === true))
-  && cmdlogCalls.every((c) => c.tree === 'pop')
+   面板这侧是身份校正的一对（上面的 flush + quick 读）+ 打开即发的两条后台预读
+   （命令页 git/command-log 与工作树页 git/worktree-tree，后者同样藏面板不发）
+   —— 共六条。 */
+const wtreeCalls35 = calls.filter((c) => c.method === 'git/worktree-tree')
+ok('芯片两次状态读（走缓存，0ms）+ 身份校正一对 + 打开即发的命令/工作树两条预读',
+  calls.length === 6 && panelCalls.length === 3 && flushCalls.length === 1 && cmdlogCalls.length === 1
+  && wtreeCalls35.length === 1
+  && calls.every((c) => c.tree === 'chip' || c.method === 'git/command-log' || c.method === 'git/worktree-tree' || c.method === 'git/flush' || (c.method === 'git/panel' && c.args.quick === true))
+  && cmdlogCalls.every((c) => c.tree === 'pop') && wtreeCalls35.every((c) => c.tree === 'pop')
   && panelCalls.filter((c) => c.tree === 'chip' && c.args.quick === true).length === 1)
 ok('面板内容还在（标签页没丢）', textOf(tree).indexOf('历史') >= 0)
 

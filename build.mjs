@@ -60,6 +60,7 @@ export const TARGETS = [
       'src/client/20-prefs.js',
       'src/client/24-repos.js',
       'src/client/25-worktree.js',
+      'src/client/26-wtreepane.js',
       'src/client/30-watch.js',
       'src/client/40-format.js',
       'src/client/42-tree.js',

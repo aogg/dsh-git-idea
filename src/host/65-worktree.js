@@ -69,34 +69,152 @@ function parseWorktreeRows(stdout) {
   return out
 }
 
-async function readWorktrees(input, repo) {
+/* 读命令本体（含主行）：一次 spawn + parseWorktreeRows，把 porcelain 的**全部**
+   记录（主工作区、bare、链接、游离、locked/prunable）原样带回。读缓存 tag
+   'worktrees' 的 loader 就是它 —— 下面的 worktreesSnapshot（旧口径：只发链接行）
+   与 worktreeTreeSnapshot（工作树页签：主行也要）两路共用同一格缓存，一次读喂
+   两张嘴。 */
+async function readWorktreeRows(input, repo) {
   const args = argsFor(input)
   /* gitC + core.quotePath=false（66-refs.js readRefs 同一组合）：porcelain 的关键字
      本身不会被翻译，但 locked 的原因会按 quotePath 规则把非 ASCII 原因引成八进制
      （实测：`locked "\345\217\230..."`），关掉它 tooltip 里才是人话。 */
   const listed = await gitC(args, ['-c', 'core.quotePath=false', 'worktree', 'list', '--porcelain'], null, {})
   if (listed.exitCode !== 0) {
-    return { ok: false, repo: repo === undefined ? null : repo, error: 'not-a-repository', stderr: listed.stderr, noGit: gitMissing(listed), worktrees: [] }
+    return { ok: false, repo: repo === undefined ? null : repo, error: 'not-a-repository', stderr: listed.stderr, noGit: gitMissing(listed), rows: [] }
   }
-  const out = parseWorktreeRows(listed.stdout)
-  /* 新口径：只留 `git worktree add` 出来的链接工作区。git 保证 `worktree list`
-     把主工作区排成第一条记录，直接丢头一条；bare 记录只会是主仓库（bare 的仓库
-     没有工作区，add 不出来），一并丢。detached / prunable / locked 的链接工作区
-     保留 —— 它们同样是 worktree add 出来的，客户端已有对应的灰行与不可点逻辑。 */
+  return { ok: true, repo: listed.cwd, rows: parseWorktreeRows(listed.stdout) }
+}
+
+/* porcelain 全记录 → 旧口径的「只含链接工作区」清单（git/worktrees 答复的形状）：
+   git 保证主工作区排成第一条记录，丢头一条；bare 记录只会是主仓库（bare 的仓库
+   没有工作区，add 不出来），一并丢。detached / prunable / locked 的链接工作区
+   保留 —— 它们同样是 worktree add 出来的，客户端已有对应的灰行与不可点逻辑。 */
+function linkedWorktreesOf(rows) {
   const linked = []
-  for (let i = 1; i < out.length; i += 1) {
-    if (out[i].bare === true) continue
-    linked.push(out[i])
+  for (let i = 1; i < rows.length; i += 1) {
+    if (rows[i].bare === true) continue
+    linked.push(rows[i])
   }
-  return { ok: true, repo: listed.cwd, worktrees: linked }
+  return linked
 }
 
 /* 与 refsSnapshot 同款的外壳：请求没点名仓库就按会话工作区直接读（git 自己会落到
-   那个目录），点名了就走读缓存。 */
+   那个目录），点名了就走读缓存。缓存里存的是上面 readWorktreeRows 的全记录形状，
+   这里在缓存外折出旧口径的答复 —— 答复形状（ok/repo/worktrees）与缓存换代前
+   逐字节一致，客户端 25-worktree.js 那块一个字节都不用动。 */
 async function worktreesSnapshot(input) {
   const repo = repoFrom(input, null)
-  if (repo === undefined) return await readWorktrees(input, undefined)
-  return await cached(repo, 'worktrees', function () { return readWorktrees(input, repo) })
+  if (repo === undefined) {
+    const read = await readWorktreeRows(input, undefined)
+    if (read.ok !== true) {
+      return { ok: false, repo: read.repo, error: read.error, stderr: read.stderr, noGit: read.noGit, worktrees: [] }
+    }
+    return { ok: true, repo: read.repo, worktrees: linkedWorktreesOf(read.rows) }
+  }
+  const read = await cached(repo, 'worktrees', function () { return readWorktreeRows(input, repo) })
+  if (read.ok !== true) {
+    return { ok: false, repo: read.repo, error: read.error, stderr: read.stderr, noGit: read.noGit, worktrees: [] }
+  }
+  return { ok: true, repo: read.repo, worktrees: linkedWorktreesOf(read.rows) }
+}
+
+/* ─────────────── worktree 全景树（工作树页签的读，只读聚合）─────────────── */
+
+/* 「工作树」页签（客户端 26-wtreepane.js）的数据：把仓库清单（git/repos 同源的
+    readWorkspaceRepos —— 工作区扫描 + 手动登记，与左栏仓库列表同一份账）里的
+    **每个仓库**各读一遍 worktree 全记录（上面的 readWorktreeRows，逐仓吃同一格
+    'worktrees' 读缓存、失效随整仓走 —— 与 refs 同寿命），组装成
+      { ok, workspace, effective, groups: [{ repo, ok, error, note, noGit, rows }] }
+    rows 的行带 path / branch（短名）/ head / detached / bare / locked+lockReason /
+    prunable+pruneReason / isMain（path==仓库根，尾部斜杠归一）/ isEffective（
+    path==生效仓库，同样归一）。单个仓库读失败只把它那组标成 ok:false + 原因，
+    不整体失败。
+
+    生效仓库（请求带 repo，缺省=会话工作区）本身是链接工作区、而它的主仓库不在
+    清单里时：用 git/wt-main 同源的 wtMainSnapshot（tag 'wt-main'，与 worktree
+    主目录块同格缓存）找到主仓库，补一个主仓库的组；到这一步还没有生效仓库自己
+    的组（清单里没有它、也不是哪个清单仓库的主仓库）时，补它自己一组 —— 左栏
+    仓库列表永远种着生效仓库（reposShown），这页的组清单与它对齐。
+
+    生效行的是谁由**请求**说了算（客户端每次都带当前生效仓库），宿主不算账：
+    面板切了仓库，重读一次（缓存热时毫秒级）就行。 */
+function wtTreeRowOf(row, repoRoot, effective) {
+  const path = isStr(row.path) ? row.path : ''
+  const same = function (one, other) { return repoKeyOf(one) === repoKeyOf(other) }
+  return {
+    path: path,
+    head: isStr(row.head) ? row.head : '',
+    branch: isStr(row.branch) ? row.branch : '',
+    detached: row.detached === true,
+    bare: row.bare === true,
+    locked: row.locked === true,
+    lockReason: isStr(row.lockReason) ? row.lockReason : '',
+    prunable: row.prunable === true,
+    pruneReason: isStr(row.pruneReason) ? row.pruneReason : '',
+    isMain: same(path, repoRoot),
+    isEffective: effective.length > 0 && same(path, effective),
+  }
+}
+
+async function wtTreeGroupFor(input, repoPath, effective) {
+  try {
+    const read = await cached(repoPath, 'worktrees', function () {
+      return readWorktreeRows(Object.assign({}, input, { repo: repoPath }), repoPath)
+    })
+    if (read.ok !== true) {
+      return { repo: repoPath, ok: false, error: read.error === undefined ? 'not-a-repository' : read.error,
+        note: '', noGit: read.noGit === true, rows: [] }
+    }
+    const rows = []
+    const listed = Array.isArray(read.rows) ? read.rows : []
+    for (let i = 0; i < listed.length; i += 1) {
+      const row = listed[i]
+      if (row == null) continue
+      rows.push(wtTreeRowOf(row, repoPath, effective))
+    }
+    return { repo: repoPath, ok: true, error: '', note: '', noGit: false, rows: rows }
+  } catch (error) {
+    /* 单仓读失败（运输层拒绝、通道断）不拖垮整页：这一组退成带原因的灰组。 */
+    return { repo: repoPath, ok: false, error: 'read-failed',
+      note: String(error != null && error.message !== undefined ? error.message : error), noGit: false, rows: [] }
+  }
+}
+
+async function worktreeTreeSnapshot(input) {
+  const listing = await readWorkspaceRepos(input)
+  const effectiveRaw = repoFrom(input)
+  const effective = isStr(effectiveRaw) && effectiveRaw.length > 0 ? repoKeyOf(effectiveRaw) : ''
+  if (listing.ok !== true) {
+    return { ok: false, error: listing.error, workspace: listing.workspace, effective: effective, groups: [] }
+  }
+  const repos = Array.isArray(listing.repos) ? listing.repos : []
+  const groups = []
+  let hasEffective = false
+  for (let i = 0; i < repos.length; i += 1) {
+    const one = repos[i]
+    if (!isStr(one) || one.length === 0) continue
+    if (effective.length > 0 && repoKeyOf(one) === effective) hasEffective = true
+    groups.push(await wtTreeGroupFor(input, one, effective))
+  }
+  if (effective.length > 0 && hasEffective !== true) {
+    const main = await wtMainSnapshot(Object.assign({}, input, { repo: effectiveRaw }))
+    if (main != null && main.ok === true && main.kind === 'linked'
+      && isStr(main.mainDir) && main.mainDir.length > 0) {
+      let known = false
+      for (let i = 0; i < groups.length; i += 1) {
+        if (repoKeyOf(groups[i].repo) === repoKeyOf(main.mainDir)) { known = true; break }
+      }
+      if (known !== true) {
+        groups.push(await wtTreeGroupFor(input, main.mainDir, effective))
+        if (repoKeyOf(main.mainDir) === effective) hasEffective = true
+      }
+    }
+    if (hasEffective !== true) {
+      groups.push(await wtTreeGroupFor(input, effectiveRaw, effective))
+    }
+  }
+  return { ok: true, workspace: listing.workspace, effective: effective, groups: groups }
 }
 
 /* ─────────────── worktree add（v1.3 起的第一条写路径，第二条 remove 在下面）─────────────── */

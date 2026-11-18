@@ -772,12 +772,12 @@ textarea.dsh-git-input{resize:vertical}
     却另起 dsh-git-wt- 前缀 —— 仓库块的行数是测试按个数认的（gp44 数 repo-box /
     repo-row），工作树块混进同一批类名就会把那些账搅乱。行内的小记号（●、图标、
     三角、↑↓）直接复用没人按个数认的类。 */
-.dsh-git-repo-box,.dsh-git-wt-box{flex:none;margin:6px 6px 10px;padding:2px 3px 5px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-2)}
+.dsh-git-repo-box,.dsh-git-wt-box,.dsh-git-wtree-group{flex:none;margin:6px 6px 10px;padding:2px 3px 5px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-2)}
 .dsh-git-repo-head,.dsh-git-wt-head{display:flex;align-items:center;gap:5px;min-height:20px;padding:3px 5px;border-radius:5px;color:var(--dsw-alias-label-primary);font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;-webkit-user-select:none;user-select:none}
 .dsh-git-repo-head:hover,.dsh-git-wt-head:hover{background:var(--dsw-alias-interactive-bg-hover)}
-.dsh-git-repo-row,.dsh-git-wt-row{display:flex;align-items:center;gap:5px;min-height:20px;padding:1px 5px;border-radius:5px;font-size:11px;cursor:pointer;white-space:nowrap;-webkit-user-select:none;user-select:none}
+.dsh-git-repo-row,.dsh-git-wt-row,.dsh-git-wtree-row{display:flex;align-items:center;gap:5px;min-height:20px;padding:1px 5px;border-radius:5px;font-size:11px;cursor:pointer;white-space:nowrap;-webkit-user-select:none;user-select:none}
 .dsh-git-repo-row:hover,.dsh-git-wt-row:hover{background:var(--dsw-alias-interactive-bg-hover)}
-.dsh-git-repo-gone,.dsh-git-wt-gone{opacity:.55}
+.dsh-git-repo-gone,.dsh-git-wt-gone,.dsh-git-wtree-gone{opacity:.55}
 /* 行尾右侧的一簇（↑↓ 徽章、⚠、🔒）：贴右缘、不抢名字的宽度 —— 名字那格是 flex
     收缩的第一顺位，徽章数字再多也只是挤名字的省略号，不把行撑爆。 */
 .dsh-git-wt-right{margin-left:auto;display:inline-flex;align-items:center;gap:4px;flex:none}
@@ -819,6 +819,39 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-wt-note{margin:3px 5px 0;padding:2px 6px;border-radius:4px;font-size:10px;line-height:14px;white-space:pre-line;cursor:pointer}
 .dsh-git-wt-note-ok{color:var(--dsw-alias-state-success-primary)}
 .dsh-git-wt-note-bad{color:var(--dsw-alias-state-error-primary)}
+
+/* ── 工作树页签（26-wtreepane.js，每仓库一组的 worktree 全景）──
+    观感与仓库块 / worktree 块同族的实现方式与那两块相同：组容器、行、灰行与
+    .dsh-git-repo-box / -row / -gone 共用同一组声明（上面那几条分组选择器里已把
+    dsh-git-wtree-group / -row / -gone 并进去）；结构类名却全部另起 dsh-git-wtree-
+    前缀 —— dsh-git-repo-row / dsh-git-wt-row 的个数是测试按个数认的（gp44 /
+    gp57 / gp60），这一页的行一个都不混进那批账。行内小记号（●、图标格、两段式
+    名字、↑↓ 徽章）仍复用没人按个数认的小类，25-worktree.js 的同一条先例。 */
+.dsh-git-wtree{flex:1;display:flex;flex-direction:column;min-height:0}
+.dsh-git-wtree-intro{flex:none;display:flex;align-items:center;gap:8px;padding:5px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);font-size:10px;line-height:14px;color:var(--dsw-alias-label-secondary);white-space:nowrap}
+.dsh-git-wtree-refreshing{flex:none}
+.dsh-git-wtree-list{flex:1;min-height:0;overflow:auto;padding:6px 8px 10px}
+.dsh-git-wtree-group{margin:0 0 8px}
+.dsh-git-wtree-ghead{display:flex;align-items:center;gap:5px;margin-top:4px;min-height:18px;padding:1px 5px;border-radius:5px;font-size:10px;font-weight:600;color:var(--dsw-alias-label-secondary);cursor:pointer;white-space:nowrap;-webkit-user-select:none;user-select:none}
+.dsh-git-wtree-ghead:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dsh-git-wtree-ghead .dsh-git-repo-glyph{width:12px;height:12px}
+.dsh-git-wtree-gname{flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.dsh-git-wtree-row:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dsh-git-wtree-dead{cursor:default}
+/* 生效仓库所在行：高亮底色 + 左缘一道品牌色竖条 —— 与仓库行「当前」的读法同族
+    （dsh-git-repo-cur 的 inset 影），● 徽标由行内那只 dsh-git-repo-mark 画。 */
+.dsh-git-wtree-hit,.dsh-git-wtree-hit:hover{background:var(--dsw-alias-interactive-bg-hover);box-shadow:inset 2px 0 0 var(--dsw-alias-brand-primary)}
+/* 主目录行的「当前」徽标：一枚描边小药丸（dsh-git-repo-wt 同一副长相，字换品牌色
+    —— 它说的是「这是主工作区」，与灰色的 wt 小标一望即分）。 */
+.dsh-git-wtree-now{flex:none;padding:0 4px;border-radius:3px;border:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-brand-primary);font-size:9px;line-height:13px;white-space:nowrap;cursor:default}
+/* 路径列：贴名字右侧、右对齐、超长省略 —— 全路径在行 tooltip 里（与仓库块 /
+    worktree 块同一惯例：行上短名，悬停给全路径）。flex:1 让它吃掉行尾徽章之前的
+    所有空档，短路径时徽章仍然贴右缘。 */
+.dsh-git-wtree-path{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right;color:var(--dsw-alias-label-secondary);font-size:10px}
+.dsh-git-wtree-right{display:inline-flex;align-items:center;gap:4px;flex:none}
+/* 失败组的灰说明行（该组退化为带原因的灰组）：缩进对齐行名（18px 是 caret+图标
+    两格的宽），压暗程度与失效行同一档 —— 它说「为什么读不出来」，不是清单行。 */
+.dsh-git-wtree-gnote{display:flex;align-items:center;min-height:20px;padding:1px 5px 1px 22px;border-radius:5px;font-size:10px;color:var(--dsw-alias-label-secondary);opacity:.55;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* ── 差异页右列：这批修改的来源文件列表 ──
    补丁区 flex:1、右列固定 240px。右列的行复用树行那套类名（dsh-git-trow），

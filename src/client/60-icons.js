@@ -22,6 +22,10 @@
          starts with its twisty and a repo row starts with this box, and the two
          blocks fall apart without reading a single label. */
       repo: ['M8 2.6 L13 5 L13 11 L8 13.4 L3 11 L3 5 Z', 'M3 5 L8 7.4 L13 5', 'M8 7.4 V13.4'],
+      /* 一枚链接工作树（git worktree add 出来的那棵）：分支叉的两颗圆点 + 一条
+         弯过去的叉线 —— 与主目录行那颗立方体（repo）一眼分得开，画法同族
+         （16 格描边、圆点用两段 A 弧拼成，search 那颗圆同一路数）。 */
+      wtlink: ['M4.6 6.4 V9.6', 'M4.6 2.7 A1.9 1.9 0 1 0 4.6 6.5 A1.9 1.9 0 1 0 4.6 2.7', 'M11.4 9.5 A1.9 1.9 0 1 0 11.4 13.3 A1.9 1.9 0 1 0 11.4 9.5', 'M4.6 6.5 A6.9 6.9 0 0 1 11.4 9.5'],
       undo: ['M5.9 3.6 L2.7 6.8 L5.9 10', 'M2.7 6.8 H9.3 A3.5 3.5 0 0 1 9.3 13.8 H7.3'],
     }
     /* One field, one clear button: the × sits inside the box, where the eye

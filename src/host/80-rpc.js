@@ -277,6 +277,13 @@ onRpc('git/branches', function (input) { return branchesSnapshot(input) })
     客户端永远按生效仓库来问（80-panel.js 里跟着 appliedRepo + freshAt 的 effect）。 */
 onRpc('git/worktrees', function (input) { return worktreesSnapshot(input) })
 
+/* worktree 全景树（65-worktree.js 下半）：工作树页签（客户端 26-wtreepane.js）的
+    读 —— 仓库清单（readWorkspaceRepos）里的每个仓库各吃一格 'worktrees' 读缓存，
+    组装成组树（组=仓库，组内主行+链接行，行带 isMain/isEffective）。聚合读本身
+    不另立缓存格：组账的新鲜度完全由各仓的 'worktrees' 一格承担，失效随整仓走；
+    生效仓库是链接工作区时借 wtMainSnapshot（tag 'wt-main'）补主仓库那一组。 */
+onRpc('git/worktree-tree', function (input) { return worktreeTreeSnapshot(input) })
+
 /* worktree 的主目录（65-worktree.js 下半）：git/wt-main 是「这个目录是什么身份、
     它的主仓库在哪」的一次性读（读缓存 tag 'wt-main'，随整仓失效）；答复另带映射
     三件套 —— mappedRule（命中的映射规则）、mainVia（config 来源下的 'manual' /
