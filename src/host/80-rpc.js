@@ -9,7 +9,7 @@
    pays for it, and a "which git" answer can never be half-applied. */
 /* ── 宿主读耗时观测日志（~/.dsh/logs/dsh-git-idea-host.log）──
  *
- * 「慢」的定位以前只能靠猜：整树 4–6s、命令页全扫 4s+、路径读 1.5s——到底是哪条
+ * 「慢」的定位以前只能靠猜：整树 4–6s、路径读 1.5s —— 到底是哪条
  * 命令哪个仓库慢，没有账可翻。这里给每一个 RPC 调用记一行：时刻、方法名、仓库
  * （payload.repo 或解析到的会话 cwd，拿不到记 -）、paths 条数（有则记）、耗时
  * ms、ok / 错误摘要。落盘复用 client-log（src/pkg/host-pre.js）的轮转思路：
@@ -34,6 +34,20 @@ const rpclogQueue = []
 let rpclogTimer = null
 let rpclogDirTried = false
 let rpclogDropped = 0
+
+/* DSH_HOME 的取法和 configPath（70-config.js）是同一个问题，所以是同一个问法：
+   `printf %s "${DSH_HOME:-$HOME/.dsh}"`。缓存一份 —— 每次冲刷都问一遍 shell，只是
+   把同一次 spawn 的答案换个地方存。日志跟 client-log / 面板命令记录住同一个家
+   （$DSH_HOME/logs/）。 */
+let rpclogHomeCache
+
+async function rpclogHome() {
+  if (rpclogHomeCache !== undefined) return rpclogHomeCache
+  const probe = await invoke('printf %s "${DSH_HOME:-$HOME/.dsh}"', {}, null, { timeoutMs: 10000 })
+  const home = probe.exitCode === 0 ? probe.stdout.trim() : ''
+  rpclogHomeCache = home.length > 0 ? home : null
+  return rpclogHomeCache
+}
 
 function rpclogField(value, cap) {
   const raw = typeof value === 'string' ? value : String(value)
@@ -67,8 +81,8 @@ function rpclogNote(name, input, elapsedMs, error, value) {
   if (typeof rpclogTimer.unref === 'function') rpclogTimer.unref()
 }
 
-/* 攒批冲刷：2 秒的行一次追加完（一条 printf、一次进程）。cmdlogHome() 顺带给出
- * DSH_HOME —— 日志跟 client-log / 面板命令记录住同一个家（$DSH_HOME/logs/）。
+/* 攒批冲刷：2 秒的行一次追加完（一条 printf、一次进程）。rpclogHome() 给出
+ * DSH_HOME（上面那段）。
  * 轮转检查每次冲刷都带上：`stat -c %s` 只问元数据不读内容（client-log 的 fsp.stat
  * 同一个思路，9p 上也就一两 ms），比「攒 256KB 才查一次」的记账法可靠 —— 外部把
  * 文件写大（别的工具、手工）也逃不掉。 */
@@ -77,7 +91,7 @@ function rpclogFlush() {
   const lines = rpclogQueue.splice(0, rpclogQueue.length)
   const dropped = rpclogDropped
   rpclogDropped = 0
-  cmdlogHome().then(function (home) {
+  rpclogHome().then(function (home) {
     if (home === null) return
     const file = home + RPCLOG_BASENAME
     const first = rpclogDirTried !== true
@@ -320,10 +334,10 @@ onRpc('git/repo-applied', function (input) { return appliedRepoSnapshot(input) }
 
 onRpc('git/repo-applied-save', function (input) { return saveAppliedRepo(input) })
 
-/* 面板「命令」页：这个工作区里执行过的所有 git 命令，数据源是 DSH 的会话记录
-   而不是仓库（76-cmdlog.js）。和上面两个 repos 读一样按工作区走，不进读缓存 ——
-   它要的就是「刚刚又跑了什么」；扫描结果由 76 的账本按会话文件 (mtimeMs,size)
-   记账，账热时立即答复、增量刷新走后台，读本身不再每次付全量重扫的钱。 */
+/* 面板「命令」页：这个 git 面板自己执行过的 git 命令，数据源是面板记录器
+   （77-cmdrec.js 的内存环形 + JSONL 持久化），不是仓库 —— 出口只做归位、去重与
+   limit（76-cmdlog.js）。和上面两个 repos 读一样按工作区走，不进读缓存：它要的
+   就是「刚刚又跑了什么」，而记录本身已经立刻在内存里了。读不起 git 进程。 */
 onRpc('git/command-log', function (input) { return commandLogSnapshot(input) })
 
 onRpc('git/commit-detail', function (input) { return commitDetailSnapshot(input) })

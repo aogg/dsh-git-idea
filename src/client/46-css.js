@@ -868,7 +868,7 @@ textarea.dsh-git-input{resize:vertical}
    才是要读的）。 */
 .dsh-git-diffrail-mark{flex:none;margin-left:auto;padding:0 5px;color:var(--dsw-alias-label-secondary);font-size:10px;line-height:15px}
 
-/* ── 命令页（57-cmdlog.js）：会话记录 + 面板执行记录里这个工作区跑过的 git 命令 ── */
+/* ── 命令页（57-cmdlog.js）：这个 git 面板自己执行过的 git 命令 ── */
 .dsh-git-cmd{flex:1;display:flex;flex-direction:column;min-height:0}
 .dsh-git-cmdbar{flex:none;display:flex;align-items:center;gap:8px;padding:5px 8px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2)}
 .dsh-git-cmdfilter{flex:1 1 auto;min-width:80px;border:1px solid var(--dsw-alias-border-l1);border-radius:5px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:2px 6px;outline:none}
@@ -883,7 +883,7 @@ textarea.dsh-git-input{resize:vertical}
    才不会与列名叠印；观感对齐 .dsh-git-diffrail-head：小一号、次级色、字距、
    下边框。时间/耗时两格不在这里重复声明宽度 —— 直接复用数据行的格类，纵向
    对齐由同一个类保证。表头不是行：没有指针、没有悬停、不可选中，点它不发生
-   任何事。来源格贴最右，与数据行行尾的来源徽标/会话号对齐。 */
+   任何事。来源格贴最右，与数据行行尾的来源徽标对齐。 */
 .dsh-git-cmdhead{position:sticky;top:-4px;z-index:1;display:flex;align-items:center;gap:8px;padding:4px 8px;font-size:10px;letter-spacing:.04em;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-2);border-bottom:1px solid var(--dsw-alias-border-l1);-webkit-user-select:none;user-select:none}
 .dsh-git-cmdheadcmd{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
 .dsh-git-cmdheaddesc{flex:0 1 auto}
@@ -899,8 +899,9 @@ textarea.dsh-git-input{resize:vertical}
 .dsh-git-cmdesc{flex:0 1 auto;max-width:32%;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-secondary);font-size:11px}
 .dsh-git-cmdfail{flex:none;color:var(--dsh-alias-state-error-primary);font-size:10px;font-weight:600}
 .dsh-git-cmdsrc{flex:none;color:var(--dsw-alias-label-secondary);font-size:10px}
-/* 「面板」徽标：来自面板自己的执行（77-cmdrec.js），不是 AI 会话；给它一点边框，
-   和会话号那种纯文字区分开。运行中标记（…）同色，结束时由推送换成真退出码。 */
+/* 「面板」徽标：来源只有这一种（77-cmdrec.js 记的面板执行），照样画 —— 它和表头
+   的「来源」配对。给一点边框，免得和旁边的退出码/运行中标记混成一片。运行中标记
+   （…）同色，结束时由推送换成真退出码。 */
 .dsh-git-cmdpanel{padding:0 4px;border:1px solid var(--dsw-alias-border-l1);border-radius:3px}
 .dsh-git-cmdrun{flex:none;color:var(--dsw-alias-label-secondary);font-size:10px;font-weight:600}
 .dsh-git-cmdopen{display:flex;align-items:flex-start;gap:8px;margin:0 8px 4px;padding:6px;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l1);border-left:2px solid var(--dsw-alias-border-l2);border-radius:4px}

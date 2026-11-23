@@ -1,10 +1,10 @@
 /* ─────────────── 面板自己的命令记录器 ───────────────
  *
- * 「命令」页原来只看得见 AI 会话里的 git（76-cmdlog.js 扫会话文件），面板自己经 RPC
- * 跑的 git 一条都不在里面 —— 因为面板走的不是 bash tool，会话文件里根本没有它。这一片
- * 把面板的变更类执行记下来：内存环形缓冲是本会话的事实源，旁边那份 JSONL 是尽力而为的
- * 持久化（换会话/重启之后还能翻到），liveHub（真包的 pkg 前奏，src/pkg/host-pre.js）
- * 把开始/结束实时推给浏览器。
+ * 「命令」页就是这一片记下来的东西：面板自己经 RPC 跑的 git（变更类执行，从
+ * panelMutate / quickRun / switchBranch 这些入口进来）。内存环形缓冲是本会话的事实源，
+ * 旁边那份 JSONL 是尽力而为的持久化（换会话/重启之后还能翻到），liveHub（真包的 pkg
+ * 前奏，src/pkg/host-pre.js）把开始/结束实时推给浏览器；出口在 76-cmdlog.js
+ * （commandLogSnapshot 只取这一片的面板记录）。
  *
  * 三个刻意的取舍：
  *
@@ -21,8 +21,8 @@
  *   命令记录（cmdrecPanelRows）顺手冲一次，或 10 秒没有新记录的定时器到点 —— 宿主
  *   常驻时最多晚 10 秒，等不等到都不影响内存这份事实源。 */
 
-/* 环形上限与会话扫描（76-cmdlog.js 的 CMDLOG_LIMIT_MAX）同一个数：一页最多也就看这么
-   多，再多是给合并去重留的余量，不是给屏幕的。 */
+/* 环形上限与一页的 limit 封顶（76-cmdlog.js 的 CMDLOG_LIMIT_MAX）同一个数：一页最多
+   也就看这么多，再多是给合并去重留的余量，不是给屏幕的。 */
 const CMDREC_MAX = 2000
 const CMDREC_COMMAND_MAX = 2000
 const CMDREC_DESC_MAX = 120
@@ -69,7 +69,8 @@ async function cmdrecFile() {
   return cmdrecFileCache
 }
 
-/* 与 76-cmdlog.js 扫描脚本里的 trimSlash 同一个问题：比较目录时尾部斜杠不作数。 */
+/* 比较目录时尾部斜杠不作数：/x/y 与 /x/y/ 是同一个目录（记录里的 cwd 与工作区
+   路径来自两个地方，尾巴上差一个斜杠是常事）。 */
 function cmdrecTrimSlash(path) {
   return path.length > 1 ? path.replace(/\/+$/, '') : path
 }
@@ -171,7 +172,7 @@ async function cmdrecGit(input, desc, argv, run) {
   return result
 }
 
-/* ── 读侧：把三个来源合成一份 ── */
+/* ── 读侧：内存与文件尾部合成一份 ── */
 
 /* 持久化文件的尾部 + 内存缓冲。同一 id 两边都有时以内存为准（它带着本会话最新的
    退出码），文件只补内存里没有的旧记录。 */
@@ -268,9 +269,9 @@ function cmdrecScopeRows(rows, sessionId, workspace) {
   return out
 }
 
-/* 若干份列表 → 一份：按 time 降序（与会话扫描同一个比较器），有 id 的按 id 去重
-   （文件与内存各一份是常态；会话扫描出来的行没有 id，照单全收），排序在前、去重
-   在后，留的永远是新的那条。 */
+/* 若干份列表 → 一份：按 time 降序，有 id 的按 id 去重（内存与文件尾部各一份是常态，
+   留的是新的那条 —— 它带着最新的退出码）。没有 id 的行照单全收：那种行不该存在，
+   真混进来时宁可多画一条，也不要凭一把猜的 key 吞掉别人。 */
 function cmdrecMerge(lists) {
   const all = []
   for (let i = 0; i < lists.length; i += 1) {

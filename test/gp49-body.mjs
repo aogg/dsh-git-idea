@@ -15,8 +15,8 @@
  *      页开着时跟着 freshAt 重读、切走再切回不重读。6aede2c 把读数改成「弹窗打开即
  *      后台预读、之后所有刷新走后台增量合并」之后，这里接着钉：藏着不发读、打开
  *      即预读（不等切页）、重读在飞不清列表、按行身份合并不重行、展开跟着行走、
- *      没有-id 的会话行跨两次读 key 稳定、刷新失败列表保留错误挂列表上方、liveBus
- *      的 cmdlog-start 对答复里已有的行不再两行。
+ *      同一批记录再读一遍按 id 去重、刷新失败列表保留错误挂列表上方、liveBus 的
+ *      cmdlog-start 对答复里已有的行不再两行。
  *
  * 会话状态用假的 hook props（真环境里是 DSH 注入的 useSession / useSessionStatus，
  * 见 92-chip.js 顶部注释）。桩按真契约补演 dsh-client-ui-renderer 的选择器 hook：
@@ -88,7 +88,7 @@ host.call = function (method, args) {
     const reply = cmdLogReply
     cmdLogReply = null
     if (reply !== null) return Promise.resolve(reply)
-    return Promise.resolve({ ok: true, sessionId: args != null ? args.sessionId : '', commands: [{ id: 'a', time: Date.now(), command: 'git status', desc: '', source: 'session', exitCode: 0 }], truncated: false, warning: '' })
+    return Promise.resolve({ ok: true, sessionId: args != null ? args.sessionId : '', commands: [{ id: 'a', time: Date.now(), command: 'git status', desc: '', source: 'panel', exitCode: 0 }], truncated: false })
   }
   if (method === 'git/panel' && panelReply !== null) { calls.push({ method: method, args: args }); return Promise.resolve(panelReply) }
   return realCall(method, args)
@@ -359,7 +359,7 @@ tree = await settle()
 mark = calls.length
 await clickText(tree, '⟳')
 tree = await settle()
-ok('命令页开着时，⟳ 的 bump 让它自己重扫了一遍', callsOf(mark, 'git/command-log').length === 1)
+ok('命令页开着时，⟳ 的 bump 让它自己重读了一遍', callsOf(mark, 'git/command-log').length === 1)
 mark = calls.length
 await clickText(tree, '历史')
 tree = await settle()
@@ -386,9 +386,9 @@ tree = await openPanel()
 ok('弹窗一打开就发了一次命令读（面板开在「历史」，没切页签）', callsOf(mark, 'git/command-log').length === 1)
 /* 第二次答复：同 id 行换退出码、另多一条新命令 —— 增量合并看的就这两件事。 */
 holdOpen.done({ ok: true, sessionId: 's-1', commands: [
-  { id: 'a', time: cmdT0, command: 'git status', desc: '', source: 'session', exitCode: 3 },
-  { id: 'b', time: cmdT0 + 60000, command: 'git log --oneline', desc: '', source: 'session', exitCode: 0 },
-], truncated: false, warning: '' })
+  { id: 'a', time: cmdT0, command: 'git status', desc: '', source: 'panel', exitCode: 3 },
+  { id: 'b', time: cmdT0 + 60000, command: 'git log --oneline', desc: '', source: 'panel', exitCode: 0 },
+], truncated: false })
 tree = await settle()
 await clickText(tree, '命令')
 tree = await settle()
@@ -412,11 +412,11 @@ ok('读在飞：列表照常画（2 行、展开还在），不回到「正在�
   && cmdOpenOf(tree, 'git status') !== undefined)
 ok('读在飞：条数旁挂着一句轻的「刷新中…」', hasText(tree, '刷新中…') === true)
 holdReread.done({ ok: true, sessionId: 's-1', commands: [
-  { id: 'c', time: cmdT0 + 120000, command: 'git add -A', desc: '', source: 'session', exitCode: 0 },
-  { sessionId: 's-9', time: cmdT0 + 90000, command: 'git fetch --all', desc: '', source: 'session', exitCode: 0 },
-  { id: 'b', time: cmdT0 + 60000, command: 'git log --oneline', desc: '', source: 'session', exitCode: 2 },
-  { id: 'a', time: cmdT0, command: 'git status', desc: '', source: 'session', exitCode: 3 },
-], truncated: false, warning: '' })
+  { id: 'c', time: cmdT0 + 120000, command: 'git add -A', desc: '', source: 'panel', exitCode: 0 },
+  { id: 'd', time: cmdT0 + 90000, command: 'git fetch --all', desc: '', source: 'panel', exitCode: 0 },
+  { id: 'b', time: cmdT0 + 60000, command: 'git log --oneline', desc: '', source: 'panel', exitCode: 2 },
+  { id: 'a', time: cmdT0, command: 'git status', desc: '', source: 'panel', exitCode: 3 },
+], truncated: false })
 tree = await settle()
 ok('答复到了：新答复独有的行收进（4 行），同一行没有第二份',
   cmdRows(tree).length === 4 && cmdTextCount(tree, 'git status') === 1
@@ -426,16 +426,18 @@ ok('旧行被新答复就地换新：b 的退出码从 0 换成失败徽标 2',
 ok('展开状态跟着行走：重读、合并之后 git status 那行还开着', cmdOpenOf(tree, 'git status') !== undefined)
 
 console.log('')
-console.log('=== 命令页：没有 id 的会话行跨两次读也是同一行 ===')
+console.log('=== 命令页：同一份记录再读一遍，按 id 去重不重行 ===')
+/* 面板行都带 id（77-cmdrec.js 生成），身份就是 'p' + id —— 同一批记录读多少遍都还是
+   那几行。这里故意让 git fetch --all 落在另一个会话号上：行身份不认会话号，只认 id。 */
 cmdLogReply = { ok: true, sessionId: 's-1', commands: [
-  { id: 'c', time: cmdT0 + 120000, command: 'git add -A', desc: '', source: 'session', exitCode: 0 },
-  { sessionId: 's-9', time: cmdT0 + 90000, command: 'git fetch --all', desc: '', source: 'session', exitCode: 0 },
-  { id: 'b', time: cmdT0 + 60000, command: 'git log --oneline', desc: '', source: 'session', exitCode: 2 },
-  { id: 'a', time: cmdT0, command: 'git status', desc: '', source: 'session', exitCode: 3 },
-], truncated: false, warning: '' }
+  { id: 'c', time: cmdT0 + 120000, command: 'git add -A', desc: '', source: 'panel', exitCode: 0 },
+  { id: 'd', time: cmdT0 + 90000, command: 'git fetch --all', desc: '', source: 'panel', exitCode: 0 },
+  { id: 'b', time: cmdT0 + 60000, command: 'git log --oneline', desc: '', source: 'panel', exitCode: 2 },
+  { id: 'a', time: cmdT0, command: 'git status', desc: '', source: 'panel', exitCode: 3 },
+], truncated: false }
 await clickText(tree, '重新读取')
 tree = await settle()
-ok('同一份会话行（同会话同时刻同命令）再读一遍：git fetch --all 还是只有一份',
+ok('同一批记录再读一遍：4 行还是 4 行，git fetch --all 只有一份',
   cmdRows(tree).length === 4 && cmdTextCount(tree, 'git fetch --all') === 1)
 ok('读完放下：展开还在、「刷新中…」放掉、也没有挂着错误', cmdOpenOf(tree, 'git status') !== undefined
   && hasText(tree, '刷新中…') === false
@@ -443,14 +445,14 @@ ok('读完放下：展开还在、「刷新中…」放掉、也没有挂着错�
 
 console.log('')
 console.log('=== 命令页：后台刷新失败不清列表，错误原话挂在列表上方 ===')
-cmdLogReply = { ok: false, error: '沙箱拒绝了 node，会话记录读不了' }
+cmdLogReply = { ok: false, error: '无法确定这个会话的工作区，读不了它的命令记录' }
 await clickText(tree, '重新读取')
 tree = await settle()
 ok('刷新失败：列表原样保留（4 行还在，不是整页换错）',
   cmdRows(tree).length === 4 && cmdTextCount(tree, 'git status') === 1)
 const cmdSeen = collect(tree)
 const cmdErrAt = cmdSeen.findIndex((n) => String(n.props.className || '').indexOf('dsh-git-error') >= 0
-  && textOf(n).indexOf('沙箱拒绝了 node') >= 0)
+  && textOf(n).indexOf('无法确定这个会话的工作区') >= 0)
 const cmdListAt = cmdSeen.findIndex((n) => n.props.className === 'dsh-git-cmdlist')
 ok('错误原话一个字不改，画在列表上方（不是顶掉列表）',
   cmdErrAt >= 0 && cmdListAt >= 0 && cmdErrAt < cmdListAt)
@@ -472,7 +474,7 @@ const bus49 = {
 globalThis.liveBus = bus49
 cmdLogReply = { ok: true, sessionId: 's-1', commands: [
   { id: 'x', time: cmdT0 + 180000, command: 'git push', desc: '', source: 'panel', exitCode: 0 },
-], truncated: false, warning: '' }
+], truncated: false }
 mark = calls.length
 tree = await settle()
 await clickText(tree, '命令')

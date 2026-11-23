@@ -181,7 +181,7 @@ async function dropRun(input, desc) {
 /* ── git/quick：跑读者自定义的一条命令行 ──
  *
  * 快捷命令模板里的变量在客户端代值，这里拿到的是一条可以直接交给 shell 的命令行 ——
- * 和 configPath / 命令页扫描同一个先例：invoke 本来就是执行 shell 行的。workdir 是
+ * 和 configPath 同一个先例：invoke 本来就是执行 shell 行的。workdir 是
  * 仓库、沙箱随会话（sandboxFor），所以一条 `git push` 在只读会话里会被拒，答复里带着
  * sandboxDenied 说得出来。
  *

@@ -293,7 +293,7 @@ async function readFileDiff(input) {
 
    · 不套展示用的两道截断（DIFF_LINES_MAX / DIFF_CHARS_MAX）——「完整」是这条
      命令的硬要求，半份补丁粘给 AI 不是解释这次修改，是误导。读取上限放宽到
-     「命令」页同档（16MB，76-cmdlog.js 的 CMDLOG_TIMEOUT 同一档）；transport
+     16MB（PATCH_TEXT_MAX_BYTES，与 blame 同一档）；transport
      仍然截断时整件事不发生（ok:false，error:'patch-too-large'）—— revert-paths
      对半份补丁的同一条规矩：apply 不得半份，复制也不得半份。
    · 答复多带一份面向 AI 的头部（header）与拼好的全文（text = header + patch）：

@@ -2583,7 +2583,7 @@
          null = 这个会话还没有任何读数：第一次生成发生在弹窗打开那一刻的后台预读里。
          读数里记着它属于哪个会话 —— 组件没重挂而 sessionId 变了的场合（防御；DSH
          换会话通常是整块重挂），旧列表不当作「已读」，也不当作「自己人」（合并时
-         sessionId 对不上原样返回，57-cmdlog.js）。 */
+         sessionId 对不上原样返回）。 */
       const [cmdLog, setCmdLog] = React.useState(null)
       /* 在飞的那次读取的序号：连续两次「重新读取」时，旧答复不许翻盘（和
          repoEpoch 是同一个问题，见 10-state.js）。opens 数面板打开过几次 —— 每次
@@ -3711,14 +3711,14 @@
          清空、绝不置 loading，读完按行身份增量合并 —— 屏上只多出新的几行、正在跑的
          行补上退出码。
 
-         与其它「切到那页才读」的读一样，这里不因切走页签作废在飞的那次读：扫一遍
-         不该白扫。答复落地全走函数式 setState，基于**最新**的 state 合并 —— 在飞
+         与其它「切到那页才读」的读一样，这里不因切走页签作废在飞的那次读：读一遍
+         不该白读。答复落地全走函数式 setState，基于**最新**的 state 合并 —— 在飞
          期间 liveBus 插进来的行不会被旧闭包里的旧列表覆盖回去；sessionId 对不上时
-         原样返回（那是换会话前留下的读数，谁也不许动它）。 */
-      /* full === true 是「重新读取」按钮的强制全量：Host 不看账本、同步整扫一遍
-         （76-cmdlog.js）。其余的读（打开预读、切页补读、bump 补读）都走账本路 ——
-         账热时立即答复，增量刷新在后台完成后经 cmdlog-refresh 推送并回来。 */
-      const readCmdLog = function (at, opens, full) {
+         原样返回（那是换会话前留下的读数，谁也不许动它）。
+
+         「重新读取」与打开预读、切页补读、bump 补读走的是同一条路：Host 那边只有
+         「把面板记录取一遍」一件事（76-cmdlog.js），没有需要强制的全量扫描。 */
+      const readCmdLog = function (at, opens) {
         cmdLogBox.seq += 1
         const seq = cmdLogBox.seq
         setCmdLog(function (previous) {
@@ -3732,14 +3732,14 @@
           }
           return { sessionId: sessionId, loading: true, at: at, opens: opens }
         })
-        callHost('git/command-log', { sessionId: sessionId, limit: 500, full: full === true || undefined }).then(function (data) {
+        callHost('git/command-log', { sessionId: sessionId, limit: 500 }).then(function (data) {
           if (seq !== cmdLogBox.seq) return
           setCmdLog(function (previous) {
             if (previous == null || previous.sessionId !== sessionId) return previous
-            /* ok:false（沙箱拒绝、PATH 上没有 node、超时……）是「读得了答复、读不了
-               记录」：原话在 data.error 里，折成空列表就成了「这个项目没跑过 git」。 */
+            /* ok:false（确定不了会话工作区、RPC 本身失败……）是「读得了答复、读不了
+               记录」：原话在 data.error 里，折成空列表就成了「这个面板没跑过 git」。 */
             if (data == null || data.ok !== true) {
-              const said = data != null && text(data.error).length > 0 ? text(data.error) : '读不了会话记录'
+              const said = data != null && text(data.error).length > 0 ? text(data.error) : '读不了命令记录'
               /* 手里有列表：错误不顶掉列表 —— 原话记进读数，画的事归 57-cmdlog.js
                  （挂在列表上方）；只有首读就失败才整页只显错误。 */
               if (Array.isArray(previous.commands) !== true) {
@@ -3752,12 +3752,6 @@
               /* 增量合并，不是整表翻新：同 key 新答复为准，旧独有的行保留 */
               commands: cmdlogMergeRows(previous.commands, Array.isArray(data.commands) ? data.commands : [], CMDLOG_LIVE_MAX),
               truncated: data.truncated === true,
-              /* 会话扫描那一路读不了（没有 node、被沙箱拒了……）而面板记录给得出来时，
-                 Host 把原话放在 warning 里随行 —— 折成空字段就成了没说过。 */
-              warning: text(data.warning),
-              /* 工作区路径随答复记账：cmdlog-refresh 推送按它对号 —— 推送不带会话号，
-                 账本又是按工作区一本，没有这格就没法认领（见下面 live 订阅）。 */
-              workspace: text(data.workspace),
               at: at,
               opens: opens,
               refreshing: false,
@@ -3818,11 +3812,7 @@
          多半已经在最近一次答复里了，再前插一次就是两行；合并还会把它摆到 time 降序
          该在的位置（最新，自然在最前）。cmdlog-exit 按 id 就地改退出码（带 ms 时
          连耗时一起，老宿主的推送没有 ms 就只改退出码 —— 向后兼容）。函数式
-         setState 保证缝合落在最新的列表上，不与在飞的答复互相覆盖。
-
-         cmdlog-refresh（76-cmdlog.js 的账本后台刷新）也是同一条合并路：推送按
-         workspace 对号 —— 这格是答复随行的（readCmdLog 记账），对不上就整包不理，
-         那是别的工作区的账；手里还没有列表时同样不理，下一轮读自会带来新账。 */
+         setState 保证缝合落在最新的列表上，不与在飞的答复互相覆盖。 */
       React.useEffect(function () {
         if (typeof liveBus === 'undefined' || liveBus == null || typeof liveBus.subscribe !== 'function') return undefined
         return liveBus.subscribe(function (message) {
@@ -3848,13 +3838,6 @@
                 })
               })
               return moved === true ? Object.assign({}, previous, { commands: next }) : previous
-            }
-            if (message.kind === 'cmdlog-refresh') {
-              if (Array.isArray(previous.commands) !== true) return previous
-              if (previous.workspace.length === 0 || message.workspace !== previous.workspace) return previous
-              if (Array.isArray(message.commands) !== true) return previous
-              return Object.assign({}, previous,
-                { commands: cmdlogMergeRows(previous.commands, message.commands, CMDLOG_LIVE_MAX) })
             }
             return previous
           })
@@ -5717,10 +5700,10 @@
               h('button', { type: 'button', className: 'dsh-git-tab' + (tab === 'wtree' ? ' dsh-git-tab-on' : ''),
                 title: '工作树全景：每个仓库一组 —— 主目录与它经 git worktree add 建出的链接工作树',
                 onClick: function () { setTab('wtree'); setDiffTarget(null); setMergeTarget(null) } }, '工作树'),
-              /* 命令页不带数字角标：会话记录里有多少条 git 命令，这个数既不稳定也
+              /* 命令页不带数字角标：面板执行过多少条 git 命令，这个数既不稳定也
                  不指导任何操作，放在页签上只是噪音；数量在读进来之后说在页面里。 */
               h('button', { type: 'button', className: 'dsh-git-tab' + (tab === 'cmdlog' ? ' dsh-git-tab-on' : ''),
-                title: '这个项目执行过的 git 命令（来自 DSH 会话记录）',
+                title: '这个 git 面板自己执行过的 git 命令',
                 onClick: function () { setTab('cmdlog'); setDiffTarget(null); setMergeTarget(null) } }, '命令'),
               /* 配置页分两档：项目配置只关于眼前这个仓库（只写 --local 的提交身份、
                  git 自己的两个换行键、远端清单），全局配置（79-globalconfig.js）管
@@ -6069,11 +6052,12 @@
           onPick: function (path) { repoSingle('changes', path) },
         })
       } else if (tab === 'cmdlog') {
-        /* 只读页：列表是上面那条后台路攒下的读数。点「重新读取」也是同一条路：
-           不清列表、不置 loading，读完增量合并 —— 和弹窗打开、bump 一个待遇。 */
+        /* 只读页：列表是上面那条后台路攒下的读数（面板自己执行过的 git 命令）。
+           点「重新读取」也是同一条路：不清列表、不置 loading，读完增量合并 —— 和
+           弹窗打开、bump 一个待遇。 */
         body = h(CommandLogPane, {
           log: cmdLog,
-          onReload: function () { readCmdLog(freshAt, cmdLogBox.opens, true) },
+          onReload: function () { readCmdLog(freshAt, cmdLogBox.opens) },
         })
       } else if (tab === 'config') {
         /* 远端表一变就当作仓库动过一次：分支树的「远程」分组、顶栏 ↑ 的数都从

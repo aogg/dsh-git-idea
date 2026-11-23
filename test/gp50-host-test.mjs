@@ -231,6 +231,29 @@ console.log('=== git/conflict-save：字节一致、git add 生效、命令页�
 }
 
 console.log('')
+console.log('=== 命令页出口：只取面板记录（limit / 截断 / 按会话与工作区归位） ===')
+{
+  /* 这一块钉的是 76-cmdlog.js 的出口语义（会话扫描那一路已整个删除）。用同一个
+     body 实例先记两条再读：记录先进内存环形，读侧自然带着它们；持久化文件那一路
+     不在这一块的判据里（同实例读到的行本来就是内存那份）。 */
+  const a = makeBody()
+  await a.H('git/stage')({ repo: R, sessionCwd: R, sessionId: 'gp50-log', paths: ['a.txt'] })
+  await a.H('git/stage')({ repo: R, sessionCwd: R, sessionId: 'gp50-log', paths: ['both.txt'] })
+  const full = await a.H('git/command-log')({ repo: R, sessionCwd: R, sessionId: 'gp50-log', limit: 200 })
+  check('答复形状只剩面板那一份：没有 warning / workspace 字段，两条记录都在',
+    full.ok === true && full.warning === undefined && full.workspace === undefined
+    && full.commands.length === 2 && full.truncated === false
+    && full.commands.every((c) => c.source === 'panel' && typeof c.id === 'string'))
+  const tiny = await a.H('git/command-log')({ repo: R, sessionCwd: R, sessionId: 'gp50-log', limit: 1 })
+  check('limit 截在最新一条上，truncated 如实说',
+    tiny.ok === true && tiny.commands.length === 1 && tiny.truncated === true
+    && tiny.commands[0].id === full.commands[0].id)
+  const other = await a.H('git/command-log')({ repo: R, sessionCwd: '/tmp', sessionId: 'gp50-nobody', limit: 200 })
+  check('别的会话 + 别的目录发的记录不归到本页：一条都不给（不是全库乱倒）',
+    other.ok === true && other.commands.length === 0 && other.truncated === false)
+}
+
+console.log('')
 console.log('=== git/conflict-save：工作区里目录整个没了 —— mkdir -p 兜底（UD 的形状） ===')
 {
   const a = makeBody()
