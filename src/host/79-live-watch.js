@@ -154,20 +154,41 @@ function liveRepoRemember(fresh) {
   return liveRepoOrder.slice()
 }
 
-/* 一个仓库的签名轮询。watchCommand 的 shallow 半边全是读命令（for-each-ref /
- * rev-parse --verify / 对 gitdir 三个文件的 stat），不碰 index.lock；deep=false 也
- * 正好避开每 10 秒一次的全树 status。路径已从配置或会话头里来，invoked 直接以它为
- * workdir（目录已不存在时 spawn 本身失败 —— 和 60-reads.js 的 probe 教训同一条），
- * 空签名（非仓库 / git 报错 / 目录消失）只记基线，从不推送。 */
-async function livePollRepo(repo) {
-  let sig = ''
+/* 一轮的签名读：整轮一次 invoke（62-panel.js 的 liveWatchBatchCommand 把每个仓库
+ * 的正文拼进同一条脚本），一轮最多起一个进程。
+ *
+ * 为什么不再一仓一次：见 62-panel.js 那段 —— 每次 invoke 在 DSH 沙箱里是一个带
+ * --unshare-pid 的 bwrap，容器里没有 init，这些 bwrap 退出后没人回收，成了 defunct
+ * 僵尸（实测约 22 个/分钟）。插件侧只能压 spawn 数，僵尸归零要靠容器 init。
+ *
+ * args 是空对象：整轮没有单一 workdir —— 把某个仓库当整轮的工作目录，它可能已经
+ * 不存在了，那样 spawn 会整轮失败（连其余仓库一起丢掉）。脚本里全是绝对路径 +
+ * `git -C`，不需要 cwd。
+ *
+ * 失败语义：整轮非 0 退出 / 超时 / 抛出 → 这一轮一个仓库都不推送，已有基线一个字节
+ * 都不动，下一轮照常再读。单仓时代失败是「按空签名记基线」，整轮失败不是那个意思:
+ * 它说的是「这一轮什么都没读到」，不是「这些仓库全都变空了」，所以不能拿空签名去
+ * 覆盖真基线。 */
+async function livePollRound(repos) {
+  if (repos.length === 0) return
+  let sigs = null
   try {
-    const probe = await invoke(watchCommand(repo, false, []), { repo: repo }, null, { timeoutMs: 20000 })
-    sig = probe != null && probe.exitCode === 0 ? String(probe.stdout == null ? '' : probe.stdout) : ''
+    const probe = await invoke(liveWatchBatchCommand(repos), {}, null, { timeoutMs: 20000 })
+    if (probe != null && probe.exitCode === 0) {
+      sigs = parseLiveWatchBatch(probe.stdout, repos.length)
+    }
   } catch (error) {
-    console.error('dsh-git-idea: live 签名读不动 ' + repo + '（按空签名记基线）', String(error))
-    sig = ''
+    console.error('dsh-git-idea: live 签名整轮读不动（这一轮不推送、基线不动）', String(error))
+    sigs = null
   }
+  if (sigs === null) return
+  for (let i = 0; i < repos.length; i += 1) liveApplySignature(repos[i], sigs[i])
+}
+
+/* 单个仓库的签名落地：基线比较 → 最小推送间隔 → 先失效读缓存再广播。与合并前
+ * 的 livePollRepo 逐条一致，搬走的只是「怎么读到签名」那一步（到了上一层的整轮）。
+ * 空签名（读残了 / 不是仓库）只记基线，从不推送。 */
+function liveApplySignature(repo, sig) {
   const previous = liveSigBaselines.get(repo)
   if (previous === sig) return
   if (sig.length === 0) { liveSigBaselines.set(repo, sig); return }
@@ -194,7 +215,7 @@ async function liveReposRound() {
   liveSigBusy = true
   try {
     const repos = liveRepoRemember(await liveRepoList())
-    for (let i = 0; i < repos.length; i += 1) await livePollRepo(repos[i])
+    await livePollRound(repos)
   } finally {
     liveSigBusy = false
   }

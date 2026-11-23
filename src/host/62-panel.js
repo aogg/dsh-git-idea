@@ -316,7 +316,26 @@ function panelCommand(target, paths) {
    is read by every later git process — this tick's included. So the tick after
    that write resolves `$gd` again and the signature resumes on its own; nothing
    here changes, and nothing here has to retry. */
-function watchCommand(target, deep, paths) {
+/* ── 一条脚本读一个仓库，还是读一整轮？──
+
+   常驻监听（79-live-watch.js）原来每个仓库起一次 invoke：一轮最多 24 个仓库
+   （LIVE_REPO_MAX）就是 24 个进程。DSH 的沙箱给每次 invoke 起一个 bwrap 加
+   --unshare-pid，而容器里没有 init（PID 1 就是 dsh 自己），这些 bwrap 退出后没
+   人 wait，全成了 defunct —— 真机上实测约 22 个/分钟、累积 1419 个还在涨。僵尸
+   归零要靠容器 init（不归插件管），插件侧唯一能做的就是压 spawn 数：整轮拼成一
+   条脚本、一次 invoke，见下面的 liveWatchBatchCommand。
+
+   拼装与单仓读共用下面这份正文：F/H/I/R/P 五行只有一处，两条路不可能漂开；
+   watchCommand 的输出因此与拆分前逐字节一致（80-rpc.js 的 git/watch 还在按老
+   形状读它，deep + paths 那半边一行都没动）。 */
+
+/* `st()` 是这类签名脚本里唯一的函数定义：正文每仓一段，定义只出现一次 ——
+   调用方（单仓的 watchCommand / 整轮的 liveWatchBatchCommand）各把这一行放最前。 */
+function stShell() {
+  return "st() { stat -c '%Y:%s' \"$1\" 2>/dev/null || stat -f '%m:%z' \"$1\" 2>/dev/null; }"
+}
+
+function watchBodyLines(target, deep, paths) {
   const quoted = shq(target)
   const asked = paths == null ? [] : paths
   /* Every git call below is inside `[ -n "$gd" ]`: on a directory that is not a
@@ -326,7 +345,6 @@ function watchCommand(target, deep, paths) {
     return '$(if [ -n "$gd" ]; then ' + command + '; fi)'
   }
   const out = [
-    "st() { stat -c '%Y:%s' \"$1\" 2>/dev/null || stat -f '%m:%z' \"$1\" 2>/dev/null; }",
     'if ' + repoHere(target) + '; then',
     '  gd=$(' + gitCmd() + ' -C ' + quoted + ' rev-parse --absolute-git-dir 2>/dev/null)',
     'else',
@@ -358,6 +376,84 @@ function watchCommand(target, deep, paths) {
     "printf 'R:%s\\n' \"$(cat \"$gd/HEAD\" 2>/dev/null) $(st \"$gd/HEAD\")\"",
     "printf 'P:%s\\n' \"$(st \"$gd/packed-refs\")\"",
   )
+  return out
+}
+
+/* 单仓读（80-rpc.js 的 git/watch 走这条）：一行 `st()` 定义 + 一份正文，输出与
+   拆分前逐字节相同。 */
+function watchCommand(target, deep, paths) {
+  return [stShell()].concat(watchBodyLines(target, deep, paths)).join('\n')
+}
+
+/* ── 整轮一条脚本：每个仓库前 printf 'B:<下标>'，跑自己的正文，后 printf 'E:<下标>' ──
+
+   下标就是调用方手里的数组下标（0 起）。输出是一条流，收的时候按 B/E 配对而不是
+   按先后顺序：某一仓的正文被超时切断时，后面的仓库仍然对得上自己的下标。
+
+   每个仓库块里有自己独立的 `gd`：正文那几条 git 调用全在 `[ -n "$gd" ]` 里，一个
+   只是目录的路径不会读到父仓库的签名 —— 单仓读一直守这条，拼起来也不能丢。
+
+   所有路径都过 shq()，脚本里没有一处依赖 cwd（git 一律 -C 绝对路径），所以调用方
+   **不传 workdir**：整轮没有「某个仓库」当工作目录，那个仓库可能已经不存在了，
+   让它当 workdir 只会让整轮 spawn 直接失败。
+
+   deep 恒为 false：常驻监听只要廉价签名，全树 status 是 git/watch（面板在屏上时）
+   的事。
+
+   规模与代价：24 个仓库（LIVE_REPO_MAX）× 约 1KB ≈ 24KB，留在 gp93 钉的 64KB
+   上限里；整轮共用一个 20s 超时预算，慢盘上 24 个仓库挤在一条命令里的耗时不再
+   各自计算 —— 一轮读不完就当整轮失败（不推送、基线不动），下一轮再读。 */
+function liveWatchBatchCommand(repos) {
+  const out = [stShell()]
+  for (let i = 0; i < repos.length; i += 1) {
+    out.push("printf 'B:" + i + "\\n'")
+    /* 目录已经不在的仓库发空块：单仓时代那是 spawn 直接失败（空签名），整轮里没有
+       「这一仓的进程失败」这回事了，就用这道 [ -d ] 把同一口径还原出来。空签名只
+       更新基线、从不推送，消失的仓库因此照旧不报「变了」。 */
+    out.push('if [ -d ' + shq(repos[i]) + ' ]; then')
+    const body = watchBodyLines(repos[i], false, [])
+    for (let j = 0; j < body.length; j += 1) out.push(body[j])
+    out.push('fi')
+    out.push("printf 'E:" + i + "\\n'")
+  }
   return out.join('\n')
+}
+
+/* 把一轮的输出按 B/E 配对切成每仓签名。签名就是单仓读会打印的那几行（含结尾换
+   行），于是「同一个仓库、同一份文件戳」在两条路上算出来的是同一个字符串，换读法
+   的那一轮不会白推一次。
+
+   缺 B 或 E（脚本被超时/中断切断）的仓库记空签名 —— 空签名在 79-live-watch.js 里
+   只更新基线、从不推送，所以「读残了」永远不会伪装成「仓库变了」。下标不是本轮
+   合法下标的行（垃圾输出）当没收过：它既不开块，也不落到某个仓库上。 */
+function parseLiveWatchBatch(stdout, count) {
+  const sigs = []
+  for (let i = 0; i < count; i += 1) sigs.push('')
+  const lines = String(stdout == null ? '' : stdout).split('\n')
+  let open = -1
+  let body = []
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i]
+    const head = line.slice(0, 2)
+    if (head !== 'B:' && head !== 'E:') {
+      if (open >= 0) body.push(line)
+      continue
+    }
+    const at = line.slice(2).trim()
+    const index = /^\d+$/.test(at) ? Number(at) : -1
+    const known = index >= 0 && index < count
+    if (head === 'B:') {
+      /* 上一块没等到 E 就又开了新块：它的正文已经不可信（可能混进了下一仓的行），
+         整块丢掉，它的签名留空。 */
+      open = known ? index : -1
+      body = []
+      continue
+    }
+    /* E 只认与当前打开块同下标的那一条：错位的 E 说明这一块也被打断过。 */
+    if (known === true && open === index) sigs[index] = body.length > 0 ? body.join('\n') + '\n' : ''
+    open = -1
+    body = []
+  }
+  return sigs
 }
 
